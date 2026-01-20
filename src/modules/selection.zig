@@ -83,6 +83,15 @@ pub const Selector = struct {
 
     /// 标准化选择
     pub fn normalize(self: *Selector) void {
+        // 如果起始点和结束点相同（单点），不创建选择范围
+        if (self.selection.ob.x == self.selection.oe.x and self.selection.ob.y == self.selection.oe.y) {
+            self.selection.nb.x = std.math.maxInt(usize);
+            self.selection.nb.y = std.math.maxInt(usize);
+            self.selection.ne.x = 0;
+            self.selection.ne.y = 0;
+            return;
+        }
+
         if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
             self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)
                 self.selection.ob.x

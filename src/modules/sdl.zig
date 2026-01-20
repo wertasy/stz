@@ -26,6 +26,8 @@ pub const SDL_Window = c.SDL_Window;
 pub const SDL_Renderer = c.SDL_Renderer;
 pub const SDL_Rect = c.SDL_Rect;
 pub const SDL_Texture = c.SDL_Texture;
+pub const SDL_KeyboardEvent = c.SDL_KeyboardEvent;
+pub const SDL_Keysym = c.SDL_Keysym;
 
 // Event types
 pub const SDL_QUIT = c.SDL_QUIT;
@@ -41,6 +43,18 @@ pub const SDL_WINDOWEVENT_RESIZED = c.SDL_WINDOWEVENT_RESIZED;
 
 // Button codes
 pub const SDL_BUTTON_LEFT = c.SDL_BUTTON_LEFT;
+
+// Keyboard states
+pub const SDL_PRESSED = c.SDL_PRESSED;
+pub const SDL_RELEASED = c.SDL_RELEASED;
+
+// Key modifier flags
+pub const KMOD_LCTRL = c.KMOD_LCTRL;
+pub const KMOD_RCTRL = c.KMOD_RCTRL;
+pub const KMOD_LALT = c.KMOD_LALT;
+pub const KMOD_RALT = c.KMOD_RALT;
+pub const KMOD_LSHIFT = c.KMOD_LSHIFT;
+pub const KMOD_RSHIFT = c.KMOD_RSHIFT;
 
 // Flags
 pub const SDL_INIT_VIDEO = c.SDL_INIT_VIDEO;

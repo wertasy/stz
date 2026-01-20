@@ -28,9 +28,9 @@ pub const Input = struct {
 
     /// 处理键盘事件
     pub fn handleKey(self: *Input, event: *const sdl.SDL_KeyboardEvent) !void {
-        const scancode = event.scancode;
-        const keycode = event.keycode;
-        const mod = event.mod;
+        const scancode = event.keysym.scancode;
+        const keycode = event.keysym.sym;
+        const mod = event.keysym.mod;
         const state = event.state;
 
         // 只处理按下事件

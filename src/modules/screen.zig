@@ -16,7 +16,7 @@ pub const ScreenError = error{
 };
 
 /// 初始化终端屏幕
-pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !void {
+pub fn init(term: *Term, row: usize, col: usize, allocator: anytype) !void {
     term.row = row;
     term.col = col;
     term.allocator = allocator;

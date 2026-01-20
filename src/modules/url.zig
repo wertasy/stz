@@ -33,13 +33,13 @@ pub const UrlDetector = struct {
         const line_buffer = try self.allocator.alloc(u8, self.term.col + 1);
         defer self.allocator.free(line_buffer);
 
-        for (0..@min(self.term.row, screen.len)) |y| {
+        for (0..self.term.row) |y| {
             // 将行转换为字符串
             var line_len: usize = 0;
-            const row_start = y * self.term.col;
             for (0..self.term.col) |x| {
-                const glyph = screen[row_start + x];
-                line_buffer[line_len] = if (glyph.u < 128) @as(u8, glyph.u) else ' ';
+                const glyph = screen.?[y][x];
+                const u_value = glyph.u;
+                line_buffer[line_len] = if (u_value < 128) @intCast(u_value) else ' ';
                 line_len += 1;
             }
             line_buffer[line_len] = 0;

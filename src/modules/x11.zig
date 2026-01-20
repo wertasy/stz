@@ -96,6 +96,7 @@ pub const XNextEvent = c.XNextEvent;
 pub const XCreatePixmap = c.XCreatePixmap;
 pub const XCopyArea = c.XCopyArea;
 pub const XkbKeycodeToKeysym = c.XkbKeycodeToKeysym;
+pub const XResizeWindow = c.XResizeWindow;
 
 pub const XftDrawCreate = c.XftDrawCreate;
 pub const XftFontOpenName = c.XftFontOpenName;

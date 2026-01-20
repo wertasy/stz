@@ -25,7 +25,7 @@ pub const Config = struct {
     };
 
     // 终端类型
-    pub const term_type = "stz-256color";
+    pub const term_type = "xterm-256color";
     pub const vt_identification = "\x1B[?6c"; // 终端标识序列
 
     // Shell 配置

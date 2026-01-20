@@ -3,8 +3,10 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const config = @import("config.zig");
 
 const Term = types.Term;
+const Glyph = types.Glyph;
 const CSIEscape = types.CSIEscape;
 const STREscape = types.STREscape;
 const EscapeState = types.EscapeState;
@@ -29,6 +31,7 @@ pub const Parser = struct {
             .allocator = allocator,
         };
         try p.strReset();
+        p.resetPalette();
         return p;
     }
 
@@ -186,10 +189,13 @@ pub const Parser = struct {
             if (width == 2 and self.term.c.x + 1 < self.term.col) {
                 self.term.c.x += 2;
                 if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
-                    var dummy = self.term.c.attr;
-                    dummy.u = 0;
-                    dummy.attr.wide_dummy = true;
-                    lines[self.term.c.y][self.term.c.x - 1] = dummy;
+                    lines[self.term.c.y][self.term.c.x] = Glyph{
+                        .u = 0,
+                        .attr = self.term.c.attr.attr,
+                        .fg = self.term.c.attr.fg,
+                        .bg = self.term.c.attr.bg,
+                    };
+                    lines[self.term.c.y][self.term.c.x].attr.wide_dummy = true;
                 }
             } else if (width > 0) {
                 self.term.c.x += width;
@@ -569,8 +575,8 @@ pub const Parser = struct {
                     self.term.c.attr.attr.reverse = false;
                     self.term.c.attr.attr.hidden = false;
                     self.term.c.attr.attr.struck = false;
-                    self.term.c.attr.fg = 7; // 默认白色
-                    self.term.c.attr.bg = 0; // 默认黑色
+                    self.term.c.attr.fg = config.Config.colors.default_foreground;
+                    self.term.c.attr.bg = config.Config.colors.default_background;
                     self.term.c.attr.ustyle = -1;
                     for (0..3) |j| {
                         self.term.c.attr.ucolor[j] = -1;
@@ -655,7 +661,7 @@ pub const Parser = struct {
                     }
                 },
                 39 => { // 默认前景色
-                    self.term.c.attr.fg = 7;
+                    self.term.c.attr.fg = config.Config.colors.default_foreground;
                 },
                 48 => { // 背景色扩展
                     i += 1;
@@ -680,7 +686,7 @@ pub const Parser = struct {
                     }
                 },
                 49 => { // 默认背景色
-                    self.term.c.attr.bg = 0;
+                    self.term.c.attr.bg = config.Config.colors.default_background;
                 },
                 58 => { // 下划线颜色
                     i += 1;
@@ -854,8 +860,8 @@ pub const Parser = struct {
 
         // 重置文本属性
         self.term.c.attr = .{};
-        self.term.c.attr.fg = 7; // 默认白色
-        self.term.c.attr.bg = 0; // 默认黑色
+        self.term.c.attr.fg = config.Config.colors.default_foreground;
+        self.term.c.attr.bg = config.Config.colors.default_background;
 
         // 重置滚动区域
         self.term.top = 0;
@@ -887,9 +893,9 @@ pub const Parser = struct {
 
         // 重置调色板
         self.resetPalette();
-        self.term.default_fg = 7;
-        self.term.default_bg = 0;
-        self.term.default_cs = 7;
+        self.term.default_fg = config.Config.colors.default_foreground;
+        self.term.default_bg = config.Config.colors.default_background;
+        self.term.default_cs = config.Config.colors.default_cursor;
 
         // 重置窗口标题
         self.term.window_title = "stz";
@@ -1152,59 +1158,61 @@ pub const Parser = struct {
         var p: usize = 0;
 
         self.csi.narg = 0;
-        self.csi.priv = 0; // 重置 private 标志
-        self.csi.mode[1] = 0; // 重置第二个模式字符
+        self.csi.priv = 0;
+        self.csi.mode[1] = 0;
+
+        if (self.csi.len == 0) return;
 
         // 检查私有标志 '?'
-        if (p < self.csi.len and self.csi.buf[p] == '?') {
+        if (self.csi.buf[p] == '?') {
             self.csi.priv = 1;
             p += 1;
         }
 
         self.csi.buf[self.csi.len] = 0;
 
-        while (p < self.csi.len and self.csi.narg < 32) {
-            // 跳过非数字
-            while (p < self.csi.len and !std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
-                // 检查空格（用于 DECSCUSR 等序列）
-                if (self.csi.buf[p] == ' ' and p + 1 < self.csi.len) {
-                    self.csi.mode[1] = self.csi.buf[p + 1]; // 保存空格后的字符
-                    p += 2;
-                    continue;
-                }
-                // 如果遇到终止字符，停止解析
-                if (self.csi.buf[p] >= 0x40 and self.csi.buf[p] <= 0x7E) break;
+        while (p < self.csi.len) {
+            var val: i64 = 0;
+            const start = p;
+            while (p < self.csi.len and std.ascii.isDigit(self.csi.buf[p])) {
+                val = val * 10 + @as(i64, @intCast(self.csi.buf[p] - '0'));
                 p += 1;
+            }
+
+            if (p == start) {
+                val = 0; // 空参数默认为 0
+            }
+
+            if (self.csi.narg < 32) {
+                self.csi.arg[self.csi.narg] = val;
+                self.csi.narg += 1;
             }
 
             if (p >= self.csi.len) break;
 
-            // 解析数字
-            var val_end = p;
-            while (val_end < self.csi.len and std.ascii.isDigit(self.csi.buf[val_end])) {
-                val_end += 1;
-            }
-
-            if (val_end > p) {
-                const v = std.fmt.parseInt(i64, self.csi.buf[p..val_end], 10) catch 0;
-                self.csi.arg[self.csi.narg] = v;
-                p = val_end;
-            } else {
-                // 默认值 0
-                self.csi.arg[self.csi.narg] = 0;
-            }
-            self.csi.narg += 1;
-
-            // 处理分隔符
-            if (p < self.csi.len and (self.csi.buf[p] == ';' or self.csi.buf[p] == ':')) {
+            const sep = self.csi.buf[p];
+            if (sep == ';' or sep == ':') {
                 p += 1;
+                // 如果分隔符是最后一个字符，说明后面还有一个空参数
+                if (p >= self.csi.len) {
+                    if (self.csi.narg < 32) {
+                        self.csi.arg[self.csi.narg] = 0;
+                        self.csi.narg += 1;
+                    }
+                    break;
+                }
+            } else {
+                // 可能是终止符或其他标志 (如 SP q)
+                if (sep == ' ' and p + 1 < self.csi.len) {
+                    self.csi.mode[1] = self.csi.buf[p + 1];
+                    p += 2;
+                }
+                break;
             }
         }
 
         // 获取模式字符 (最后一个字符)
-        if (self.csi.len > 0) {
-            self.csi.mode[0] = self.csi.buf[self.csi.len - 1];
-        }
+        self.csi.mode[0] = self.csi.buf[self.csi.len - 1];
     }
 
     /// 处理 CSI 序列
@@ -1773,13 +1781,13 @@ pub const Parser = struct {
                 }
             },
             110 => { // 重置前景色
-                self.term.default_fg = 7;
+                self.term.default_fg = config.Config.colors.foreground;
             },
             111 => { // 重置背景色
-                self.term.default_bg = 0;
+                self.term.default_bg = config.Config.colors.background;
             },
             112 => { // 重置光标颜色
-                self.term.default_cs = 7;
+                self.term.default_cs = config.Config.colors.cursor;
             },
             else => {},
         }
@@ -1845,8 +1853,36 @@ pub const Parser = struct {
 
     /// 重置调色板为默认值
     fn resetPalette(self: *Parser) void {
-        for (0..256) |i| {
-            self.term.palette[i] = @as(u32, @intCast(i));
+        // 0-7: 标准 16 色中的暗色
+        for (0..8) |i| {
+            self.term.palette[i] = config.Config.colors.normal[i];
+        }
+        // 8-15: 标准 16 色中的亮色
+        for (8..16) |i| {
+            self.term.palette[i] = config.Config.colors.bright[i - 8];
+        }
+        // 16-231: 6x6x6 RGB 立方体
+        // 格式: 16 + 36*r + 6*g + b
+        // r, g, b 的值都是 0-5，映射到 0, 95, 135, 175, 215, 255
+        var color_idx: u32 = 16;
+        while (color_idx < 232) : (color_idx += 1) {
+            const c = color_idx - 16;
+            const r = c / 36;
+            const g = (c % 36) / 6;
+            const b = c % 6;
+            const r_val: u8 = if (r == 0) 0 else @intCast(r * 40 + 55);
+            const g_val: u8 = if (g == 0) 0 else @intCast(g * 40 + 55);
+            const b_val: u8 = if (b == 0) 0 else @intCast(b * 40 + 55);
+            self.term.palette[color_idx] = (@as(u32, r_val) << 16) | (@as(u32, g_val) << 8) | @as(u32, b_val);
+        }
+        // 232-255: 24 级灰度
+        // 从 8 (0x080808) 到 238 (0xEEEEEE)，每步 10
+        var gray_idx: u32 = 232;
+        var gray_val: u32 = 8;
+        while (gray_idx < 256) : (gray_idx += 1) {
+            const val = gray_val * 0x010101; // 将灰度值转换为 0xRRGGBB 格式
+            self.term.palette[gray_idx] = val;
+            gray_val += 10;
         }
     }
 

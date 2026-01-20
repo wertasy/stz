@@ -45,11 +45,13 @@ pub const Window = struct {
 
         const cmap = x11.XCreateColormap(dpy, root, vis, x11.AllocNone);
 
-        // Calculate size
-        // TODO: Get actual font metrics first. For now estimate.
+        // Calculate size using estimated cell dimensions
+        // Note: These will be updated by renderer.init() after font is loaded
         const font_size = config.Config.font.size;
-        const cell_w = font_size;
-        const cell_h = font_size * 2;
+        // Conservative estimates to ensure window is large enough
+        // Actual font metrics will be loaded and cell_* will be updated
+        const cell_w = @max(@as(u32, font_size / 2), 8); // Minimum 8px wide
+        const cell_h = @as(u32, font_size) * 2;
         const border = config.Config.window.border_pixels;
 
         const win_w = cols * cell_w + border * 2;
@@ -149,5 +151,19 @@ pub const Window = struct {
     /// 设置图标标题
     pub fn setIconTitle(self: *Window, title: [:0]const u8) void {
         _ = x11.XSetIconName(self.dpy, self.win, title);
+    }
+
+    /// 调整窗口大小以匹配期望的行列数（在加载实际字体后调用）
+    pub fn resizeToGrid(self: *Window, cols: usize, rows: usize) void {
+        const border = config.Config.window.border_pixels;
+        const new_w = @as(u32, @intCast(cols * self.cell_width + border * 2));
+        const new_h = @as(u32, @intCast(rows * self.cell_height + border * 2));
+
+        if (new_w != self.width or new_h != self.height) {
+            _ = x11.XResizeWindow(self.dpy, self.win, @intCast(new_w), @intCast(new_h));
+            self.width = new_w;
+            self.height = new_h;
+            _ = x11.XSync(self.dpy, x11.False);
+        }
     }
 };

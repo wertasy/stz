@@ -1,6 +1,7 @@
 //! 核心数据类型定义
 
 const std = @import("std");
+const config = @import("config.zig");
 
 /// 字符属性标志位
 pub const GlyphAttr = packed struct(u16) {
@@ -25,8 +26,8 @@ pub const GlyphAttr = packed struct(u16) {
 pub const Glyph = struct {
     u: u21 = ' ', // Unicode 码点
     attr: GlyphAttr = .{}, // 字符属性
-    fg: u32 = 7, // 前景色索引
-    bg: u32 = 0, // 背景色索引
+    fg: u32 = config.Config.colors.default_foreground, // 前景色索引
+    bg: u32 = config.Config.colors.default_background, // 背景色索引
     ustyle: i32 = -1, // 下划线样式
     ucolor: [3]i32 = [_]i32{ -1, -1, -1 }, // 下划线颜色 RGB
 };
@@ -66,7 +67,9 @@ pub const TermMode = packed struct(u32) {
     mouse_focus: bool = false,
     brckt_paste: bool = false,
     num_lock: bool = false,
-    _padding: u12 = 0,
+    blink: bool = false, // 光标/文本闪烁
+    focused: bool = false, // 窗口焦点状态
+    _padding: u10 = 0,
 };
 
 /// 字符集
@@ -220,9 +223,9 @@ pub const Term = struct {
 
     // 颜色调色板
     palette: [256]u32 = undefined,
-    default_fg: u32 = 7, // 默认前景色 (白色)
-    default_bg: u32 = 0, // 默认背景色 (黑色)
-    default_cs: u32 = 7, // 默认光标颜色
+    default_fg: u32 = config.Config.colors.default_foreground, // 默认前景色
+    default_bg: u32 = config.Config.colors.default_background, // 默认背景色
+    default_cs: u32 = config.Config.colors.default_cursor, // 默认光标颜色
 
     // 光标样式 (0-8, 参考配置文件)
     cursor_style: u8 = 1,

@@ -17,7 +17,7 @@
     - [x] 脏矩形优化 (目前全屏重绘)
     - [x] 粗体/斜体/下划线样式渲染 (支持 Bold 颜色, Underline, Reverse, Strikethrough)
     - [x] 宽字符 (CJK) 渲染对其问题修复 (`wcwidth` 逻辑修正)
-    - [x] Box Drawing 字符手动绘制 (无需字体支持)
+    - [x] Box Drawing 字符手动绘制 (无需字体支持，扩展到双线、重线)
 - [x] **字体处理**:
     - [x] 字体回退 (Fallback) 机制 (Config -> Default -> Fixed)
 - [x] **剪贴板与选择**:
@@ -29,33 +29,36 @@
     - [x] BS/CR/LF/HT 处理 (解决双重回显和光标错位)
     - [x] CSI 参数解析修复 (支持 `?` 私有模式)
 - [x] **滚动缓冲区 (Scrollback)**: 支持历史输出存储和 Shift+PgUp/PgDn 查看历史
-- [x] **Resize 处理**: 
+- [x] **Resize 处理**:
     - [x] 滑动屏幕以保持光标位置
     - [x] 优化 resize 时的重绘逻辑
     - [x] PTY resize 通知
 - [x] **配置重载**: 支持运行时重载配置 (SIGHUP 信号)
  - [x] **鼠标支持**:
-     - [x] 鼠标点击报告 (X10, URXVT, SGR pixel mode 1006)
-     - [x] 鼠标滚轮滚动
-- [x] **URL 点击打开**:
-     - [x] URL 自动检测（http://, https://, ftp://）
-     - [x] Ctrl+点击打开 URL（通过 xdg-open）
-- [x] **打印/导出功能**:
-     - [x] 打印屏幕内容（Shift+Print - printscreen）
-     - [x] 打印选择内容（Print - printsel）
-     - [x] 切换自动打印模式（Ctrl+Print - toggleprinter）
+      - [x] 鼠标点击报告 (X10, URXVT, SGR pixel mode 1006)
+      - [x] 鼠标滚轮滚动
+ - [x] **URL 点击打开**:
+      - [x] URL 自动检测（http://, https://, ftp://）
+      - [x] Ctrl+点击打开 URL（通过 xdg-open）
+ - [x] **打印/导出功能**:
+      - [x] 打印屏幕内容（Shift+Print - printscreen）
+      - [x] 打印选择内容（Print - printsel）
+      - [x] 切换自动打印模式（Ctrl+Print - toggleprinter）
 
 ## 🚧 进行中 / 待修复
 
 ## 📋 待办事项 (Backlog)
 
 ### 核心功能 (对比 st)
-- [ ] **光标闪烁**: 实现光标闪烁逻辑 (st `x.c` 中的 `xdrawcursor`)
+- [x] **光标样式**: 完整的光标样式支持 (Block, Underline, Bar, Hollow)
+- [x] **光标闪烁**: 实现光标闪烁逻辑 (基于 MODE_BLINK 模式)
+- [x] **文本闪烁**: 实现文本闪烁属性 (ATTR_BLINK)
+- [x] **焦点状态**: 添加焦点状态处理 (MODE_FOCUSED)
 
 ### 高级特性
-- [ ] **Box Drawing 完整支持**: 目前仅实现了单线字符，需扩展到双线、圆角等
-- [ ] **TrueColor**: 确认 24 位真彩色支持的完整性
-- [ ] **透明度**: X11 Alpha 通道支持
+- [x] **Box Drawing 完整支持**: 扩展到双线、重线、圆角等字符
+- [x] **TrueColor**: 24 位真彩色支持 (0xFFRRGGBB 格式)
+- [ ] **透明度**: X11 Alpha 通道支持 (待实现)
 
 ### 代码质量
 - [ ] **测试**: 增加单元测试覆盖率 (Parser, Screen)

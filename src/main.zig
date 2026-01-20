@@ -55,14 +55,12 @@ pub fn main() !u8 {
     std.log.info("尺寸: {d}x{d}\n", .{ cols, rows });
     std.log.info("发送 SIGHUP 信号 (kill -HUP <pid>) 可重新加载配置\n", .{});
 
+    // 设置 TERM 环境变量 (必须在 PTY 初始化前，以确保子进程能继承)
+    _ = c.setenv("TERM", config.Config.term_type, 1);
+
     // 初始化 PTY
     var pty = try PTY.init(shell_path, cols, rows);
     defer pty.close();
-
-    std.log.info("PTY PID: {d}\n", .{pty.pid});
-
-    // 设置 TERM 环境变量
-    _ = c.setenv("TERM", config.Config.term_type, 1);
 
     // 初始化终端
     var terminal = try Terminal.init(rows, cols, allocator);
@@ -80,6 +78,9 @@ pub fn main() !u8 {
     // 初始化渲染器
     var renderer = try Renderer.init(&window, allocator);
     defer renderer.deinit();
+
+    // 修复窗口大小以匹配实际字体尺寸
+    window.resizeToGrid(cols, rows);
 
     // 初始化输入处理器
     var input = Input.init(&pty);
@@ -107,6 +108,7 @@ pub fn main() !u8 {
 
     // Paste buffer (for receiving X11 selection)
     var paste_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096);
+    defer paste_buffer.deinit(allocator);
 
     // 设置 PTY 为非阻塞模式
     try pty.setNonBlocking();
@@ -191,9 +193,12 @@ pub fn main() !u8 {
                         window.resizeBuffer(@intCast(new_w), @intCast(new_h));
                         renderer.resize();
 
-                        // 计算新的行列数
-                        const new_cols = @divFloor(window.width, window.cell_width);
-                        const new_rows = @divFloor(window.height, window.cell_height);
+                        // 计算新的行列数（减去边框宽度）
+                        const border = config.Config.window.border_pixels;
+                        const content_width = @max(window.width, border * 2) - border * 2;
+                        const content_height = @max(window.height, border * 2) - border * 2;
+                        const new_cols = @divFloor(content_width, window.cell_width);
+                        const new_rows = @divFloor(content_height, window.cell_height);
 
                         // 只有当行列数改变时才调整
                         if (new_cols != terminal.term.col or new_rows != terminal.term.row) {
@@ -372,6 +377,20 @@ pub fn main() !u8 {
                     try renderer.render(&terminal.term);
                     window.present();
                 },
+                x11.FocusIn => {
+                    std.log.info("FocusIn\n", .{});
+                    terminal.term.mode.focused = true;
+                    try renderer.render(&terminal.term);
+                    try renderer.renderCursor(&terminal.term);
+                    window.present();
+                },
+                x11.FocusOut => {
+                    std.log.info("FocusOut\n", .{});
+                    terminal.term.mode.focused = false;
+                    try renderer.render(&terminal.term);
+                    try renderer.renderCursor(&terminal.term);
+                    window.present();
+                },
                 else => {},
             }
         }
@@ -408,7 +427,14 @@ pub fn main() !u8 {
             continue;
         };
 
-        // 3. 处理 PTY 数据
+        // 3. 检查子进程是否还活着
+        if (!pty.isChildAlive()) {
+            std.log.info("子进程已退出\n", .{});
+            quit = true;
+            break;
+        }
+
+        // 4. 处理 PTY 数据
 
         if ((fds[0].revents & std.posix.POLL.IN) != 0) {
             const n = pty.read(read_buffer) catch |err| {
@@ -430,10 +456,10 @@ pub fn main() !u8 {
                 break;
             }
 
-            // std.log.info("Read {d} bytes from PTY\n", .{n});
-            if (n > 0) {
-                std.log.debug("PTY Read: {d} bytes: {s}\n", .{ n, read_buffer[0..n] });
-            }
+            std.log.info("Read {d} bytes from PTY\n", .{n});
+            // if (n > 0) {
+            // std.log.debug("PTY Read: {d} bytes: {s}\n", .{ n, read_buffer[0..n] });
+            // }
 
             // 处理终端数据
             try terminal.processBytes(read_buffer[0..n]);

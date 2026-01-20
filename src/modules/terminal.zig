@@ -142,7 +142,7 @@ pub const Terminal = struct {
             if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
                 lines[self.term.c.y][self.term.c.x] = Glyph{
                     .u = u,
-                    .attr = self.term.c.attr,
+                    .attr = self.term.c.attr.attr,
                     .fg = self.term.c.attr.fg,
                     .bg = self.term.c.attr.bg,
                 };
@@ -422,8 +422,8 @@ pub const Terminal = struct {
         // 重置光标
         self.term.c = TCursor{
             .attr = Glyph{
-                .fg = config.Config.colors.foreground,
-                .bg = config.Config.colors.background,
+                .fg = config.Config.colors.default_foreground,
+                .bg = config.Config.colors.default_background,
             },
             .x = 0,
             .y = 0,

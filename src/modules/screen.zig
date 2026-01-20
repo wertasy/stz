@@ -206,9 +206,11 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
         term.alt.?[y] = try allocator.realloc(term.alt.?[y], new_col);
 
         // 清除新扩展的区域（如果有）
-        for (old_col..new_col) |x| {
-            term.line.?[y][x] = Glyph{};
-            term.alt.?[y][x] = Glyph{};
+        if (new_col > old_col) {
+            for (old_col..new_col) |x| {
+                term.line.?[y][x] = Glyph{};
+                term.alt.?[y][x] = Glyph{};
+            }
         }
     }
 
@@ -251,8 +253,10 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
 
     // 调整制表符
     term.tabs = try allocator.realloc(term.tabs.?, new_col);
-    for (old_col..new_col) |x| {
-        term.tabs.?[x] = false;
+    if (new_col > old_col) {
+        for (old_col..new_col) |x| {
+            term.tabs.?[x] = false;
+        }
     }
     // 设置新的默认制表符
     const tab_spaces = @import("config.zig").Config.tab_spaces;
@@ -260,9 +264,11 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     if (tab_col % tab_spaces != 0) {
         tab_col += tab_spaces - (tab_col % tab_spaces);
     }
-    for (tab_col..new_col) |x| {
-        if (x % tab_spaces == 0) {
-            term.tabs.?[x] = true;
+    if (new_col > tab_col) {
+        for (tab_col..new_col) |x| {
+            if (x % tab_spaces == 0) {
+                term.tabs.?[x] = true;
+            }
         }
     }
 

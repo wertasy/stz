@@ -142,7 +142,7 @@ pub const PTY = struct {
 
     /// 写入数据
     pub fn write(self: *PTY, data: []const u8) !usize {
-        std.log.info("PTY write: {d} bytes: {any}", .{ data.len, data });
+        // std.log.info("PTY write: {d} bytes: {any}", .{ data.len, data });
         return std.posix.write(self.master, data);
     }
 
@@ -202,5 +202,23 @@ pub const PTY = struct {
         }
 
         return 1;
+    }
+
+    /// 检查子进程是否还活着（非阻塞）
+    /// 返回: true 表示子进程还在运行，false 表示子进程已退出
+    pub fn isChildAlive(self: *const PTY) bool {
+        var status: i32 = undefined;
+        // WNOHANG: 非阻塞，如果没有子进程退出，立即返回 0
+        const pid = c.waitpid(self.pid, &status, c.WNOHANG);
+        if (pid < 0) {
+            // waitpid 失败，可能进程已经不存在了
+            return false;
+        }
+        if (pid == 0) {
+            // 子进程还在运行
+            return true;
+        }
+        // pid > 0 表示子进程已退出
+        return false;
     }
 };

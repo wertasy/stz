@@ -142,56 +142,46 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
 
     // 滑动屏幕内容以保持光标位置
     // 如果光标在新屏幕外面，向上滚动屏幕
+    var valid_rows: usize = 0;
     if (term.c.y >= new_row) {
         const shift = term.c.y - new_row + 1;
         // 释放顶部的行
         for (0..shift) |y| {
-            if (term.line) |lines| {
-                allocator.free(lines[y]);
-            }
-            if (term.alt) |alt| {
-                allocator.free(alt[y]);
-            }
+            if (term.line) |lines| allocator.free(lines[y]);
+            if (term.alt) |alt| allocator.free(alt[y]);
         }
-        // 移动剩余的行
+
+        valid_rows = old_row - shift;
+        // 如果有效行数依然超过新屏幕高度，进一步释放
+        if (valid_rows > new_row) {
+            for (new_row..valid_rows) |y| {
+                if (term.line) |lines| allocator.free(lines[y + shift]);
+                if (term.alt) |alt| allocator.free(alt[y + shift]);
+            }
+            valid_rows = new_row;
+        }
+
+        // 移动剩余的行到顶部
         if (term.line) |lines| {
-            var dest: usize = 0;
-            for (shift..old_row) |y| {
-                if (dest < new_row) {
-                    lines[dest] = lines[y];
-                    dest += 1;
-                }
+            for (0..valid_rows) |y| {
+                lines[y] = lines[y + shift];
             }
         }
         if (term.alt) |alt| {
-            var dest: usize = 0;
-            for (shift..old_row) |y| {
-                if (dest < new_row) {
-                    alt[dest] = alt[y];
-                    dest += 1;
-                }
+            for (0..valid_rows) |y| {
+                alt[y] = alt[y + shift];
             }
         }
-        // 释放底部的行
-        for (new_row..old_row) |y| {
-            if (term.line) |lines| {
-                allocator.free(lines[y]);
-            }
-            if (term.alt) |alt| {
-                allocator.free(alt[y]);
-            }
-        }
+        term.c.y -= shift;
     } else {
-        // 释放超出新大小的行（仅在缩小屏幕时）
+        valid_rows = old_row;
+        // 如果新屏幕比旧屏幕矮，释放超出的行
         if (new_row < old_row) {
             for (new_row..old_row) |y| {
-                if (term.line) |lines| {
-                    allocator.free(lines[y]);
-                }
-                if (term.alt) |alt| {
-                    allocator.free(alt[y]);
-                }
+                if (term.line) |lines| allocator.free(lines[y]);
+                if (term.alt) |alt| allocator.free(alt[y]);
             }
+            valid_rows = new_row;
         }
     }
 
@@ -199,9 +189,8 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     term.line = try allocator.realloc(term.line.?, new_row);
     term.alt = try allocator.realloc(term.alt.?, new_row);
 
-    // 调整每行的宽度
-    const minrow = @min(new_row, old_row);
-    for (0..minrow) |y| {
+    // 调整现有行的宽度
+    for (0..valid_rows) |y| {
         term.line.?[y] = try allocator.realloc(term.line.?[y], new_col);
         term.alt.?[y] = try allocator.realloc(term.alt.?[y], new_col);
 
@@ -214,8 +203,8 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
         }
     }
 
-    // 分配新的行（如果有）
-    for (minrow..new_row) |y| {
+    // 分配并初始化新行
+    for (valid_rows..new_row) |y| {
         term.line.?[y] = try allocator.alloc(Glyph, new_col);
         term.alt.?[y] = try allocator.alloc(Glyph, new_col);
         for (0..new_col) |x| {

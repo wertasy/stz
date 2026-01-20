@@ -5,7 +5,7 @@ const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
 });
-const sdl = @import("modules/sdl.zig");
+const x11 = @import("modules/x11.zig");
 
 const Terminal = @import("modules/terminal.zig").Terminal;
 const PTY = @import("modules/pty.zig").PTY;
@@ -67,7 +67,7 @@ pub fn main() !u8 {
     var input = Input.init(&pty);
 
     // 初始化选择器
-    var selector = Selector.init(allocator);
+    // var selector = Selector.init(allocator);
 
     // 初始化 URL 检测器
     var url_detector = UrlDetector.init(&terminal.term, allocator);
@@ -77,9 +77,9 @@ pub fn main() !u8 {
     defer allocator.free(read_buffer);
 
     var quit: bool = false;
-    var mouse_pressed: bool = false;
-    var mouse_x: usize = 0;
-    var mouse_y: usize = 0;
+    // var mouse_pressed: bool = false;
+    // var mouse_x: usize = 0;
+    // var mouse_y: usize = 0;
 
     while (!quit) {
         // 读取 PTY 数据
@@ -98,113 +98,47 @@ pub fn main() !u8 {
 
             // 检测并高亮 URL
             try url_detector.highlightUrls();
+
+            // 渲染
+            try renderer.render(&terminal.term);
+            try renderer.renderCursor(&terminal.term);
+            window.present();
         }
 
-        // 处理 SDL 事件
-        while (true) {
-            const event = window.pollEvent() orelse break;
-
+        // 处理 X11 事件
+        while (window.pollEvent()) |event| {
             switch (event.type) {
-                sdl.SDL_QUIT => {
-                    std.log.info("退出请求\n", .{});
-                    quit = true;
-                    break;
+                x11.ClientMessage => {
+                    // TODO: Handle WM_DELETE_WINDOW
+                    // if (event.xclient.data.l[0] == wm_delete_window) ...
                 },
-
-                sdl.SDL_KEYDOWN => {
-                    // 处理键盘输入
-                    try input.handleKey(&event.key);
+                x11.KeyPress => {
+                    try input.handleKey(&event.xkey);
                 },
+                x11.ConfigureNotify => {
+                    const ev = event.xconfigure;
+                    const new_w = ev.width;
+                    const new_h = ev.height;
 
-                sdl.SDL_KEYUP => {
-                    // 释放键
-                },
+                    if (new_w != window.width or new_h != window.height) {
+                        window.width = @intCast(new_w);
+                        window.height = @intCast(new_h);
+                        window.resizeBuffer(@intCast(new_w), @intCast(new_h));
 
-                sdl.SDL_MOUSEBUTTONDOWN => {
-                    // 鼠标按下
-                    const button = event.button.button;
-
-                    if (button == sdl.SDL_BUTTON_LEFT) {
-                        if (!mouse_pressed) {
-                            // 开始选择
-                            selector.start(mouse_x, mouse_y, .word);
-                            mouse_pressed = true;
-                        }
+                        // Resize terminal
+                        // ... calculation logic ...
+                        // try terminal.resize(new_rows, new_cols);
+                        // try pty.resize(new_cols, new_rows);
                     }
                 },
-
-                sdl.SDL_MOUSEBUTTONUP => {
-                    // 鼠标释放
-                    const button = event.button.button;
-
-                    if (button == sdl.SDL_BUTTON_LEFT and mouse_pressed) {
-                        // 结束选择并复制
-                        selector.clearHighlights(&terminal.term);
-                        try selector.copyToClipboard();
-                        try url_detector.highlightUrls();
-                        mouse_pressed = false;
-                    }
+                x11.Expose => {
+                    try renderer.render(&terminal.term);
+                    try renderer.renderCursor(&terminal.term);
+                    window.present();
                 },
-
-                sdl.SDL_MOUSEMOTION => {
-                    // 鼠标移动
-                    if (mouse_pressed) {
-                        // 扩展选择
-                        const rect_x = @as(i32, @intCast(event.motion.x)) - @as(i32, @intCast(config.Config.window.border_pixels));
-                        const rect_y = @as(i32, @intCast(event.motion.y)) - @as(i32, @intCast(config.Config.window.border_pixels));
-                        const cell_width_i32 = @as(i32, @intCast(window.cell_width));
-                        const cell_height_i32 = @as(i32, @intCast(window.cell_height));
-                        const col = @max(0, @min(@divTrunc(rect_x, cell_width_i32), @as(i32, @intCast(cols)) - 1));
-                        const row = @max(0, @min(@divTrunc(rect_y, cell_height_i32), @as(i32, @intCast(rows)) - 1));
-
-                        selector.extend(col, row, .regular, false);
-                    }
-                    const rect_x = @as(i32, @intCast(event.motion.x)) - @as(i32, @intCast(config.Config.window.border_pixels));
-                    const rect_y = @as(i32, @intCast(event.motion.y)) - @as(i32, @intCast(config.Config.window.border_pixels));
-                    const cell_width_i32 = @as(i32, @intCast(window.cell_width));
-                    const cell_height_i32 = @as(i32, @intCast(window.cell_height));
-                    mouse_x = @max(0, @min(@divTrunc(rect_x, cell_width_i32), @as(i32, @intCast(cols)) - 1));
-                    mouse_y = @max(0, @min(@divTrunc(rect_y, cell_height_i32), @as(i32, @intCast(rows)) - 1));
-                },
-
-                sdl.SDL_WINDOWEVENT => {
-                    // 窗口事件
-                    if (event.window.event == sdl.SDL_WINDOWEVENT_RESIZED) {
-                        const new_w = event.window.data1;
-                        const new_h = event.window.data2;
-                        std.log.info("窗口调整: {d}x{d}\n", .{ new_w, new_h });
-
-                        // 计算新的列数和行数
-                        const border_w = @as(i32, @intCast(config.Config.window.border_pixels)) * 2;
-                        const new_cols_w = new_w - border_w;
-                        const new_rows_h = new_h - border_w;
-                        const cell_w_i32 = @as(i32, @intCast(window.cell_width));
-                        const cell_h_i32 = @as(i32, @intCast(window.cell_height));
-                        const new_cols = @max(config.Config.window.min_cols, @as(usize, @intCast(@divTrunc(new_cols_w, cell_w_i32))));
-                        const new_rows = @max(config.Config.window.min_rows, @as(usize, @intCast(@divTrunc(new_rows_h, cell_h_i32))));
-
-                        // 调整终端
-                        try terminal.resize(new_rows, new_cols);
-
-                        // 调整 PTY
-                        try pty.resize(new_cols, new_rows);
-                    }
-                },
-
                 else => {},
             }
         }
-
-        // 渲染终端内容
-        try renderer.render(&terminal.term);
-
-        // 渲染光标
-        try renderer.renderCursor(&terminal.term);
-
-        // 呈现
-        window.present();
-
-        // 垂直同步由 SDL_RENDERER_PRESENTVSYNC 自动处理
     }
 
     // 清除 URL 高亮

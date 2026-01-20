@@ -17,11 +17,12 @@ pub fn build(b: *std.Build) void {
         .root_module = root_module,
     });
 
-    // 链接 SDL2
+    // 链接 X11 和相关库
     exe.linkLibC();
-    exe.linkSystemLibrary("SDL2");
+    exe.linkSystemLibrary("X11");
+    exe.linkSystemLibrary("Xft");
     exe.linkSystemLibrary("fontconfig");
-    exe.linkSystemLibrary("freetype2");
+    exe.linkSystemLibrary("freetype");
 
     b.installArtifact(exe);
 

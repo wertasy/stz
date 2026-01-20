@@ -1,121 +1,143 @@
-//! SDL 窗口系统抽象层
-//! 处理 SDL2 窗口创建、事件循环等
-
+//! X11 窗口系统抽象层
 const std = @import("std");
-const sdl = @import("sdl.zig");
+const x11 = @import("x11.zig");
 const config = @import("config.zig");
 
 pub const WindowError = error{
-    InitFailed,
+    OpenDisplayFailed,
+    CreateColormapFailed,
     CreateWindowFailed,
-    CreateRendererFailed,
+    CreateGCFailed,
 };
 
-/// 窗口结构
 pub const Window = struct {
-    window: *sdl.SDL_Window,
-    renderer: *sdl.SDL_Renderer,
-    font: ?*anyopaque = null, // TODO: 添加字体支持
+    dpy: *x11.Display,
+    win: x11.Window,
+    screen: i32,
+    root: x11.Window,
+    vis: *x11.Visual,
+    cmap: x11.Colormap,
+    gc: x11.GC,
+
+    // Double buffering
+    buf: x11.Pixmap = 0,
+    buf_w: u32 = 0,
+    buf_h: u32 = 0,
+
+    // Dimensions
+    width: u32,
+    height: u32,
+    cell_width: u32,
+    cell_height: u32,
+    cols: usize,
+    rows: usize,
+
     allocator: std.mem.Allocator,
 
-    width: u32 = 0,
-    height: u32 = 0,
-    cell_width: u32 = 0,
-    cell_height: u32 = 0,
-    cols: usize = 0,
-    rows: usize = 0,
-
-    /// 初始化窗口
     pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Allocator) !Window {
+        const dpy = x11.XOpenDisplay(null) orelse return error.OpenDisplayFailed;
+        const screen = x11.XDefaultScreen(dpy);
+        const root = x11.XRootWindow(dpy, screen);
+        const vis = x11.XDefaultVisual(dpy, screen);
 
-        // 初始化 SDL
-        if (sdl.SDL_Init(sdl.SDL_INIT_VIDEO) < 0) {
-            std.log.err("SDL init failed: {s}\n", .{sdl.SDL_GetError()});
-            return error.InitFailed;
-        }
+        // TODO: Try to find a visual with alpha channel support for transparency?
+        // For now use default
 
-        // 计算窗口大小
+        const cmap = x11.XCreateColormap(dpy, root, vis, x11.AllocNone);
+
+        // Calculate size
+        // TODO: Get actual font metrics first. For now estimate.
         const font_size = config.Config.font.size;
+        const cell_w = font_size;
+        const cell_h = font_size * 2;
         const border = config.Config.window.border_pixels;
 
-        const cell_w = font_size; // TODO: 实际字体度量
-        const cell_h = font_size * 2;
+        const win_w = cols * cell_w + border * 2;
+        const win_h = rows * cell_h + border * 2;
 
-        const win_w = @as(c_int, @intCast(cols * cell_w + border * 2));
-        const win_h = @as(c_int, @intCast(rows * cell_h + border * 2));
+        var attrs: x11.XSetWindowAttributes = undefined;
+        attrs.background_pixel = 0; // Black
+        attrs.border_pixel = 0;
+        attrs.colormap = cmap;
+        attrs.event_mask = x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask |
+            x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask |
+            x11.ExposureMask | x11.FocusChangeMask;
 
-        // 创建窗口
-        const window = sdl.SDL_CreateWindow(
-            title,
-            sdl.SDL_WINDOWPOS_UNDEFINED,
-            sdl.SDL_WINDOWPOS_UNDEFINED,
-            win_w,
-            win_h,
-            sdl.SDL_WINDOW_RESIZABLE | sdl.SDL_WINDOW_HIDDEN,
-        ) orelse {
-            std.log.err("Window creation failed: {s}\n", .{sdl.SDL_GetError()});
-            return error.CreateWindowFailed;
-        };
+        const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWEventMask | x11.CWColormap, &attrs);
 
-        // 创建渲染器
-        const renderer = sdl.SDL_CreateRenderer(
-            window,
-            -1,
-            sdl.SDL_RENDERER_ACCELERATED | sdl.SDL_RENDERER_PRESENTVSYNC,
-        ) orelse {
-            std.log.err("Renderer creation failed: {s}\n", .{sdl.SDL_GetError()});
-            return error.CreateRendererFailed;
-        };
+        if (win == 0) return error.CreateWindowFailed;
+
+        // Set title
+        _ = x11.XStoreName(dpy, win, title);
+
+        // Create GC
+        const gc = x11.XCreateGC(dpy, win, 0, null);
+        if (gc == null) return error.CreateGCFailed;
 
         return Window{
-            .window = window,
-            .renderer = renderer,
-            .allocator = allocator,
+            .dpy = dpy,
+            .win = win,
+            .screen = screen,
+            .root = root,
+            .vis = vis,
+            .cmap = cmap,
+            .gc = gc,
             .width = @intCast(win_w),
             .height = @intCast(win_h),
-            .cell_width = cell_w,
-            .cell_height = cell_h,
+            .cell_width = @intCast(cell_w),
+            .cell_height = @intCast(cell_h),
             .cols = cols,
             .rows = rows,
+            .allocator = allocator,
         };
     }
 
-    /// 清理窗口
     pub fn deinit(self: *Window) void {
-        sdl.SDL_DestroyRenderer(self.renderer);
-        sdl.SDL_DestroyWindow(self.window);
-        sdl.SDL_Quit();
+        if (self.buf != 0) {
+            _ = x11.XFreePixmap(self.dpy, self.buf);
+        }
+        _ = x11.XFreeGC(self.dpy, self.gc);
+        _ = x11.XDestroyWindow(self.dpy, self.win);
+        _ = x11.XCloseDisplay(self.dpy);
     }
 
-    /// 显示窗口
     pub fn show(self: *Window) void {
-        sdl.SDL_ShowWindow(self.window);
+        _ = x11.XMapWindow(self.dpy, self.win);
+        _ = x11.XSync(self.dpy, x11.False);
     }
 
-    /// 处理事件
-    pub fn pollEvent(self: *Window) ?sdl.SDL_Event {
-        _ = self;
-        var event: sdl.SDL_Event = undefined;
-        if (sdl.SDL_PollEvent(&event) != 0) {
+    pub fn pollEvent(self: *Window) ?x11.XEvent {
+        if (x11.XPending(self.dpy) > 0) {
+            var event: x11.XEvent = undefined;
+            _ = x11.XNextEvent(self.dpy, &event);
             return event;
         }
         return null;
     }
 
-    /// 清屏
+    pub fn resizeBuffer(self: *Window, w: u32, h: u32) void {
+        if (self.buf != 0 and self.buf_w == w and self.buf_h == h) return;
+
+        if (self.buf != 0) {
+            _ = x11.XFreePixmap(self.dpy, self.buf);
+        }
+
+        self.buf = x11.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.XDefaultDepth(self.dpy, self.screen)));
+        self.buf_w = w;
+        self.buf_h = h;
+    }
+
+    // Clear buffer (fills with bg color)
     pub fn clear(self: *Window) void {
-        _ = sdl.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255);
-        _ = sdl.SDL_RenderClear(self.renderer);
-    }
-
-    /// 呈现
-    pub fn present(self: *Window) void {
-        sdl.SDL_RenderPresent(self.renderer);
-    }
-
-    /// 等待垂直同步
-    pub fn waitVSync(self: *Window) void {
         _ = self;
-        // SDL_RENDERER_PRESENTVSYNC 会自动处理
+        // This should probably be done via XftDrawRect in renderer
+    }
+
+    // Copy buffer to window
+    pub fn present(self: *Window) void {
+        if (self.buf != 0) {
+            _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
+            _ = x11.XSync(self.dpy, x11.False); // Or XFlush
+        }
     }
 };

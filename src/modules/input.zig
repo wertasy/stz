@@ -2,7 +2,7 @@
 //! 将 SDL2 输入事件转换为终端转义序列
 
 const std = @import("std");
-const sdl = @import("sdl.zig");
+const x11 = @import("x11.zig");
 const PTY = @import("pty.zig").PTY;
 
 pub const InputError = error{
@@ -27,63 +27,62 @@ pub const Input = struct {
     }
 
     /// 处理键盘事件
-    pub fn handleKey(self: *Input, event: *const sdl.SDL_KeyboardEvent) !void {
-        const scancode = event.keysym.scancode;
-        const keycode = event.keysym.sym;
-        const mod = event.keysym.mod;
+    pub fn handleKey(self: *Input, event: *const x11.C.XKeyEvent) !void {
+        var keysym: x11.KeySym = 0;
+
+        keysym = x11.C.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.C.ShiftMask) != 0) 1 else 0);
+
         const state = event.state;
+        const ctrl = (state & x11.C.ControlMask) != 0;
+        const alt = (state & x11.C.Mod1Mask) != 0; // Usually Alt
+        const shift = (state & x11.C.ShiftMask) != 0;
 
         // Log input for debugging
-        std.log.info("handleKey: scancode={d}, keycode={d}, mod={d}, state={d}", .{ scancode, keycode, mod, state });
+        std.log.info("handleKey: keycode={d}, keysym={d}, state={d}", .{ event.keycode, keysym, state });
 
-        // 只处理按下事件
-        if (state != sdl.SDL_PRESSED) {
+        // Handle special keys
+        if (self.handleSpecialKey(keysym, ctrl, alt, shift)) |seq| {
+            _ = try self.pty.write(seq);
             return;
         }
 
-        // 检查修饰键
-        const ctrl = (mod & sdl.KMOD_LCTRL) != 0 or (mod & sdl.KMOD_RCTRL) != 0;
-        const alt = (mod & sdl.KMOD_LALT) != 0 or (mod & sdl.KMOD_RALT) != 0;
-        const shift = (mod & sdl.KMOD_LSHIFT) != 0 or (mod & sdl.KMOD_RSHIFT) != 0;
-
-        // 处理特殊键
-        switch (scancode) {
-            sdl.SDL_SCANCODE_ESCAPE => try self.writeEsc(),
-            sdl.SDL_SCANCODE_RETURN => try self.writeReturn(alt),
-            sdl.SDL_SCANCODE_TAB => try self.writeTab(alt),
-            sdl.SDL_SCANCODE_BACKSPACE => try self.writeBackspace(alt, ctrl),
-            sdl.SDL_SCANCODE_DELETE => try self.writeDelete(alt, ctrl),
-            sdl.SDL_SCANCODE_UP => try self.writeArrow(alt, 'A', ctrl, shift),
-            sdl.SDL_SCANCODE_DOWN => try self.writeArrow(alt, 'B', ctrl, shift),
-            sdl.SDL_SCANCODE_LEFT => try self.writeArrow(alt, 'D', ctrl, shift),
-            sdl.SDL_SCANCODE_RIGHT => try self.writeArrow(alt, 'C', ctrl, shift),
-            sdl.SDL_SCANCODE_HOME => try self.writeHome(alt, ctrl),
-            sdl.SDL_SCANCODE_END => try self.writeEnd(alt, ctrl),
-            sdl.SDL_SCANCODE_PAGEUP => try self.writePageUp(alt, ctrl),
-            sdl.SDL_SCANCODE_PAGEDOWN => try self.writePageDown(alt, ctrl),
-            sdl.SDL_SCANCODE_F1 => try self.writeFunction(1, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F2 => try self.writeFunction(2, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F3 => try self.writeFunction(3, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F4 => try self.writeFunction(4, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F5 => try self.writeFunction(5, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F6 => try self.writeFunction(6, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F7 => try self.writeFunction(7, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F8 => try self.writeFunction(8, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F9 => try self.writeFunction(9, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F10 => try self.writeFunction(10, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F11 => try self.writeFunction(11, shift, ctrl, alt),
-            sdl.SDL_SCANCODE_F12 => try self.writeFunction(12, shift, ctrl, alt),
-            else => {
-                // 可打印字符
-                if (keycode >= 32 and keycode <= 126) {
-                    try self.writePrintable(@intCast(keycode), alt, ctrl, shift);
-                }
-            },
+        // Handle normal characters
+        if (keysym >= 32 and keysym <= 126) {
+            try self.writePrintable(@intCast(keysym), alt, ctrl, shift);
         }
     }
 
+    fn handleSpecialKey(self: *Input, keysym: x11.KeySym, ctrl: bool, alt: bool, shift: bool) ?[]const u8 {
+        _ = self;
+        _ = ctrl;
+        _ = alt;
+        _ = shift;
+        // Map X11 KeySyms to sequences
+        // TODO: Complete this mapping using X11 keysymdefs
+        // For now, minimal set
+        const XK_Return = 0xFF0D;
+        const XK_Escape = 0xFF1B;
+        const XK_BackSpace = 0xFF08;
+        const XK_Tab = 0xFF09;
+        const XK_Up = 0xFF52;
+        const XK_Down = 0xFF54;
+        const XK_Left = 0xFF51;
+        const XK_Right = 0xFF53;
+
+        if (keysym == XK_Return) return "\r";
+        if (keysym == XK_Escape) return "\x1B";
+        if (keysym == XK_BackSpace) return "\x7F";
+        if (keysym == XK_Tab) return "\t";
+        if (keysym == XK_Up) return "\x1B[A";
+        if (keysym == XK_Down) return "\x1B[B";
+        if (keysym == XK_Left) return "\x1B[D";
+        if (keysym == XK_Right) return "\x1B[C";
+
+        return null;
+    }
+
     /// 处理鼠标事件
-    pub fn handleMouse(self: *Input, event: *const sdl.SDL_MouseButtonEvent) !void {
+    pub fn handleMouse(self: *Input, event: *const anyopaque) !void {
         // TODO: 实现鼠标报告
         _ = self;
         _ = event;

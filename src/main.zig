@@ -2,6 +2,9 @@
 //! 主程序入口和事件循环（SDL2 版本）
 
 const std = @import("std");
+const c = @cImport({
+    @cInclude("stdlib.h");
+});
 const sdl = @import("modules/sdl.zig");
 
 const Terminal = @import("modules/terminal.zig").Terminal;
@@ -41,31 +44,28 @@ pub fn main() !u8 {
     std.log.info("PTY PID: {d}\n", .{pty.pid});
 
     // 设置 TERM 环境变量
-    try std.process.setVar(allocator, "TERM", config.Config.term_type);
+    _ = c.setenv("TERM", config.Config.term_type, 1);
 
     // 初始化终端
-    var terminal = try Terminal.init(allocator, cols, rows);
+    var terminal = try Terminal.init(rows, cols, allocator);
     defer terminal.deinit();
 
     // 初始化窗口
-    var window = try Window.init("stz", cols, rows);
+    var window = try Window.init("stz", cols, rows, allocator);
     defer window.deinit();
 
     // 初始化渲染器
-    var renderer = try Renderer.init(allocator, window.renderer_ptr);
+    var renderer = try Renderer.init(&window, allocator);
     defer renderer.deinit();
 
     // 初始化输入处理器
-    var input = try Input.init(&pty, &terminal);
-    defer input.deinit();
+    var input = Input.init(pty.master);
 
     // 初始化选择器
-    var selector = try Selector.init(allocator);
-    defer selector.deinit();
+    var selector = Selector.init(allocator);
 
     // 初始化 URL 检测器
-    var url_detector = try UrlDetector.init(allocator, &terminal.term);
-    defer url_detector.deinit();
+    var url_detector = UrlDetector.init(&terminal.term, allocator);
 
     // 主事件循环
     const read_buffer = try allocator.alloc(u8, 8192);

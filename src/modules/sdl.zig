@@ -17,11 +17,15 @@ pub const SDL_Delay = c.SDL_Delay;
 pub const SDL_ShowWindow = c.SDL_ShowWindow;
 pub const SDL_GetError = c.SDL_GetError;
 pub const SDL_RenderClear = c.SDL_RenderClear;
+pub const SDL_CreateTexture = c.SDL_CreateTexture;
+pub const SDL_DestroyTexture = c.SDL_DestroyTexture;
+pub const SDL_RenderCopy = c.SDL_RenderCopy;
 
 pub const SDL_Event = c.SDL_Event;
 pub const SDL_Window = c.SDL_Window;
 pub const SDL_Renderer = c.SDL_Renderer;
 pub const SDL_Rect = c.SDL_Rect;
+pub const SDL_Texture = c.SDL_Texture;
 
 // Event types
 pub const SDL_QUIT = c.SDL_QUIT;

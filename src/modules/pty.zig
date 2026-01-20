@@ -3,6 +3,14 @@
 
 const std = @import("std");
 const builtin = @import("builtin");
+const c = @cImport({
+    @cInclude("pty.h");
+    @cInclude("sys/ioctl.h");
+    @cInclude("stdlib.h");
+    @cInclude("unistd.h");
+    @cInclude("termios.h");
+    @cInclude("signal.h");
+});
 
 pub const PtyError = error{
     OpenFailed,
@@ -28,42 +36,22 @@ pub const PTY = struct {
         };
 
         // 打开伪终端
-        if (comptime builtin.os.tag == .linux) {
-            // Linux: 使用 openpty
-            var winsize: std.posix.winsize = .{
-                .ws_col = @intCast(cols),
-                .ws_row = @intCast(rows),
-                .ws_xpixel = 0,
-                .ws_ypixel = 0,
-            };
+        var winsize: c.struct_winsize = .{
+            .ws_col = @intCast(cols),
+            .ws_row = @intCast(rows),
+            .ws_xpixel = 0,
+            .ws_ypixel = 0,
+        };
 
-            const ret = std.os.linux.openpty(null, &pty.slave, &winsize, null);
-            if (ret == -1) {
-                return error.OpenFailed;
-            }
-            pty.master = @intCast(ret);
-        } else if (comptime builtin.os.tag == .freebsd or builtin.os.tag == .openbsd) {
-            // BSD: 使用 openpty
-            var name: [1024]u8 = undefined;
-            var winsize: std.posix.winsize = .{
-                .ws_col = @intCast(cols),
-                .ws_row = @intCast(rows),
-            };
-
-            const ret = std.os.system.openpty(&name, &pty.slave, &winsize);
-            if (ret == -1) {
-                return error.OpenFailed;
-            }
-            pty.master = @intCast(ret);
-        } else {
+        if (c.openpty(&pty.master, &pty.slave, null, null, &winsize) != 0) {
             return error.OpenFailed;
         }
 
         // Fork 子进程
-        const pid = std.os.fork() catch |err| {
-            _ = err;
+        const pid = c.fork();
+        if (pid < 0) {
             return error.ForkFailed;
-        };
+        }
 
         if (pid == 0) {
             // 子进程
@@ -73,7 +61,7 @@ pub const PTY = struct {
             pty.pid = pid;
             // 关闭 slave 端
             if (pty.slave != -1) {
-                std.os.close(pty.slave);
+                _ = c.close(pty.slave);
             }
         }
 
@@ -83,74 +71,67 @@ pub const PTY = struct {
     /// 运行子进程
     fn runChild(self: *PTY, shell: ?[:0]const u8) !void {
         // 设置会话 ID
-        _ = std.os.setsid(std.os.getpid()) catch |err| {
-            _ = err;
-            std.os.exit(1);
-        };
+        _ = c.setsid();
 
         // 重定向 stdio 到 PTY
         if (self.slave == -1) return;
-        _ = std.os.dup2(self.slave, std.os.STDIN_FILENO);
-        _ = std.os.dup2(self.slave, std.os.STDOUT_FILENO);
-        _ = std.os.dup2(self.slave, std.os.STDERR_FILENO);
+        _ = c.dup2(self.slave, c.STDIN_FILENO);
+        _ = c.dup2(self.slave, c.STDOUT_FILENO);
+        _ = c.dup2(self.slave, c.STDERR_FILENO);
 
         // 关闭不需要的文件描述符
-        std.os.close(self.slave);
-        std.os.close(self.master);
+        _ = c.close(self.slave);
+        _ = c.close(self.master);
 
         // 设置终端类型
-        if (std.os.getenv("TERM")) |term| {
-            std.os.setenv("TERM", term) catch {};
+        if (std.posix.getenv("TERM")) |term| {
+            _ = c.setenv("TERM", term, 1);
         }
 
         // 执行 shell
         const shell_path = shell orelse "/bin/sh";
         const argv = [_]?[*:0]const u8{ shell_path, null };
 
-        std.os.execv(shell_path, &argv) catch |err| {
-            _ = err;
-            std.os.exit(1);
-        };
+        _ = c.execvp(shell_path, @ptrCast(&argv));
+        c.exit(1);
     }
 
     /// 读取数据
     pub fn read(self: *PTY, buffer: []u8) !usize {
-        const n = std.os.read(self.master, buffer) catch |err| {
-            _ = err;
+        const n = c.read(self.master, buffer.ptr, buffer.len);
+        if (n < 0) {
             return error.ReadFailed;
-        };
-        return n;
+        }
+        return @intCast(n);
     }
 
     /// 写入数据
     pub fn write(self: *PTY, data: []const u8) !usize {
         var written: usize = 0;
         while (written < data.len) {
-            const n = std.os.write(self.master, data[written..]) catch |err| {
-                _ = err;
+            const n = c.write(self.master, data[written..].ptr, data.len - written);
+            if (n < 0) {
                 return error.WriteFailed;
-            };
+            }
             if (n == 0) {
                 return error.WriteFailed;
             }
-            written += n;
+            written += @intCast(n);
         }
         return written;
     }
 
     /// 调整大小
     pub fn resize(self: *PTY, cols: usize, rows: usize) !void {
-        if (comptime builtin.os.tag == .linux) {
-            var winsize: std.posix.winsize = .{
-                .ws_col = @intCast(cols),
-                .ws_row = @intCast(rows),
-                .ws_xpixel = 0,
-                .ws_ypixel = 0,
-            };
-            _ = std.os.linux.ioctl(self.master, std.os.linux.T.IOCGWINSZ, &winsize) catch |err| {
-                _ = err;
-                return error.WriteFailed;
-            };
+        var winsize: c.struct_winsize = .{
+            .ws_col = @intCast(cols),
+            .ws_row = @intCast(rows),
+            .ws_xpixel = 0,
+            .ws_ypixel = 0,
+        };
+
+        if (c.ioctl(self.master, c.TIOCSWINSZ, &winsize) != 0) {
+            return error.WriteFailed;
         }
 
         self.cols = cols;
@@ -160,29 +141,29 @@ pub const PTY = struct {
     /// 关闭
     pub fn close(self: *PTY) void {
         if (self.master != -1) {
-            std.os.close(self.master);
+            _ = c.close(self.master);
         }
         if (self.slave != -1) {
-            std.os.close(self.slave);
+            _ = c.close(self.slave);
         }
         if (self.pid != 0) {
             // 发送 SIGHUP 给子进程
-            _ = std.os.kill(self.pid, std.os.SIG.HUP) catch {};
+            _ = c.kill(self.pid, c.SIGHUP);
         }
     }
 
     /// 检查子进程状态
     pub fn wait(self: *PTY) !u8 {
         var status: i32 = undefined;
-        _ = std.os.waitpid(self.pid, &status, 0) catch |err| {
-            _ = err;
+        const pid = c.waitpid(self.pid, &status, 0);
+        if (pid < 0) {
             return 0;
-        };
+        }
 
-        if (std.os.W.IFEXITED(status)) {
-            return @intCast(std.os.W.EXITSTATUS(status));
-        } else if (std.os.W.IFSIGNALED(status)) {
-            const sig = std.os.W.TERMSIG(status);
+        if (c.WIFEXITED(status)) {
+            return @intCast(c.WEXITSTATUS(status));
+        } else if (c.WIFSIGNALED(status)) {
+            const sig = c.WTERMSIG(status);
             return @intCast(sig);
         }
 

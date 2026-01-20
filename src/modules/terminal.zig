@@ -26,10 +26,9 @@ pub const Terminal = struct {
 
     /// 初始化终端
     pub fn init(row: usize, col: usize, allocator: std.mem.Allocator) !Terminal {
-        var t = Terminal{
-            .term = Term{
-                .allocator = allocator,
-            },
+        var t: Terminal = undefined;
+        t.allocator = allocator;
+        t.term = Term{
             .allocator = allocator,
         };
 

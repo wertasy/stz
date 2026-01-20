@@ -17,36 +17,13 @@ pub fn decode(utf8_bytes: []const u8) Utf8Error!u21 {
     }
 
     // 使用 Zig 标准库的 utf8Decode
-    const codepoint = utf8.utf8Decode(utf8_bytes) catch |err| {
-        switch (err) {
-            error.Utf8InvalidStartByte => return error.InvalidUtf8,
-            error.Utf8InvalidContinuationByte => return error.InvalidUtf8,
-            error.Utf8OverlongEncoding => return error.OverlongEncoding,
-            error.Utf8ExpectedContinuationByte => return error.InvalidUtf8,
-            error.Utf8CodepointTooLarge => return error.InvalidCodepoint,
-            error.Utf8EncodesSurrogateHalf => return error.InvalidCodepoint,
-        }
-    };
-
-    return codepoint;
+    return utf8.utf8Decode(utf8_bytes) catch error.InvalidUtf8;
 }
 
 /// 将 Unicode 码点编码为 UTF-8 字节序列
 pub fn encode(codepoint: u21, buffer: []u8) Utf8Error!usize {
-    // 检查码点有效性
-    if (!std.unicode.isValidCodepoint(codepoint)) {
-        return error.InvalidCodepoint;
-    }
-
     // 使用 Zig 标准库的 utf8Encode
-    const len = utf8.utf8Encode(codepoint, buffer) catch |err| {
-        switch (err) {
-            error.CodepointTooLarge => return error.InvalidCodepoint,
-            error.Utf8CannotEncodeSurrogateHalf => return error.InvalidCodepoint,
-        }
-    };
-
-    return len;
+    return utf8.utf8Encode(codepoint, buffer) catch error.InvalidCodepoint;
 }
 
 /// 计算字符显示宽度（列数）
@@ -58,10 +35,8 @@ pub fn runeWidth(codepoint: u21) u8 {
     }
 
     // 使用 Zig 标准库的 unicode 宽度计算
-    return @truncate(utf8.utf16LeToUtf8Len(&[2]u16{
-        @as(u16, codepoint),
-        @as(u16, codepoint >> 16),
-    }));
+    const width = utf8.utf8CodepointSequenceLength(codepoint) catch 1;
+    return @intCast(width);
 }
 
 /// 获取 UTF-8 字符的字节长度

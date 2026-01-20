@@ -154,7 +154,7 @@ zig build -Drelease-fast && perf record -g ./zig-out/bin/stz && perf report
 
 ## 参考资料
 
-- [Zig 0.15.2 标准库](http://127.0.0.1:42857/)
+- Zig 0.15.2 标准库路径：/opt/zig-x86_64-linux-0.15.2/lib/std
 - [Zig 学习资源](https://ziglang.org/learn/)
 - [SDL2 文档](https://wiki.libsdl.org/CategoryAPI)
 - [VT100 标准](https://vt100.net/)

@@ -12,7 +12,7 @@ pub const InputError = error{
 
 /// 输入处理器
 pub const Input = struct {
-    pty_master: std.os.fd_t,
+    pty_master: std.posix.fd_t,
     mode: struct {
         app_cursor: bool = false,
         app_keypad: bool = false,
@@ -20,7 +20,7 @@ pub const Input = struct {
     } = .{},
 
     /// 初始化输入处理器
-    pub fn init(pty_master: std.os.fd_t) Input {
+    pub fn init(pty_master: std.posix.fd_t) Input {
         return Input{
             .pty_master = pty_master,
         };

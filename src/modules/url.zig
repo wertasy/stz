@@ -36,8 +36,9 @@ pub const UrlDetector = struct {
         for (0..@min(self.term.row, screen.len)) |y| {
             // 将行转换为字符串
             var line_len: usize = 0;
-            for (0..@min(self.term.col, screen.?[y].len)) |x| {
-                const glyph = screen.?[y][x];
+            const row_start = y * self.term.col;
+            for (0..self.term.col) |x| {
+                const glyph = screen[row_start + x];
                 line_buffer[line_len] = if (glyph.u < 128) @as(u8, glyph.u) else ' ';
                 line_len += 1;
             }

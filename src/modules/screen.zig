@@ -51,10 +51,8 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
     }
 
     // 初始化制表符
-    for (term.tabs.?) |*tabs| {
-        for (tabs) |*tab| {
-            tab.* = false;
-        }
+    for (term.tabs.?) |*tab| {
+        tab.* = false;
     }
 
     // 设置默认制表符间隔（每8列一个）

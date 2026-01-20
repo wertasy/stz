@@ -61,7 +61,7 @@ pub const Window = struct {
         // 创建渲染器
         const renderer = sdl.SDL_CreateRenderer(
             window,
-            null,
+            -1,
             sdl.SDL_RENDERER_ACCELERATED | sdl.SDL_RENDERER_PRESENTVSYNC,
         ) orelse {
             std.log.err("Renderer creation failed: {s}\n", .{sdl.SDL_GetError()});
@@ -72,8 +72,8 @@ pub const Window = struct {
             .window = window,
             .renderer = renderer,
             .allocator = allocator,
-            .width = win_w,
-            .height = win_h,
+            .width = @intCast(win_w),
+            .height = @intCast(win_h),
             .cell_width = cell_w,
             .cell_height = cell_h,
             .cols = cols,
@@ -83,19 +83,12 @@ pub const Window = struct {
 
     /// 清理窗口
     pub fn deinit(self: *Window) void {
-        if (self.renderer) |r| {
-            sdl.SDL_DestroyRenderer(r);
-        }
-        if (self.window) |w| {
-            sdl.SDL_DestroyWindow(w);
-        }
+        sdl.SDL_DestroyRenderer(self.renderer);
     }
 
     /// 显示窗口
     pub fn show(self: *Window) void {
-        if (self.window) |w| {
-            sdl.SDL_ShowWindow(w);
-        }
+        sdl.SDL_ShowWindow(self.window);
     }
 
     /// 处理事件

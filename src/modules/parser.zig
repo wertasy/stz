@@ -55,7 +55,7 @@ pub const Parser = struct {
 
         // 处理控制字符
         if (control) {
-            try self.controlCode(@as(u8, c));
+            try self.controlCode(@intCast(c));
             return;
         }
 
@@ -74,16 +74,16 @@ pub const Parser = struct {
 
         // 处理 CSI 序列
         if (self.term.esc.csi) {
-            if (self.csi.len >= @sizeOf(self.csi.buf) - 1) {
+            if (self.csi.len >= self.csi.buf.len - 1) {
                 self.csiReset();
                 self.term.esc = .{};
                 return;
             }
-            self.csi.buf[self.csi.len] = @as(u8, c);
+            self.csi.buf[self.csi.len] = @truncate(c);
             self.csi.len += 1;
 
             // 检查序列是否完成
-            if ((c >= 0x40 and c <= 0x7E) or self.csi.len >= @sizeOf(self.csi.buf) - 1) {
+            if ((c >= 0x40 and c <= 0x7E) or self.csi.len >= 512 - 1) {
                 self.term.esc = .{};
                 try self.csiParse();
                 try self.csiHandle();
@@ -169,7 +169,7 @@ pub const Parser = struct {
 
     /// 处理转义字符
     fn escapeHandle(self: *Parser, c: u21) !void {
-        const cc = @as(u8, c);
+        const cc: u8 = @truncate(c);
         switch (cc) {
             '[' => {
                 self.term.esc.csi = true;
@@ -234,7 +234,8 @@ pub const Parser = struct {
         self.csi.buf[self.csi.len] = 0;
 
         while (p < self.csi.len and self.csi.narg < 32) {
-            const v = std.fmt.parseInt(i64, std.mem.span(np), 10) catch 0;
+            const np_slice = np[0..p];
+            const v = std.fmt.parseInt(i64, np_slice, 10) catch 0;
             self.csi.arg[self.csi.narg] = v;
             self.csi.narg += 1;
 
@@ -290,8 +291,8 @@ pub const Parser = struct {
                 // 光标移到第 n 列
             },
             'H', 'f' => { // CUP, HVP - 光标位置
-                const row = @as(i32, self.csi.arg[0]);
-                const col = @as(i32, self.csi.arg[1]);
+                const row: i32 = @truncate(self.csi.arg[0]);
+                const col: i32 = @truncate(self.csi.arg[1]);
                 _ = row;
                 _ = col;
                 // 光标移到 (row, col)
@@ -363,8 +364,8 @@ pub const Parser = struct {
                 }
             },
             'r' => { // DECSTBM - 设置滚动区域
-                const top = @as(i32, self.csi.arg[0]);
-                const bot = @as(i32, self.csi.arg[1]);
+                const top: i32 = @truncate(self.csi.arg[0]);
+                const bot: i32 = @truncate(self.csi.arg[1]);
                 _ = top;
                 _ = bot;
                 // 设置滚动区域
@@ -392,9 +393,9 @@ pub const Parser = struct {
             // DEC 私有模式
             switch (self.csi.arg[0]) {
                 1 => self.term.mode.app_cursor = set,
-                5 => self.term.mode.reverse = set,
+                5 => {}, // TODO: reverse mode not implemented
                 6 => {
-                    self.term.c.state.origin = set;
+                    self.term.c.state = .origin;
                 },
                 7 => self.term.mode.wrap = set,
                 25 => self.term.mode.hide_cursor = !set,
@@ -475,7 +476,7 @@ pub const Parser = struct {
         if (self.str.len + 4 >= self.str.siz) {
             // 扩大缓冲区
             const new_size = self.str.siz * 2;
-            const new_buf = try self.allocator.realloc(u8, self.str.buf, new_size);
+            const new_buf = try self.allocator.realloc(self.str.buf, new_size);
             self.str.buf = new_buf;
             self.str.siz = new_size;
         }
@@ -483,7 +484,10 @@ pub const Parser = struct {
         var utf8_buf: [4]u8 = undefined;
         const len = try @import("unicode.zig").encode(c, &utf8_buf);
 
-        std.mem.copy(u8, self.str.buf[self.str.len..][0..len], &utf8_buf);
+        const dest = self.str.buf[self.str.len..][0..len];
+        for (0..len) |i| {
+            dest[i] = utf8_buf[i];
+        }
         self.str.len += len;
     }
 
@@ -499,6 +503,9 @@ pub const Parser = struct {
 
     /// 重置 CSI 缓冲区
     fn csiReset(self: *Parser) void {
-        std.mem.set(u8, 0, @as([*]u8, @ptrCast(&self.csi))[0..@sizeOf(CSIEscape)]);
+        const csi_bytes = @as([*]u8, @ptrCast(&self.csi));
+        for (0..@sizeOf(CSIEscape)) |i| {
+            csi_bytes[i] = 0;
+        }
     }
 };

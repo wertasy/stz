@@ -63,7 +63,6 @@ pub const Printer = struct {
     /// 打印选择内容（printsel）
     pub fn printSelection(self: *Printer, term: *types.Term, sel: *selection.Selector) !void {
         const text = try sel.getText(term);
-        defer self.allocator.free(text);
 
         try self.write(text);
         try self.write("\n");

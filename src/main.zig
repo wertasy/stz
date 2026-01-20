@@ -131,7 +131,7 @@ pub fn main() !u8 {
             screen.setFullDirty(term);
 
             // 强制重绘
-            try renderer.render(term);
+            try renderer.render(term, &selector);
             try renderer.renderCursor(term);
             window.present();
 
@@ -163,8 +163,10 @@ pub fn main() !u8 {
                     const ctrl = (state & x11.ControlMask) != 0;
 
                     if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
+                        selector.clear();
                         terminal.kscrollUp(term.row); // Scroll one screen up
                     } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
+                        selector.clear();
                         terminal.kscrollDown(term.row); // Scroll one screen down
                     } else if (keysym == XK_Print) {
                         // Print key handling
@@ -213,14 +215,14 @@ pub fn main() !u8 {
                             });
 
                             // 重绘
-                            try renderer.render(&terminal.term);
+                            try renderer.render(&terminal.term, &selector);
                             try renderer.renderCursor(&terminal.term);
                             window.present();
                         }
                     }
                 },
                 x11.Expose => {
-                    try renderer.render(&terminal.term);
+                    try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();
                 },
@@ -252,9 +254,9 @@ pub fn main() !u8 {
                         mouse_pressed = true;
                         mouse_x = cx;
                         mouse_y = cy;
-                        selector.start(cx, cy, .word);
                         // Clear previous selection
                         selector.clear();
+                        selector.start(cx, cy, .none);
                     } else if (ev.button == x11.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {
@@ -263,17 +265,19 @@ pub fn main() !u8 {
                     } else if (ev.button == x11.Button3) {
                         // Right click: extend selection or copy
                         mouse_pressed = true;
-                        selector.start(cx, cy, .word);
+                        selector.start(cx, cy, .none);
                     } else if (ev.button == x11.Button4) { // Scroll Up
                         if (terminal.term.mode.mouse) {
                             try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
                         } else {
+                            selector.clear();
                             terminal.kscrollUp(3);
                         }
                     } else if (ev.button == x11.Button5) { // Scroll Down
                         if (terminal.term.mode.mouse) {
                             try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
                         } else {
+                            selector.clear();
                             terminal.kscrollDown(3);
                         }
                     } else {
@@ -304,7 +308,7 @@ pub fn main() !u8 {
                         selector.copyToClipboard() catch {};
 
                         // Redraw to clear selection highlight
-                        try renderer.render(&terminal.term);
+                        try renderer.render(&terminal.term, &selector);
                         try renderer.renderCursor(&terminal.term);
                         window.present();
                     }
@@ -322,7 +326,7 @@ pub fn main() !u8 {
                         selector.extend(cx, cy, .regular, false);
 
                         // Redraw with selection
-                        try renderer.render(&terminal.term);
+                        try renderer.render(&terminal.term, &selector);
                         // Draw selection highlight (simplified: just redraw)
                         window.present();
                     }
@@ -374,20 +378,20 @@ pub fn main() !u8 {
                     std.log.info("SelectionClear received\n", .{});
                     selector.handleSelectionClear(&ev);
                     // Redraw to clear highlight
-                    try renderer.render(&terminal.term);
+                    try renderer.render(&terminal.term, &selector);
                     window.present();
                 },
                 x11.FocusIn => {
                     std.log.info("FocusIn\n", .{});
                     terminal.term.mode.focused = true;
-                    try renderer.render(&terminal.term);
+                    try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();
                 },
                 x11.FocusOut => {
                     std.log.info("FocusOut\n", .{});
                     terminal.term.mode.focused = false;
-                    try renderer.render(&terminal.term);
+                    try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();
                 },
@@ -407,7 +411,7 @@ pub fn main() !u8 {
                 // Time to toggle blink, force redraw
                 // We don't change state here, renderCursor handles state toggling based on time.
                 // We just ensure we wake up to draw it.
-                try renderer.render(&terminal.term);
+                try renderer.render(&terminal.term, &selector);
                 try renderer.renderCursor(&terminal.term);
                 window.present();
                 timeout_ms = @intCast(config.Config.cursor.blink_interval_ms);
@@ -480,7 +484,7 @@ pub fn main() !u8 {
             }
 
             // 渲染
-            try renderer.render(&terminal.term);
+            try renderer.render(&terminal.term, &selector);
             try renderer.renderCursor(&terminal.term);
             window.present();
         }

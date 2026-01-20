@@ -59,8 +59,6 @@ pub const Selector = struct {
 
     /// 扩展选择
     pub fn extend(self: *Selector, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
-        _ = col;
-        _ = row;
         if (self.selection.mode == .idle) {
             return;
         }
@@ -70,6 +68,8 @@ pub const Selector = struct {
             return;
         }
 
+        self.selection.oe.x = col;
+        self.selection.oe.y = row;
         self.selection.type = sel_type;
         self.normalize();
         self.selection.mode = if (done) .idle else .ready;
@@ -102,6 +102,7 @@ pub const Selector = struct {
     /// 吸附到单词或行
     pub fn snap(self: *Selector, point: *Point, direction: i8) void {
         switch (self.selection.snap) {
+            .none => {},
             .word => {
                 // TODO: 实现单词吸附
             },
@@ -113,7 +114,7 @@ pub const Selector = struct {
 
     /// 检查是否选中
     pub fn isSelected(self: *Selector, x: usize, y: usize) bool {
-        if (self.selection.mode == .empty or self.selection.ob.x == usize.max) {
+        if (self.selection.mode == .empty or self.selection.ob.x == std.math.maxInt(usize)) {
             return false;
         }
 
@@ -161,17 +162,14 @@ pub const Selector = struct {
 
             if (self.selection.type == .rectangular) {
                 x_start = self.selection.nb.x;
-                x_end = self.selection.ne.x;
+                x_end = self.selection.ne.x + 1;
             } else {
                 x_start = if (y == y_start) self.selection.nb.x else 0;
-                x_end = if (y == y_end) self.selection.ne.x else config.Config.window.cols - 1;
+                x_end = if (y == y_end) self.selection.ne.x + 1 else term.col;
             }
 
-            // 查找非空格的起始和结束位置
-            while (x_start < screen[y].len and screen[y][x_start].u == ' ') {
-                x_start += 1;
-            }
-            while (x_end > 0 and screen[y][x_end - 1].u == ' ') {
+            // 修剪尾部空格，并确保 x_end 不小于 x_start
+            while (x_end > x_start and x_end <= screen[y].len and screen[y][x_end - 1].u == ' ') {
                 x_end -= 1;
             }
 

@@ -14,7 +14,7 @@ test "Parser initialization" {
     var term = try types.Term.init(24, 80, allocator);
     defer term.deinit();
 
-    var parser = Parser.init(&term);
+    const parser = Parser.init(&term);
     try expect(parser.esc == .{});
 }
 

@@ -3,6 +3,7 @@ const std = @import("std");
 const x11 = @import("x11.zig");
 const types = @import("types.zig");
 const config = @import("config.zig");
+const selection = @import("selection.zig");
 const Window = @import("window.zig").Window;
 const renderer_utils = @import("renderer_utils.zig");
 
@@ -189,7 +190,7 @@ pub const Renderer = struct {
         return .{ 0xFF, 0xFF, 0xFF };
     }
 
-    pub fn render(self: *Renderer, term: *Term) !void {
+    pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !void {
         const screen = if (term.mode.alt_screen) term.alt else term.line;
         if (screen == null) return;
 
@@ -328,7 +329,13 @@ pub const Renderer = struct {
                 }
 
                 // Handle Global and character Reverse
-                const reverse = glyph.attr.reverse != term.mode.reverse;
+                var reverse = glyph.attr.reverse != term.mode.reverse;
+
+                // Handle selection highlight
+                if (selector.isSelected(x, y)) {
+                    reverse = !reverse;
+                }
+
                 if (reverse) {
                     const tmp = fg_idx;
                     fg_idx = bg_idx;

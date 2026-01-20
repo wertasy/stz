@@ -128,6 +128,7 @@ pub const SelectionType = enum(u8) {
 
 /// 选择吸附模式
 pub const SelectionSnap = enum(u8) {
+    none = 0,
     word = 1,
     line = 2,
 };

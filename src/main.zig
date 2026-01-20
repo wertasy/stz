@@ -308,14 +308,17 @@ pub fn main() !u8 {
                     }
 
                     if (mouse_pressed) {
+                        const was_dragging = (selector.selection.mode == .ready);
                         mouse_pressed = false;
 
                         // 结束选择扩展
                         selector.extend(cx, cy, .regular, true);
 
-                        // On release, copy to clipboard
-                        _ = selector.getText(&terminal.term) catch {};
-                        selector.copyToClipboard() catch {};
+                        if (was_dragging) {
+                            // Only copy to clipboard if we actually performed a selection drag
+                            _ = selector.getText(&terminal.term) catch {};
+                            selector.copyToClipboard() catch {};
+                        }
 
                         // Redraw to clear selection highlight
                         try renderer.render(&terminal.term, &selector);

@@ -128,8 +128,7 @@ pub const Selector = struct {
 
     /// 检查是否选中
     pub fn isSelected(self: *Selector, x: usize, y: usize) bool {
-        // idle 模式表示没有选择，直接返回 false
-        if (self.selection.mode == .idle or self.selection.ob.x == std.math.maxInt(usize)) {
+        if (self.selection.nb.x == std.math.maxInt(usize)) {
             return false;
         }
 
@@ -155,11 +154,8 @@ pub const Selector = struct {
 
     /// 获取选中的文本
     pub fn getText(self: *Selector, term: *const types.Term) ![]u8 {
-        // 如果没有选择（mode == idle 或 empty），返回空
-        if (self.selection.mode == .idle or self.selection.mode == .empty) {
-            return &[_]u8{};
-        }
-        if (self.selection.ob.x == std.math.maxInt(usize)) {
+        // nb.x 为 maxInt 表示没有有效选择范围
+        if (self.selection.nb.x == std.math.maxInt(usize)) {
             return &[_]u8{};
         }
 
@@ -209,11 +205,15 @@ pub const Selector = struct {
             }
         }
 
-        // 复制到 selected_text
+        // 复制到 selected_text (去除首尾空白)
+        const raw_text = try buffer.toOwnedSlice(self.allocator);
+        defer self.allocator.free(raw_text);
+        const trimmed = std.mem.trim(u8, raw_text, " \n\r\t");
+
         if (self.selected_text) |text| {
             self.allocator.free(text);
         }
-        self.selected_text = try buffer.toOwnedSlice(self.allocator);
+        self.selected_text = try self.allocator.dupe(u8, trimmed);
         return self.selected_text.?;
     }
 
@@ -241,9 +241,8 @@ pub const Selector = struct {
     /// 复制到系统剪贴板
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {
-            const trimmed = std.mem.trim(u8, text, " \n\r\t");
             // 不要复制空文本
-            if (trimmed.len == 0) return;
+            if (text.len == 0) return;
 
             if (self.dpy) |dpy| {
                 // Use XSetSelectionOwner to claim PRIMARY selection
@@ -257,11 +256,11 @@ pub const Selector = struct {
                 }
 
                 // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
-                _ = x11.XStoreBytes(dpy, trimmed.ptr, @intCast(trimmed.len));
+                _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
-                std.log.info("已复制 {d} 字符到剪贴板 (Primary Selection Acquired)\n", .{trimmed.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (Primary Selection Acquired)\n", .{text.len});
             } else {
-                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{trimmed.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{text.len});
             }
         }
     }

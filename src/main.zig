@@ -71,8 +71,9 @@ pub fn main() !u8 {
 
     // 初始化终端
     var terminal = try Terminal.init(rows, cols, allocator);
-    // 修复 Parser 中的 Term 指针（解决移动语义导致的悬垂指针问题）
+    // 修复 Parser 中的 Term 和 PTY 指针
     terminal.parser.term = &terminal.term;
+    terminal.parser.pty = &pty;
     defer terminal.deinit();
 
     // 初始化窗口

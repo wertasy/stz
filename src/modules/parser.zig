@@ -1318,16 +1318,18 @@ pub const Parser = struct {
             self.csi.narg = 1;
         }
 
-        // 处理带有空格的序列 (如 CSI SP q)
+        // 处理带有中间字符的序列 (如 CSI SP q)
         if (self.csi.mode[1] != 0) {
             switch (self.csi.mode[1]) {
-                'q' => { // DECSCUSR -- 设置光标样式
-                    const style = self.csi.arg[0];
-                    // 0: 默认（闪烁块）, 1: 闪烁块, 2: 稳定块
-                    // 3: 闪烁下划线, 4: 稳定下划线
-                    // 5: 闪烁竖条, 6: 稳定竖条
-                    if (style >= 0 and style <= 8) {
-                        self.term.cursor_style = @as(u8, @intCast(@max(0, @min(style, 8))));
+                ' ' => {
+                    switch (mode) {
+                        'q' => { // DECSCUSR -- 设置光标样式
+                            const style = self.csi.arg[0];
+                            if (style >= 0 and style <= 8) {
+                                self.term.cursor_style = @as(u8, @intCast(@max(0, @min(style, 8))));
+                            }
+                        },
+                        else => {},
                     }
                 },
                 else => {},
@@ -1351,8 +1353,13 @@ pub const Parser = struct {
             },
             'c' => { // DA - 设备属性
                 if (self.csi.arg[0] == 0) {
-                    // 发送 VT100/VT220 识别字符串
-                    self.ptyWrite("\x1B[?6c");
+                    if (self.csi.priv == '>') {
+                        // Secondary Device Attributes
+                        self.ptyWrite("\x1B[>1;100;0c");
+                    } else {
+                        // Primary Device Attributes
+                        self.ptyWrite("\x1B[?6c");
+                    }
                 }
             },
             'i' => { // MC - Media Copy (打印功能)
@@ -1518,32 +1525,9 @@ pub const Parser = struct {
                         self.ptyWrite("\x1B[0n"); // 设备正常
                     },
                     6 => { // 光标位置报告
-                        var buf: [32]u8 = undefined;
-                        var len: usize = 0;
-                        buf[0] = 0x1b;
-                        buf[1] = '[';
-                        len = 2;
-                        // 将 self.term.c.y + 1 写入
-                        const y_val = self.term.c.y + 1;
-                        if (y_val >= 10) {
-                            buf[len] = '0' + @as(u8, @intCast(y_val / 10));
-                            len += 1;
-                        }
-                        buf[len] = '0' + @as(u8, @intCast(y_val % 10));
-                        len += 1;
-                        buf[len] = ';';
-                        len += 1;
-                        // 将 self.term.c.x + 1 写入
-                        const x_val = self.term.c.x + 1;
-                        if (x_val >= 10) {
-                            buf[len] = '0' + @as(u8, @intCast(x_val / 10));
-                            len += 1;
-                        }
-                        buf[len] = '0' + @as(u8, @intCast(x_val % 10));
-                        len += 1;
-                        buf[len] = 'R';
-                        len += 1;
-                        self.ptyWrite(buf[0..len]);
+                        var buf: [64]u8 = undefined;
+                        const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ self.term.c.y + 1, self.term.c.x + 1 });
+                        self.ptyWrite(s);
                     },
                     else => {},
                 }

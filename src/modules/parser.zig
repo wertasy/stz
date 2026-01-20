@@ -21,6 +21,7 @@ pub const Parser = struct {
     csi: CSIEscape = .{},
     str: STREscape = .{},
     allocator: std.mem.Allocator,
+    pty: ?*const anyopaque = null, // PTY 引用，用于发送响应
 
     pub fn init(term: *Term, allocator: std.mem.Allocator) !Parser {
         var p = Parser{
@@ -29,6 +30,20 @@ pub const Parser = struct {
         };
         try p.strReset();
         return p;
+    }
+
+    /// 设置 PTY 引用
+    pub fn setPty(self: *Parser, pty_ptr: *const anyopaque) void {
+        self.pty = pty_ptr;
+    }
+
+    /// 写入数据到 PTY
+    fn ptyWrite(self: *Parser, data: []const u8) void {
+        if (self.pty) |pty_ptr| {
+            const PTYType = @import("pty.zig").PTY;
+            const pty = @as(*PTYType, @ptrCast(@alignCast(@constCast(pty_ptr))));
+            _ = pty.write(data) catch {};
+        }
     }
 
     pub fn deinit(self: *Parser) void {
@@ -412,6 +427,84 @@ pub const Parser = struct {
         }
     }
 
+    /// 向上滚动
+    fn scrollUp(self: *Parser, orig: usize, n: usize) !void {
+        const scroll_lines = @min(n, self.term.bot - orig + 1);
+        if (scroll_lines == 0) return;
+
+        if (self.term.line) |lines| {
+            // 向上滚动内容
+            var y = orig;
+            while (y + scroll_lines <= self.term.bot) : (y += 1) {
+                if (y < lines.len and y + scroll_lines < lines.len) {
+                    @memcpy(lines[y], lines[y + scroll_lines]);
+                }
+            }
+
+            // 清除底部行
+            var i: usize = 0;
+            while (i < scroll_lines) : (i += 1) {
+                const clear_y = self.term.bot - scroll_lines + 1 + i;
+                if (clear_y < lines.len) {
+                    const clear_glyph = self.term.c.attr;
+                    var glyph_var = clear_glyph;
+                    glyph_var.u = ' ';
+                    for (0..self.term.col) |x| {
+                        lines[clear_y][x] = glyph_var;
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            var row = orig;
+            while (row <= self.term.bot) : (row += 1) {
+                if (row < dirty.len) dirty[row] = true;
+            }
+        }
+    }
+
+    /// 向下滚动
+    fn scrollDown(self: *Parser, orig: usize, n: usize) !void {
+        const scroll_lines = @min(n, self.term.bot - orig + 1);
+        if (scroll_lines == 0) return;
+
+        if (self.term.line) |lines| {
+            // 向下滚动内容
+            var y: usize = self.term.bot;
+            while (y >= orig + scroll_lines) {
+                if (y < lines.len and y - scroll_lines < lines.len) {
+                    @memcpy(lines[y], lines[y - scroll_lines]);
+                }
+                if (y == 0) break;
+                y -= 1;
+            }
+
+            // 清除顶部行
+            var i: usize = 0;
+            while (i < scroll_lines) : (i += 1) {
+                const clear_y = orig + i;
+                if (clear_y < lines.len) {
+                    const clear_glyph = self.term.c.attr;
+                    var glyph_var = clear_glyph;
+                    glyph_var.u = ' ';
+                    for (0..self.term.col) |x| {
+                        lines[clear_y][x] = glyph_var;
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            var row = orig;
+            while (row <= self.term.bot) : (row += 1) {
+                if (row < dirty.len) dirty[row] = true;
+            }
+        }
+    }
+
     /// 擦除光标处的字符
     fn eraseChar(self: *Parser, n: usize) !void {
         const max_chars = self.term.col - self.term.c.x;
@@ -455,20 +548,44 @@ pub const Parser = struct {
                     self.term.c.attr.attr.struck = false;
                     self.term.c.attr.fg = 7; // 默认白色
                     self.term.c.attr.bg = 0; // 默认黑色
+                    self.term.c.attr.ustyle = -1;
+                    for (0..3) |j| {
+                        self.term.c.attr.ucolor[j] = -1;
+                    }
                 },
                 1 => { // 加粗
                     self.term.c.attr.attr.bold = true;
+                },
+                2 => { // 淡色
+                    self.term.c.attr.attr.faint = true;
                 },
                 3 => { // 斜体
                     self.term.c.attr.attr.italic = true;
                 },
                 4 => { // 下划线
                     self.term.c.attr.attr.underline = true;
+                    self.term.c.attr.attr.dirty_underline = true;
+                    if (i + 1 < self.csi.narg) {
+                        const style = self.csi.arg[i + 1];
+                        if (style >= 0 and style <= 5) {
+                            self.term.c.attr.ustyle = @intCast(style);
+                            i += 1; // 跳过下一个参数
+                        }
+                    }
+                },
+                5, 6 => { // 闪烁
+                    self.term.c.attr.attr.blink = true;
                 },
                 7 => { // 反色
                     self.term.c.attr.attr.reverse = true;
                 },
-                22 => { // 关闭加粗
+                8 => { // 隐藏
+                    self.term.c.attr.attr.hidden = true;
+                },
+                9 => { // 删除线
+                    self.term.c.attr.attr.struck = true;
+                },
+                22 => { // 关闭加粗/淡色
                     self.term.c.attr.attr.bold = false;
                     self.term.c.attr.attr.faint = false;
                 },
@@ -477,18 +594,91 @@ pub const Parser = struct {
                 },
                 24 => { // 关闭下划线
                     self.term.c.attr.attr.underline = false;
+                    self.term.c.attr.ustyle = -1;
+                    self.term.c.attr.attr.dirty_underline = true;
+                },
+                25 => { // 关闭闪烁
+                    self.term.c.attr.attr.blink = false;
                 },
                 27 => { // 关闭反色
                     self.term.c.attr.attr.reverse = false;
                 },
-                9 => { // 删除线
-                    self.term.c.attr.attr.struck = true;
+                28 => { // 关闭隐藏
+                    self.term.c.attr.attr.hidden = false;
                 },
                 29 => { // 关闭删除线
                     self.term.c.attr.attr.struck = false;
                 },
+                38 => { // 前景色扩展
+                    i += 1;
+                    if (i < self.csi.narg) {
+                        const color_submode = self.csi.arg[i];
+                        if (color_submode == 5) {
+                            // 索引颜色
+                            i += 1;
+                            if (i < self.csi.narg and self.csi.arg[i] >= 0 and self.csi.arg[i] <= 255) {
+                                self.term.c.attr.fg = @intCast(self.csi.arg[i]);
+                            }
+                        } else if (color_submode == 2) {
+                            // 24 位 RGB 颜色
+                            i += 3;
+                            if (i < self.csi.narg) {
+                                const r = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 2]))));
+                                const g = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 1]))));
+                                const b = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i]))));
+                                self.term.c.attr.fg = (0xFF << 24) | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+                            }
+                        }
+                    }
+                },
+                39 => { // 默认前景色
+                    self.term.c.attr.fg = 7;
+                },
+                48 => { // 背景色扩展
+                    i += 1;
+                    if (i < self.csi.narg) {
+                        const color_submode = self.csi.arg[i];
+                        if (color_submode == 5) {
+                            // 索引颜色
+                            i += 1;
+                            if (i < self.csi.narg and self.csi.arg[i] >= 0 and self.csi.arg[i] <= 255) {
+                                self.term.c.attr.bg = @intCast(self.csi.arg[i]);
+                            }
+                        } else if (color_submode == 2) {
+                            // 24 位 RGB 颜色
+                            i += 3;
+                            if (i < self.csi.narg) {
+                                const r = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 2]))));
+                                const g = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 1]))));
+                                const b = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i]))));
+                                self.term.c.attr.bg = (0xFF << 24) | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+                            }
+                        }
+                    }
+                },
+                49 => { // 默认背景色
+                    self.term.c.attr.bg = 0;
+                },
+                58 => { // 下划线颜色
+                    i += 1;
+                    if (i < self.csi.narg and self.csi.arg[i] == 5) {
+                        i += 3;
+                        if (i < self.csi.narg) {
+                            self.term.c.attr.ucolor[0] = @as(i32, @intCast(self.csi.arg[i - 2]));
+                            self.term.c.attr.ucolor[1] = @as(i32, @intCast(self.csi.arg[i - 1]));
+                            self.term.c.attr.ucolor[2] = @as(i32, @intCast(self.csi.arg[i]));
+                            self.term.c.attr.attr.dirty_underline = true;
+                        }
+                    }
+                },
+                59 => { // 默认下划线颜色
+                    for (0..3) |j| {
+                        self.term.c.attr.ucolor[j] = -1;
+                    }
+                    self.term.c.attr.attr.dirty_underline = true;
+                },
                 else => {
-                    // 处理颜色
+                    // 处理标准颜色
                     if (arg >= 30 and arg <= 37) {
                         // 前景色 (标准颜色 0-7)
                         self.term.c.attr.fg = @as(u32, @intCast(arg - 30));
@@ -792,6 +982,21 @@ pub const Parser = struct {
                 const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
                 try self.insertBlank(n);
             },
+            'b' => { // REP - 重复最后一个字符
+                const n = @as(usize, @intCast(@max(1, @min(self.csi.arg[0], 65535))));
+                if (self.term.lastc != 0) {
+                    var i: usize = 0;
+                    while (i < n) : (i += 1) {
+                        try self.writeChar(self.term.lastc);
+                    }
+                }
+            },
+            'c' => { // DA - 设备属性
+                if (self.csi.arg[0] == 0) {
+                    // 发送 VT100/VT220 识别字符串
+                    self.ptyWrite("\x1B[?6c");
+                }
+            },
             'A' => { // CUU - 光标上移
                 const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
                 try self.moveCursor(0, -n);
@@ -869,16 +1074,54 @@ pub const Parser = struct {
             },
             'Z' => { // CBT - 光标后退制表
                 const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
-                try self.putTab();
-                // 后退 n-1 次
-                var i: i32 = 1;
+                var i: i32 = 0;
                 while (i < n) : (i += 1) {
                     try self.putTab();
+                    // 后退一个制表位
+                    var x = self.term.c.x;
+                    while (x > 0) : (x -= 1) {
+                        if (self.term.tabs) |tabs| {
+                            if (x < tabs.len and tabs[x]) {
+                                break;
+                            }
+                        }
+                    }
+                    self.term.c.x = @max(0, x);
+                }
+            },
+            'g' => { // TBC - 清除制表符
+                const arg = if (self.csi.narg > 0) self.csi.arg[0] else 0;
+                switch (arg) {
+                    0 => { // 清除当前制表位
+                        if (self.term.c.x < self.term.col) {
+                            if (self.term.tabs) |tabs| {
+                                tabs[self.term.c.x] = false;
+                            }
+                        }
+                    },
+                    3 => { // 清除所有制表位
+                        if (self.term.tabs) |tabs| {
+                            for (0..tabs.len) |i| {
+                                tabs[i] = false;
+                            }
+                        }
+                    },
+                    else => {},
                 }
             },
             'd' => { // VPA - 垂直位置绝对
                 const row = @max(1, self.csi.arg[0]) - 1;
                 try self.moveTo(self.term.c.x, row);
+            },
+            'S' => { // SU - 滚动向上 n 行
+                if (self.csi.priv == 0) {
+                    const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                    try self.scrollUp(self.term.top, n);
+                }
+            },
+            'T' => { // SD - 滚动向下 n 行
+                const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                try self.scrollDown(self.term.top, n);
             },
             'h' => { // SM - 设置模式
                 try self.setMode(true);
@@ -892,24 +1135,128 @@ pub const Parser = struct {
             'n' => { // DSR - 设备状态报告
                 switch (self.csi.arg[0]) {
                     5 => { // 设备状态
-                        // TODO: 报告 OK - 需要 PTY 写入功能
+                        self.ptyWrite("\x1B[0n"); // 设备正常
                     },
-                    6 => { // 光标位置
-                        // TODO: 报告光标位置 - 需要 PTY 写入功能
+                    6 => { // 光标位置报告
+                        var buf: [32]u8 = undefined;
+                        var len: usize = 0;
+                        buf[0] = 0x1b;
+                        buf[1] = '[';
+                        len = 2;
+                        // 将 self.term.c.y + 1 写入
+                        const y_val = self.term.c.y + 1;
+                        if (y_val >= 10) {
+                            buf[len] = '0' + @as(u8, @intCast(y_val / 10));
+                            len += 1;
+                        }
+                        buf[len] = '0' + @as(u8, @intCast(y_val % 10));
+                        len += 1;
+                        buf[len] = ';';
+                        len += 1;
+                        // 将 self.term.c.x + 1 写入
+                        const x_val = self.term.c.x + 1;
+                        if (x_val >= 10) {
+                            buf[len] = '0' + @as(u8, @intCast(x_val / 10));
+                            len += 1;
+                        }
+                        buf[len] = '0' + @as(u8, @intCast(x_val % 10));
+                        len += 1;
+                        buf[len] = 'R';
+                        len += 1;
+                        self.ptyWrite(buf[0..len]);
                     },
                     else => {},
                 }
             },
             'r' => { // DECSTBM - 设置滚动区域
-                // TODO: 需要修复类型转换问题
+                try self.setScrollRegion();
             },
             's' => { // DECSC - 保存光标
-                // TODO: 保存光标位置和属性
+                try self.cursorSaveRestore(.save);
             },
             'u' => { // DECRC - 恢复光标
-                // TODO: 恢复光标位置和属性
+                if (self.csi.priv == 0) {
+                    try self.cursorSaveRestore(.load);
+                }
             },
             else => {},
+        }
+    }
+
+    /// 设置滚动区域
+    fn setScrollRegion(self: *Parser) !void {
+        if (self.csi.priv != 0) return; // 不支持私有模式
+
+        // 获取参数，默认值为 1 和 term.row
+        const top_arg = if (self.csi.narg > 0 and self.csi.arg[0] > 0)
+            @as(i32, @intCast(self.csi.arg[0]))
+        else
+            1;
+        const bot_arg = if (self.csi.narg > 1 and self.csi.arg[1] > 0)
+            @as(i32, @intCast(self.csi.arg[1]))
+        else
+            @as(i32, @intCast(self.term.row));
+
+        // 转换为 0-based 索引并限制在有效范围内
+        var top = top_arg - 1;
+        var bot = bot_arg - 1;
+
+        // 限制在屏幕范围内
+        top = @max(0, @min(top, @as(i32, @intCast(self.term.row)) - 1));
+        bot = @max(0, @min(bot, @as(i32, @intCast(self.term.row)) - 1));
+
+        // 确保 top <= bot
+        if (top > bot) {
+            const temp = top;
+            top = bot;
+            bot = temp;
+        }
+
+        self.term.top = @as(usize, @intCast(top));
+        self.term.bot = @as(usize, @intCast(bot));
+
+        // 将光标移动到原点
+        try self.moveTo(0, 0);
+    }
+
+    /// 保存/恢复光标
+    fn cursorSaveRestore(self: *Parser, mode: types.CursorMove) !void {
+        const alt_idx = @intFromBool(self.term.mode.alt_screen);
+        switch (mode) {
+            .save => {
+                self.term.saved_cursor[alt_idx] = types.SavedCursor{
+                    .attr = self.term.c.attr,
+                    .x = self.term.c.x,
+                    .y = self.term.c.y,
+                    .state = self.term.c.state,
+                };
+            },
+            .load => {
+                const saved = self.term.saved_cursor[alt_idx];
+                self.term.c.attr = saved.attr;
+                try self.moveTo(saved.x, saved.y);
+                self.term.c.state = saved.state;
+            },
+        }
+    }
+
+    /// 切换屏幕缓冲区
+    fn swapScreen(self: *Parser) !void {
+        if (self.term.line == null or self.term.alt == null) return;
+
+        // 交换缓冲区
+        const temp = self.term.line.?;
+        self.term.line = self.term.alt;
+        self.term.alt = temp;
+
+        // 切换模式标志
+        self.term.mode.alt_screen = !self.term.mode.alt_screen;
+
+        // 标记所有行为脏
+        if (self.term.dirty) |dirty| {
+            for (0..dirty.len) |i| {
+                dirty[i] = true;
+            }
         }
     }
 
@@ -928,10 +1275,74 @@ pub const Parser = struct {
                 1 => self.term.mode.app_cursor = set,
                 5 => {}, // TODO: reverse mode not implemented
                 6 => {
-                    self.term.c.state = .origin;
+                    if (set) {
+                        self.term.c.state = .origin;
+                        try self.moveTo(0, 0);
+                    } else {
+                        self.term.c.state = .default;
+                    }
                 },
                 7 => self.term.mode.wrap = set,
                 25 => self.term.mode.hide_cursor = !set,
+                47 => { // 切换备用屏幕缓冲区
+                    if (self.term.alt != null) {
+                        // 如果当前在备用屏幕且要退出，先清除
+                        if (!set and self.term.mode.alt_screen) {
+                            if (self.term.alt) |alt| {
+                                const clear_glyph = self.term.c.attr;
+                                var glyph_var = clear_glyph;
+                                glyph_var.u = ' ';
+                                for (0..self.term.row) |y| {
+                                    if (y < alt.len) {
+                                        for (0..self.term.col) |x| {
+                                            alt[y][x] = glyph_var;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        // 如果要进入备用屏幕，或要退出且当前在备用屏幕
+                        if (set != self.term.mode.alt_screen) {
+                            try self.swapScreen();
+                        }
+                    }
+                },
+                1048 => { // 保存/恢复光标 (like DECSC/DECRC)
+                    try self.cursorSaveRestore(if (set) .save else .load);
+                },
+                1049 => { // 交换屏幕并保存/恢复光标
+                    try self.cursorSaveRestore(if (set) .save else .load);
+                    if (self.term.alt != null) {
+                        if (set and !self.term.mode.alt_screen) {
+                            // 进入备用屏幕
+                            if (self.term.alt) |alt| {
+                                const clear_glyph = self.term.c.attr;
+                                var glyph_var = clear_glyph;
+                                glyph_var.u = ' ';
+                                for (0..self.term.row) |y| {
+                                    if (y < alt.len) {
+                                        for (0..self.term.col) |x| {
+                                            alt[y][x] = glyph_var;
+                                        }
+                                    }
+                                }
+                            }
+                            try self.swapScreen();
+                            try self.moveTo(0, 0);
+                        } else if (!set and self.term.mode.alt_screen) {
+                            // 退出备用屏幕
+                            try self.swapScreen();
+                            try self.cursorSaveRestore(.load);
+                        }
+                    }
+                },
+                1047 => { // 切换备用屏幕 (类似 47)
+                    if (self.term.alt != null) {
+                        if (set != self.term.mode.alt_screen) {
+                            try self.swapScreen();
+                        }
+                    }
+                },
                 else => {},
             }
         }

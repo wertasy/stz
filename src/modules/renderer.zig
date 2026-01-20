@@ -30,9 +30,9 @@ pub const Renderer = struct {
     cursor_blink_state: bool = true,
     last_blink_time: i64 = 0,
 
-    // Color cache
-    colors: [260]x11.XftColor,
-    loaded_colors: [260]bool,
+    // Color cache (256 indexed + 4 special + some margin)
+    colors: [300]x11.XftColor,
+    loaded_colors: [300]bool,
 
     pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
         // Initialize buffer in window if not already
@@ -81,7 +81,7 @@ pub const Renderer = struct {
             .cursor_blink_state = true,
             .last_blink_time = std.time.milliTimestamp(),
             .colors = undefined,
-            .loaded_colors = [_]bool{false} ** 260,
+            .loaded_colors = [_]bool{false} ** 300,
         };
     }
 
@@ -92,7 +92,24 @@ pub const Renderer = struct {
     }
 
     fn getColor(self: *Renderer, index: u32) !*x11.XftColor {
-        if (index >= 260) return error.ColorAllocFailed;
+        // 24位真彩色不需要缓存
+        if (index >= 0x10000000) {
+            // 为真彩色分配临时颜色
+            var temp_color: x11.XftColor = undefined;
+            const rgb = self.getIndexColor(index);
+            const render_color = x11.XRenderColor{
+                .red = @as(u16, rgb[0]) * 257,
+                .green = @as(u16, rgb[1]) * 257,
+                .blue = @as(u16, rgb[2]) * 257,
+                .alpha = 0xFFFF,
+            };
+            if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &temp_color) != 0) {
+                return error.ColorAllocFailed;
+            }
+            return &temp_color;
+        }
+
+        if (index >= 300) return error.ColorAllocFailed;
 
         if (self.loaded_colors[index]) {
             return &self.colors[index];
@@ -118,14 +135,27 @@ pub const Renderer = struct {
 
     fn getIndexColor(self: *Renderer, index: u32) [3]u8 {
         _ = self;
-        // TODO: Use the logic from previous renderer to map index to RGB
+
+        // 24 位真彩色 (0xFFRRGGBB 格式)
+        if (index >= 0x10000000) {
+            const r = @as(u8, @truncate((index >> 16) & 0xFF));
+            const g = @as(u8, @truncate((index >> 8) & 0xFF));
+            const b = @as(u8, @truncate(index & 0xFF));
+            return .{ r, g, b };
+        }
+
+        // 标准颜色 (0-7)
         if (index < 8) return u32ToRgb(config.Config.colors.normal[index]); // Note: Config colors are u32 0xRRGGBB
+        // 明亮颜色 (8-15)
         if (index < 16) return u32ToRgb(config.Config.colors.bright[index - 8]);
+        // 光标颜色
         if (index == 256) return u32ToRgb(config.Config.colors.cursor);
+        // 前景色
         if (index == 258) return u32ToRgb(config.Config.colors.foreground);
+        // 背景色
         if (index == 259) return u32ToRgb(config.Config.colors.background);
 
-        // Default white
+        // 默认白色
         return .{ 0xFF, 0xFF, 0xFF };
     }
 

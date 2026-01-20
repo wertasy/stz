@@ -98,6 +98,14 @@ pub const TCursor = struct {
     state: CursorState = .default,
 };
 
+/// 保存的光标状态（用于 DECSC/DECRC）
+pub const SavedCursor = struct {
+    attr: Glyph = .{},
+    x: usize = 0,
+    y: usize = 0,
+    state: CursorState = .default,
+};
+
 /// 选择模式
 pub const SelectionMode = enum(u8) {
     idle,
@@ -205,4 +213,7 @@ pub const Term = struct {
     // 窗口标题
     window_title: []const u8 = "stz",
     window_title_dirty: bool = false,
+
+    // 保存的光标状态（主屏幕和备用屏幕各一个）
+    saved_cursor: [2]SavedCursor = [_]SavedCursor{.{}} ** 2,
 };

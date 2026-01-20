@@ -277,7 +277,7 @@ pub const Selector = struct {
         // TODO: 清除脏标记或重绘选择区域
     }
 
-    /// 复制到系统剪贴板
+    /// 复制到系统剪贴板 (PRIMARY)
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {
             // 不要复制空文本
@@ -294,28 +294,36 @@ pub const Selector = struct {
                     return;
                 }
 
+                // 也顺便更新 CLIPBOARD，方便 Ctrl+V
+                const clipboard_atom = x11.XInternAtom(dpy, "CLIPBOARD", 0);
+                _ = x11.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.C.CurrentTime);
+
                 // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
                 _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
-                std.log.info("已复制 {d} 字符到剪贴板 (Primary Selection Acquired)\n", .{text.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (PRIMARY & CLIPBOARD)\n", .{text.len});
             } else {
                 std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{text.len});
             }
         }
     }
 
-    /// 请求粘贴 (Convert Selection)
+    /// 请求粘贴 (从 PRIMARY 选区)
     pub fn requestPaste(self: *Selector) !void {
         if (self.dpy) |dpy| {
-            // Request UTF8_STRING atom
-            const utf8_atom = x11.getUtf8Atom(dpy);
-            const target = utf8_atom;
+            try self.requestSelection(x11.getPrimaryAtom(dpy));
+        }
+    }
 
-            // XConvertSelection: requestor (win), selection (PRIMARY), target (UTF8), property (PRIMARY), time
-            // We use PRIMARY as the property to store the result
-            const primary_atom = x11.getPrimaryAtom(dpy);
-            _ = x11.XConvertSelection(dpy, primary_atom, target, primary_atom, self.win, x11.C.CurrentTime);
-            std.log.info("请求粘贴...\n", .{});
+    /// 从指定的 Selection (PRIMARY, CLIPBOARD 等) 请求数据
+    pub fn requestSelection(self: *Selector, selection: x11.C.Atom) !void {
+        if (self.dpy) |dpy| {
+            const utf8_atom = x11.getUtf8Atom(dpy);
+            // XConvertSelection: requestor (win), selection, target (UTF8), property (PRIMARY), time
+            // 我们使用 PRIMARY 属性名作为临时存储
+            const prop_atom = x11.getPrimaryAtom(dpy);
+            _ = x11.XConvertSelection(dpy, selection, utf8_atom, prop_atom, self.win, x11.C.CurrentTime);
+            std.log.info("请求选区内容...\n", .{});
         }
     }
 

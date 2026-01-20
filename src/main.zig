@@ -190,6 +190,13 @@ pub fn main() !u8 {
                         try renderer.render(term, &selector);
                         try renderer.renderCursor(term);
                         window.present();
+                    } else if (ctrl and shift and (keysym == 'V' or keysym == 'v')) {
+                        // Ctrl+Shift+V: 从 CLIPBOARD 粘贴 (与现代终端一致)
+                        const dpy = window.dpy;
+                        const clipboard = x11.XInternAtom(dpy, "CLIPBOARD", 0);
+                        selector.requestSelection(clipboard) catch |err| {
+                            std.log.err("Clipboard paste request failed: {}\n", .{err});
+                        };
                     } else if (keysym == XK_Print) {
                         // Print key handling
                         if (ctrl) {
@@ -404,10 +411,13 @@ pub fn main() !u8 {
                         // 结束选择扩展
                         selector.extend(&terminal.term, cx, cy, .regular, true);
 
-                        if (was_dragging) {
+                        // 只有在 ready 模式下且是 Button1 释放时，才复制到 PRIMARY
+                        if (was_dragging and e.button == x11.Button1) {
                             // Only copy to clipboard if we actually performed a selection drag
-                            _ = selector.getText(&terminal.term) catch {};
-                            selector.copyToClipboard() catch {};
+                            const text = selector.getText(&terminal.term) catch "";
+                            if (text.len > 0) {
+                                selector.copyToClipboard() catch {};
+                            }
                         }
 
                         // Redraw to clear selection highlight

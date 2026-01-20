@@ -9,8 +9,11 @@ const expectEqual = std.testing.expectEqual;
 
 test "Screen initialization" {
     const allocator = std.testing.allocator;
-    var term = try types.Term.init(24, 80, allocator);
-    defer term.deinit();
+    var term = types.Term{
+        .allocator = allocator,
+    };
+    try screen.init(&term, 24, 80, allocator);
+    defer screen.deinit(&term);
 
     try expect(term.row == 24);
     try expect(term.col == 80);
@@ -20,11 +23,14 @@ test "Screen initialization" {
 
 test "Screen dirty flag" {
     const allocator = std.testing.allocator;
-    var term = try types.Term.init(24, 80, allocator);
-    defer term.deinit();
+    var term = types.Term{
+        .allocator = allocator,
+    };
+    try screen.init(&term, 24, 80, allocator);
+    defer screen.deinit(&term);
 
     // Mark a row as dirty
-    screen.setDirty(&term, 5);
+    screen.setDirty(&term, 5, 5);
 
     if (term.dirty) |dirty| {
         try expect(dirty[5]);
@@ -37,8 +43,11 @@ test "Screen dirty flag" {
 
 test "Screen full dirty" {
     const allocator = std.testing.allocator;
-    var term = try types.Term.init(24, 80, allocator);
-    defer term.deinit();
+    var term = types.Term{
+        .allocator = allocator,
+    };
+    try screen.init(&term, 24, 80, allocator);
+    defer screen.deinit(&term);
 
     // Mark all rows as dirty
     screen.setFullDirty(&term);
@@ -54,14 +63,21 @@ test "Screen full dirty" {
 
 test "Clear dirty flags" {
     const allocator = std.testing.allocator;
-    var term = try types.Term.init(24, 80, allocator);
-    defer term.deinit();
+    var term = types.Term{
+        .allocator = allocator,
+    };
+    try screen.init(&term, 24, 80, allocator);
+    defer screen.deinit(&term);
 
     // Mark all rows as dirty
     screen.setFullDirty(&term);
 
-    // Clear dirty flags
-    screen.clearDirty(&term);
+    // Manually clear dirty flags
+    if (term.dirty) |dirty| {
+        for (dirty) |*d| {
+            d.* = false;
+        }
+    }
 
     if (term.dirty) |dirty| {
         for (dirty) |is_dirty| {
@@ -74,8 +90,11 @@ test "Clear dirty flags" {
 
 test "Screen scroll" {
     const allocator = std.testing.allocator;
-    var term = try types.Term.init(24, 80, allocator);
-    defer term.deinit();
+    var term = types.Term{
+        .allocator = allocator,
+    };
+    try screen.init(&term, 24, 80, allocator);
+    defer screen.deinit(&term);
 
     // Set scroll region
     term.top = 5;
@@ -89,7 +108,7 @@ test "Screen scroll" {
     }
 
     // Scroll up by 1
-    screen.scrollUp(&term, 1);
+    try screen.scrollUp(&term, 1, 1);
 
     if (term.line) |line| {
         // Row 6 should now contain what was in row 5

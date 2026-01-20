@@ -155,14 +155,26 @@ pub const Parser = struct {
         // 检查自动换行
         if (self.term.mode.wrap and self.term.c.state == .wrap_next) {
             if (width > 0) {
+                // 设置前一个字符的 wrap 标志（参考 st.c tputc）
+                if (self.term.line) |lines| {
+                    if (self.term.c.y < lines.len) {
+                        lines[self.term.c.y][self.term.col - 1].attr.wrap = true;
+                    }
+                }
                 try self.newLine();
             }
             self.term.c.state = .default;
         }
 
-        // 检查是否需要换行
+        // 检查是否需要换行（字符宽度超出边界）
         if (self.term.c.x + width > self.term.col) {
             if (self.term.mode.wrap) {
+                // 设置 wrap 标志并换行
+                if (self.term.line) |lines| {
+                    if (self.term.c.y < lines.len) {
+                        lines[self.term.c.y][self.term.col - 1].attr.wrap = true;
+                    }
+                }
                 try self.newLine();
             } else {
                 self.term.c.x = @max(self.term.c.x, width) - width;
@@ -200,6 +212,12 @@ pub const Parser = struct {
                 }
             } else if (width > 0) {
                 self.term.c.x += width;
+            }
+
+            // 设置 wrap_next 状态（参考 st.c tputc）
+            // 当字符写到行尾时，标记 wrap_next 状态
+            if (self.term.mode.wrap and self.term.c.x >= self.term.col) {
+                self.term.c.state = .wrap_next;
             }
         }
 
@@ -605,6 +623,9 @@ pub const Parser = struct {
         } else {
             self.term.c.y += 1;
         }
+
+        // 重置光标到列首
+        self.term.c.x = 0;
 
         // Mark new cursor line as dirty
         if (self.term.dirty) |dirty| {

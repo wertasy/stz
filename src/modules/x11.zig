@@ -51,6 +51,8 @@ pub const SelectionClear = c.SelectionClear;
 pub const PropertyNotify = c.PropertyNotify;
 pub const FocusIn = c.FocusIn;
 pub const FocusOut = c.FocusOut;
+pub const EnterNotify = c.EnterNotify;
+pub const LeaveNotify = c.LeaveNotify;
 
 // Mouse button constants
 pub const Button1 = c.Button1;
@@ -75,6 +77,8 @@ pub const PointerMotionMask = c.PointerMotionMask;
 pub const StructureNotifyMask = c.StructureNotifyMask;
 pub const ExposureMask = c.ExposureMask;
 pub const FocusChangeMask = c.FocusChangeMask;
+pub const EnterWindowMask = c.EnterWindowMask;
+pub const LeaveWindowMask = c.LeaveWindowMask;
 
 // Re-export common functions
 pub const XOpenDisplay = c.XOpenDisplay;

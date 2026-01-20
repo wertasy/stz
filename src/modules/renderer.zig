@@ -227,7 +227,7 @@ pub const Renderer = struct {
             // Check dirty flag
             if (term.scr == 0 and selector.selection.mode == .idle) {
                 if (term.dirty) |dirty| {
-                    if (!dirty[y]) continue;
+                    if (y < dirty.len and !dirty[y]) continue;
                 }
             }
 
@@ -337,15 +337,11 @@ pub const Renderer = struct {
 
         if (cx >= term.col or cy >= term.row) return;
 
-        if (term.scr > 0 and !term.mode.alt_screen) {
-            if (cy < term.scr) return;
-        }
-
         const border = @as(i32, @intCast(config.Config.window.border_pixels));
         const x_pos = @as(i32, @intCast(cx * self.char_width)) + border;
-        const screen_y = if (term.scr > 0 and !term.mode.alt_screen) cy - term.scr else cy;
-        if (screen_y >= term.row) return;
-        const y_pos = @as(i32, @intCast(screen_y * self.char_height)) + border;
+        const screen_y = if (term.scr > 0 and !term.mode.alt_screen) @as(isize, @intCast(cy)) - @as(isize, @intCast(term.scr)) else @as(isize, @intCast(cy));
+        if (screen_y < 0 or screen_y >= @as(isize, @intCast(term.row))) return;
+        const y_pos = @as(i32, @intCast(screen_y)) * @as(i32, @intCast(self.char_height)) + border;
 
         const now = std.time.milliTimestamp();
         if (config.Config.cursor.blink_interval_ms > 0) {

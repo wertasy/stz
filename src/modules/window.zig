@@ -68,11 +68,12 @@ pub const Window = struct {
         attrs.border_pixel = 0;
         attrs.bit_gravity = x11.NorthWestGravity;
         attrs.colormap = cmap;
+        attrs.cursor = mouse_cursor;
         attrs.event_mask = x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask |
             x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask |
-            x11.ExposureMask | x11.FocusChangeMask;
+            x11.ExposureMask | x11.FocusChangeMask | x11.EnterWindowMask | x11.LeaveWindowMask;
 
-        const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWBitGravity | x11.CWEventMask | x11.CWColormap, &attrs);
+        const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWBitGravity | x11.CWEventMask | x11.CWColormap | x11.CWCursor, &attrs);
 
         if (win == 0) return error.CreateWindowFailed;
 

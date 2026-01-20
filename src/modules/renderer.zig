@@ -425,6 +425,12 @@ pub const Renderer = struct {
     pub fn resize(self: *Renderer) void {
         x11.XftDrawChange(self.draw, self.window.buf);
     }
+
+    /// 重置光标闪烁计时器
+    pub fn resetCursorBlink(self: *Renderer) void {
+        self.cursor_blink_state = true;
+        self.last_blink_time = std.time.milliTimestamp();
+    }
 };
 
 fn u32ToRgb(color: u32) [3]u8 {

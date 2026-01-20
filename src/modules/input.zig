@@ -38,7 +38,7 @@ pub const Input = struct {
         const shift = (state & x11.C.ShiftMask) != 0;
 
         // Log input for debugging
-        std.log.info("handleKey: keycode={d}, keysym=0x{x}, state={d}, ctrl={}, alt={}, shift={}", .{ event.keycode, keysym, state, ctrl, alt, shift });
+        // std.log.info("handleKey: keycode={d}, keysym=0x{x}, state={d}, ctrl={}, alt={}, shift={}", .{ event.keycode, keysym, state, ctrl, alt, shift });
 
         // Handle special keys first (Arrows, F-keys, Home/End, etc.)
         if (try self.handleSpecialKey(keysym, ctrl, alt, shift)) {
@@ -222,10 +222,41 @@ pub const Input = struct {
     }
 
     /// 处理鼠标事件
-    pub fn handleMouse(self: *Input, event: *const anyopaque) !void {
-        // TODO: 实现鼠标报告
+    // Deprecated in favor of sendMouseReport directly from main.zig which has access to cell coords
+    pub fn handleMouse(self: *Input, event: *const x11.C.XButtonEvent) !void {
         _ = self;
         _ = event;
+    }
+
+    pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, release: bool) !void {
+
+        // SGR 1006 mode
+        var cb: i32 = 0;
+
+        if (button == x11.Button1) {
+            cb = 0;
+        } else if (button == x11.Button2) {
+            cb = 1;
+        } else if (button == x11.Button3) {
+            cb = 2;
+        } else if (button == x11.Button4) {
+            cb = 64;
+        } else if (button == x11.Button5) {
+            cb = 65;
+        } else {
+            return;
+        }
+
+        if ((state & x11.ShiftMask) != 0) cb += 4;
+        if ((state & x11.Mod1Mask) != 0) cb += 8;
+        if ((state & x11.ControlMask) != 0) cb += 16;
+
+        var buf: [32]u8 = undefined;
+        // CSI < Pb ; Px ; Py [M|m]
+        const suffix: u8 = if (release) 'm' else 'M';
+        const s = try std.fmt.bufPrint(&buf, "\x1B[<{d};{d};{d}{c}", .{ cb, x + 1, y + 1, suffix });
+
+        _ = try self.pty.write(s);
     }
 
     /// 写入 ESC 字符

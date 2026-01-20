@@ -217,10 +217,20 @@ pub const Selector = struct {
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {
             if (self.dpy) |dpy| {
-                // Use XStoreBytes for simple clipboard storage (PRIMARY selection)
+                // Use XSetSelectionOwner to claim PRIMARY selection
+                const primary_atom = x11.getPrimaryAtom(dpy);
+                _ = x11.XSetSelectionOwner(dpy, primary_atom, self.win, x11.C.CurrentTime);
+
+                if (x11.XGetSelectionOwner(dpy, primary_atom) != self.win) {
+                    std.log.err("Failed to acquire selection ownership\n", .{});
+                    self.clear();
+                    return;
+                }
+
+                // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
                 _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
-                std.log.info("已复制 {d} 字符到剪贴板\n", .{text.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (Primary Selection Acquired)\n", .{text.len});
             } else {
                 std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{text.len});
             }
@@ -234,8 +244,20 @@ pub const Selector = struct {
             const utf8_atom = x11.getUtf8Atom(dpy);
             const target = utf8_atom;
 
-            _ = x11.XConvertSelection(dpy, x11.getClipboardAtom(dpy), target, x11.C.XA_PRIMARY, self.win, x11.C.CurrentTime);
+            // XConvertSelection: requestor (win), selection (PRIMARY), target (UTF8), property (PRIMARY), time
+            // We use PRIMARY as the property to store the result
+            const primary_atom = x11.getPrimaryAtom(dpy);
+            _ = x11.XConvertSelection(dpy, primary_atom, target, primary_atom, self.win, x11.C.CurrentTime);
             std.log.info("请求粘贴...\n", .{});
         }
+    }
+
+    /// 处理 SelectionClear 事件
+    pub fn handleSelectionClear(self: *Selector, event: *const x11.C.XSelectionClearEvent) void {
+        _ = event;
+        // 如果我们丢失了 PRIMARY 选区的所有权，清除当前选择
+        // 实际上应该检查 event.selection 是否为 XA_PRIMARY
+        self.clear();
+        // 触发重绘? 需要通知外部
     }
 };

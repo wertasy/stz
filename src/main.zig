@@ -90,6 +90,9 @@ pub fn main() !u8 {
     try pty.setNonBlocking();
 
     while (!quit) {
+        // Alias term for easy access
+        const term = &terminal.term;
+
         // 1. 处理所有挂起的 X11 事件
         while (window.pollEvent()) |event| {
             switch (event.type) {
@@ -98,7 +101,26 @@ pub fn main() !u8 {
                     // if (event.xclient.data.l[0] == wm_delete_window) ...
                 },
                 x11.KeyPress => {
-                    try input.handleKey(&event.xkey);
+                    renderer.resetCursorBlink(); // Reset blink on input
+
+                    // Check for scroll shortcuts (Shift + PageUp/PageDown)
+                    const state = event.xkey.state;
+                    const shift = (state & x11.ShiftMask) != 0;
+                    const keycode = event.xkey.keycode;
+                    const keysym = x11.XkbKeycodeToKeysym(window.dpy, @intCast(keycode), 0, if (shift) 1 else 0);
+
+                    const XK_Prior = 0xFF55; // PageUp
+                    const XK_Next = 0xFF56; // PageDown
+                    const XK_KP_Prior = 0xFF9A;
+                    const XK_KP_Next = 0xFF9B;
+
+                    if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
+                        terminal.kscrollUp(term.row); // Scroll one screen up
+                    } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
+                        terminal.kscrollDown(term.row); // Scroll one screen down
+                    } else {
+                        try input.handleKey(&event.xkey);
+                    }
                 },
                 x11.ConfigureNotify => {
                     const ev = event.xconfigure;
@@ -150,9 +172,38 @@ pub fn main() !u8 {
                         // Right click: extend selection or copy
                         mouse_pressed = true;
                         selector.start(cx, cy, .word);
+                    } else if (ev.button == x11.Button4) { // Scroll Up
+                        if (terminal.term.mode.mouse) {
+                            try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
+                        } else {
+                            terminal.kscrollUp(3);
+                        }
+                    } else if (ev.button == x11.Button5) { // Scroll Down
+                        if (terminal.term.mode.mouse) {
+                            try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
+                        } else {
+                            terminal.kscrollDown(3);
+                        }
+                    } else {
+                        // Check if mouse reporting is enabled
+                        if (terminal.term.mode.mouse) {
+                            try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
+                        }
                     }
                 },
                 x11.ButtonRelease => {
+                    const ev = event.xbutton;
+                    const cell_w = @as(c_int, @intCast(window.cell_width));
+                    const cell_h = @as(c_int, @intCast(window.cell_height));
+                    const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(ev.y, cell_h)));
+                    const cx = @min(x, terminal.term.col - 1);
+                    const cy = @min(y, terminal.term.row - 1);
+
+                    if (terminal.term.mode.mouse) {
+                        try input.sendMouseReport(cx, cy, ev.button, ev.state, true);
+                    }
+
                     if (mouse_pressed) {
                         mouse_pressed = false;
 
@@ -205,6 +256,7 @@ pub fn main() !u8 {
 
                     if (ev.property != 0) {
                         var text_prop: x11.XTextProperty = undefined;
+                        // Use ev.property (which should be PRIMARY)
                         if (x11.XGetTextProperty(window.dpy, ev.requestor, &text_prop, ev.property) > 0) {
                             defer {
                                 _ = x11.XFree(@ptrCast(text_prop.value));
@@ -224,6 +276,14 @@ pub fn main() !u8 {
                             }
                         }
                     }
+                },
+                x11.SelectionClear => {
+                    const ev = event.xselectionclear;
+                    std.log.info("SelectionClear received\n", .{});
+                    selector.handleSelectionClear(&ev);
+                    // Redraw to clear highlight
+                    try renderer.render(&terminal.term);
+                    window.present();
                 },
                 else => {},
             }

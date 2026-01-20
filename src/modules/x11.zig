@@ -28,8 +28,10 @@ pub const XSetWindowAttributes = c.XSetWindowAttributes;
 pub const XRenderColor = c.XRenderColor;
 pub const XTextProperty = c.XTextProperty;
 
-// Re-export common constants
-pub const True = 1;
+pub const ShiftMask = c.ShiftMask;
+pub const LockMask = c.LockMask;
+pub const ControlMask = c.ControlMask;
+pub const Mod1Mask = c.Mod1Mask;
 pub const False = 0;
 pub const None = 0;
 pub const InputOutput = c.InputOutput;
@@ -45,6 +47,7 @@ pub const ConfigureNotify = c.ConfigureNotify;
 pub const ClientMessage = c.ClientMessage;
 pub const SelectionNotify = c.SelectionNotify;
 pub const SelectionRequest = c.SelectionRequest;
+pub const SelectionClear = c.SelectionClear;
 pub const PropertyNotify = c.PropertyNotify;
 pub const FocusIn = c.FocusIn;
 pub const FocusOut = c.FocusOut;
@@ -89,8 +92,10 @@ pub const XMapWindow = c.XMapWindow;
 pub const XSync = c.XSync;
 pub const XPending = c.XPending;
 pub const XNextEvent = c.XNextEvent;
+
 pub const XCreatePixmap = c.XCreatePixmap;
 pub const XCopyArea = c.XCopyArea;
+pub const XkbKeycodeToKeysym = c.XkbKeycodeToKeysym;
 
 pub const XftDrawCreate = c.XftDrawCreate;
 pub const XftFontOpenName = c.XftFontOpenName;

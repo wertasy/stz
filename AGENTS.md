@@ -1,163 +1,104 @@
 # AGENTS.md - stz 项目开发指南
 
-本文档为在 stz 项目中工作的 AI 代理提供开发指南。
+本文档为在 stz 项目中工作的 AI 代理提供开发指南，确保代码一致性与功能对齐。
 
-## 构建命令
+## 常用命令
 
 ```bash
-# 清理、编译、运行
-rm -rf .zig-cache zig-out && zig build && zig build run
+# 构建并运行终端
+zig build run
 
-# 发布构建
-zig build -Drelease-fast
+# 仅编译项目 (Debug)
+zig build
 
-# 测试
-zig build test                              # 所有测试
-zig test src/modules/terminal.zig           # 单个文件
-zig test src/modules/screen.zig --filter-test "scroll" # 过滤
+# 运行所有单元测试 (包含 Parser 和 Selection)
+zig build test --summary all
 
-# 格式化和检查
-zig fmt .                                   # 格式化
-zig fmt --check .                            # 检查格式
-zig build -freference-trace                  # 详细错误
+# 运行特定测试过滤 (例如仅测试 Parser)
+zig build test --filter "Parser"
+
+# 运行特定测试过滤 (例如仅测试 Selection)
+zig build test --filter "Selection"
+
+# 格式化所有代码
+zig fmt .
+
+# 检查代码格式 (CI 模式)
+zig fmt --check .
+
+# 清理构建缓存
+rm -rf .zig-cache zig-out
 ```
 
 ## 代码风格指南
 
-### 导入风格
+### 1. 导入风格
+- **禁止使用 `usingnamespace`**：必须通过命名空间显式访问成员。
+- **路径引用**：跨目录使用项目完整相对路径，同级使用 `./`。
+- **排序**：标准库 > 第三方库 > 本地模块，各组间空行分隔。
 ```zig
 const std = @import("std");
-const terminal = @import("modules/terminal.zig");
+const x11 = @import("x11.zig");
+
 const types = @import("types.zig");
-```
-**规则：** 
-- 命名空间： 严禁直接提取成员，通过 terminal.Device 明确来源，规避冲突。
-- **禁止使用 `usingnamespace`**：显式导出需要的类型或通过命名空间访问。
-- 路径引用： 跨目录使用项目完整路径，同级使用相对路径。
-- 排序： 按 标准库 > 第三方库 > 本地模块 分组，空行分隔。
-- 例外： 仅 print 等极高频工具函数允许直接定义别名。
-
-### 注释风格
-```zig
-//! 文件级别文档注释
-/// 结构体/函数文档注释
-// 行内注释
-```
-**规则：** 使用中文注释
-
-### 命名约定
-```zig
-// 类型：PascalCase
-pub const Terminal = struct { ... };
-// 函数：camelCase
-pub fn init() !Terminal { ... }
-// 常量/变量：snake_case
-pub const max_lines: usize = 1000;
-// 私有字段：下划线前缀
-_padding: u3 = 0,
+const terminal = @import("terminal.zig");
 ```
 
-### 错误处理
+### 2. 命名约定
+- **类型 (Struct, Enum, Union)**: `PascalCase` (如 `Term`, `GlyphAttr`)。
+- **函数**: `camelCase` (如 `processBytes`, `init`)。
+- **变量/字段/常量**: `snake_case` (如 `char_width`, `max_lines`)。
+- **私有成员**: 结构体私有字段建议使用 `_` 前缀。
+
+### 3. 注释风格
+- **规则**：所有公共接口和复杂逻辑必须使用 **中文注释**。
+- `//!`: 文件头部文档注释。
+- `///`: 结构体、常量或函数文档注释。
+- `//`: 代码块内部逻辑说明。
+
+### 4. 错误处理
+- **自定义错误集**：优先在各模块定义专属错误集，避免 `anyerror`。
+- **错误捕获**：使用 `try` 向上传递，或 `catch` 处理并记录中文错误日志。
 ```zig
-pub const ModuleError = error { OutOfBounds, InvalidSequence };
-pub fn someFunction() !void { return error.AllocationFailed; }
-try someFunction();
-const result = try otherFunction() catch |err| {
-    std.log.err("错误: {}\n", .{err});
+const result = someFunction() catch |err| {
+    std.log.err("操作失败: {}\n", .{err});
     return err;
 };
 ```
-**规则：** 自定义错误集（不用 `anyerror`），错误消息用中文
 
-### 资源管理
-```zig
-const gpa = std.heap.GeneralPurposeAllocator(.{ .thread_safe = true });
-defer {
-    const deinit_status = gpa.deinit();
-    if (deinit_status == .leak) std.log.err("内存泄漏\n", .{});
-}
-const allocator = gpa.allocator();
+### 5. 资源管理
+- **Init/Deinit 模式**：任何持有堆内存或系统句柄（如 X11 资源）的结构体必须实现 `init` 和 `deinit`。
+- **显式分配器**：分配器通过 `init` 参数传递并存储在结构体中。
+- **内存安全**：利用 `defer` 确保资源释放，关注 XftFont 等外部库资源的及时关闭。
 
-const buffer = try allocator.alloc(u8, 1024);
-defer allocator.free(buffer);
+### 6. 类型系统
+- **Packed Structs**：位标志（Attributes, Modes）使用 `packed struct` 定义以匹配底层协议。
+- **显式转换**：使用 `@intCast`, `@truncate`, `@floatFromInt`。
 
-pub const SomeStruct = struct {
-    allocator: std.mem.Allocator,
-    pub fn init(allocator: std.mem.Allocator) !SomeStruct {
-        return SomeStruct{ .allocator = allocator };
-    }
-    pub fn deinit(self: *SomeStruct) void { }
-};
-var obj = try SomeStruct.init(allocator);
-defer obj.deinit();
-```
-**规则：** 用 `defer` 清理，分配器通过参数传递，`init()` / `deinit()` 模式
+## 项目核心规范
 
-### 类型系统
-```zig
-pub const GlyphAttr = packed struct(u16) {
-    bold: bool = false,
-    italic: bool = false,
-    _padding: u3 = 0,
-};
-const x: usize = @intCast(value);
-const n: u32 = @truncate(value);
-const f: f32 = @floatFromInt(value);
-```
-**规则：** 位标志用 `packed struct`，避免 `@as`，用显式转换函数
+### 终端模拟标准
+- 严格遵循 VT100/VT220 标准，对齐 `xterm` 转义序列。
+- **CSI 参数**：解析器必须支持冒号分隔的子参数 (Colon Arguments)，用于 SGR 扩展颜色。
 
-### 配置管理
-```zig
-pub const Config = struct {
-    pub const window = struct {
-        pub const cols: usize = 120;
-    };
-};
-const cols = Config.window.cols;
-```
-**规则：** 所有配置在 `src/modules/config.zig`，用嵌套结构体组织
+### 字符与字体渲染
+- **Unicode**: 使用 `std.unicode` 进行编码转换。
+- **CJK 支持**: 渲染宽字符时需处理 `wide_dummy` 单元格。
+- **字体回退**: `Renderer` 必须实现 Fallback 机制。若主字体缺少码点，应遍历备用字体列表。
 
-## 项目特定要求
+### 交互行为
+- **选择机制**: 支持双击选中单词 (Word Snap) 和三击选中整行 (Line Snap)。单词边界参考 `config.zig` 中的 `word_delimiters`。
+- **双缓冲**: 所有绘图必须在 Pixmap 上完成，最后通过 `XCopyArea` 呈现。
 
-### SDL 版本
-⚠️ **重要：当前代码使用 SDL3，但目标环境只有 SDL2。**
+## 代码审查清单 (Checklist)
 
-优先使用 SDL2 API，参考 `TODO.md` 中的 SDL3→SDL2 映射表，等待 SDL2 迁移完成后再添加新 SDL 功能。
-
-### 终端标准
-遵循 VT100/VT220 标准，参考 xterm 控制序列文档，实现完整的 ANSI 转义序列支持。
-
-### Unicode 处理
-使用 `std.unicode` 而非自定义实现，支持宽字符（CJK 等），正确处理 UTF-8 编码。
-
-### 内存分配
-使用 `GeneralPurposeAllocator` 开发，检测内存泄漏，考虑线程安全性。
-
-## 代码审查检查清单
-
-- [ ] `zig fmt .` 格式化
-- [ ] `zig build` 编译通过
-- [ ] `zig build test` 测试通过
-- [ ] 检查内存泄漏
-- [ ] `zig fmt --check .` 验证格式
-- [ ] 代码符合风格指南
-- [ ] 添加中文注释
-- [ ] 更新相关文档
-
-## 调试技巧
-
-```bash
-zig build -freference-trace
-zig build -Demit-asm=zig-out/asm.s
-zig build -Ddebug && lldb zig-out/bin/stz
-zig build -Drelease-fast && perf record -g ./zig-out/bin/stz && perf report
-```
+- [ ] `zig build test` 通过且无 Regression。
+- [ ] 代码经过 `zig fmt .` 处理。
+- [ ] 核心 API 均有中文文档注释。
+- [ ] 检查内存泄漏 (GPA 在测试结束时会输出泄露报告)。
+- [ ] 宽字符写入行尾的 `wrap_next` 逻辑符合 `st` 预期。
 
 ## 参考资料
-
-- 原始 C 版本 st 项目代码路径：/home/10292721@zte.intra/Github/suckless/st
-- Zig 0.15.2 标准库路径：/opt/zig-x86_64-linux-0.15.2/lib/std
-- [Zig 学习资源](https://ziglang.org/learn/)
-- [SDL2 文档](https://wiki.libsdl.org/CategoryAPI)
-- [VT100 标准](https://vt100.net/)
-- [xterm 控制序列](http://invisible-island.net/xterm/ctlseqs/ctlseqs.html)
+- 原始 C 版 st 路径: `/home/wert/Github/suckless/st`
+- [Zig 0.15.2 文档](https://ziglang.org/documentation/0.15.2/)
+- [Xterm 控制序列手册](http://invisible-island.net/xterm/ctlseqs/ctlseqs.html)

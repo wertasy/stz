@@ -102,9 +102,9 @@ pub const UrlDetector = struct {
     /// 检查指定位置是否是 URL
     pub fn isUrlAt(self: *UrlDetector, x: usize, y: usize) bool {
         const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
-        if (screen == null or y >= screen.len or x >= self.term.col) {
-            return false;
-        }
+        if (screen == null) return false;
+        if (y >= screen.?.len) return false;
+        if (x >= self.term.col) return false;
 
         return screen.?[y][x].attr.url;
     }
@@ -112,9 +112,9 @@ pub const UrlDetector = struct {
     /// 获取指定位置的 URL
     pub fn getUrlAt(self: *UrlDetector, x: usize, y: usize) ![]u8 {
         const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
-        if (screen == null or y >= screen.len) {
-            return error.NoUrlFound;
-        }
+        if (screen == null) return error.NoUrlFound;
+        if (y >= screen.?.len) return error.NoUrlFound;
+        if (x >= self.term.col) return error.NoUrlFound;
 
         // 查找 URL 的开始和结束
         var url_start: ?usize = null;
@@ -122,13 +122,14 @@ pub const UrlDetector = struct {
 
         // 向前查找 URL 开始
         var sx = x;
-        while (sx > 0) : (sx -= 1) {
+        while (sx > 0) {
             if (!screen.?[y][sx].attr.url) {
-                if (sx + 1 < screen.?[y].len and screen.?[y][sx + 1].attr.url) {
+                if (sx + 1 < self.term.col and screen.?[y][sx + 1].attr.url) {
                     url_start = sx + 1;
                     break;
                 }
             }
+            sx -= 1;
         }
 
         if (url_start == null) {
@@ -137,15 +138,16 @@ pub const UrlDetector = struct {
 
         // 向后查找 URL 结束
         var ex = url_start.?;
-        while (ex < screen.?[y].len) : (ex += 1) {
+        while (ex < self.term.col) {
             if (!screen.?[y][ex].attr.url) {
                 url_end = ex;
                 break;
             }
+            ex += 1;
         }
 
         if (url_end == null) {
-            url_end = screen.?[y].len;
+            url_end = self.term.col;
         }
 
         // 提取 URL 字符
@@ -154,12 +156,60 @@ pub const UrlDetector = struct {
         defer self.allocator.free(url);
 
         for (0..url_len) |i| {
-            url[i] = if (screen.?[y][url_start.? + i].u < 128)
-                @as(u8, screen.?[y][url_start.? + i].u)
-            else
-                ' ';
+            if (screen.?[y][url_start.? + i].u < 128) {
+                url[i] = @intCast(screen.?[y][url_start.? + i].u);
+            } else {
+                url[i] = ' ';
+            }
         }
 
         return url;
+    }
+
+    /// 打开指定位置的 URL
+    pub fn openUrlAt(self: *UrlDetector, x: usize, y: usize) !void {
+        const url = try self.getUrlAt(x, y);
+        defer self.allocator.free(url);
+
+        // 移除可能的控制字符
+        const len: usize = url.len;
+        var start: usize = 0;
+        while (start < len and std.ascii.isControl(url[start])) : (start += 1) {}
+
+        // 分配一个带 null 终止符的缓冲区
+        const url_slice = url[start..len];
+        const url_terminated = try self.allocator.allocSentinel(u8, url_slice.len, 0);
+        defer self.allocator.free(url_terminated);
+
+        @memcpy(url_terminated, url_slice);
+
+        // 构建命令并执行
+
+        // 使用 fork + exec 来打开 URL
+        const pid = std.os.linux.fork();
+        if (pid < 0) {
+            std.log.err("Fork failed\n", .{});
+            return;
+        }
+
+        if (pid == 0) {
+            // 子进程
+            // 获取 URL handler
+            const handler = config.Config.url.handler;
+
+            // 准备参数（使用临时分配器）
+            var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+            defer arena.deinit();
+
+            const argv = try arena.allocator().allocSentinel(?[*:0]const u8, 3, null);
+            argv[0] = handler;
+            argv[1] = url_terminated;
+            argv[2] = null;
+
+            // 执行（成功则不会返回，失败则返回错误）
+            const err = std.posix.execvpeZ(argv[0].?, argv.ptr, std.c.environ);
+            std.log.err("Exec failed: {}\n", .{err});
+            std.posix.exit(1);
+        }
     }
 };

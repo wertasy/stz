@@ -1,6 +1,7 @@
 //! 核心数据类型定义
 
 const std = @import("std");
+const config = @import("config.zig");
 
 /// 字符属性标志位
 pub const GlyphAttr = packed struct(u16) {
@@ -25,17 +26,19 @@ pub const GlyphAttr = packed struct(u16) {
 pub const Glyph = struct {
     u: u21 = ' ', // Unicode 码点
     attr: GlyphAttr = .{}, // 字符属性
-    fg: u32 = 7, // 前景色索引
-    bg: u32 = 0, // 背景色索引
+    fg: u32 = config.Config.colors.default_foreground, // 前景色索引
+    bg: u32 = config.Config.colors.default_background, // 背景色索引
     ustyle: i32 = -1, // 下划线样式
     ucolor: [3]i32 = [_]i32{ -1, -1, -1 }, // 下划线颜色 RGB
 };
 
 /// 光标状态
-pub const CursorState = enum(u8) {
-    default = 0,
-    wrap_next = 1,
-    origin = 2,
+pub const CursorState = packed struct(u8) {
+    wrap_next: bool = false,
+    origin: bool = false,
+    _padding: u6 = 0,
+
+    pub const default = @This(){};
 };
 
 /// 光标移动模式
@@ -56,6 +59,8 @@ pub const TermMode = packed struct(u32) {
     app_cursor: bool = false,
     app_keypad: bool = false,
     hide_cursor: bool = false,
+    reverse: bool = false, // DECSCNM - 反色模式
+    kbdlock: bool = false, // 键盘锁定
     mouse: bool = false,
     mouse_btn: bool = false,
     mouse_motion: bool = false,
@@ -64,7 +69,11 @@ pub const TermMode = packed struct(u32) {
     mouse_focus: bool = false,
     brckt_paste: bool = false,
     num_lock: bool = false,
-    _padding: u14 = 0,
+    blink: bool = false, // 光标/文本闪烁
+    focused: bool = false, // 窗口焦点状态 (State)
+    focused_report: bool = false, // CSI ? 1004 h/l - 焦点报告模式 (Mode)
+    sync_update: bool = false, // CSI ? 2026 h/l - 同步更新模式
+    _padding: u8 = 0,
 };
 
 /// 字符集
@@ -79,7 +88,7 @@ pub const Charset = enum(u8) {
 };
 
 /// 转义序列状态
-pub const EscapeState = packed struct(u8) {
+pub const EscapeState = packed struct(u16) {
     start: bool = false,
     csi: bool = false,
     str: bool = false, // DCS, OSC, PM, APC
@@ -87,7 +96,9 @@ pub const EscapeState = packed struct(u8) {
     tstate: bool = false,
     utf8: bool = false,
     str_end: bool = false,
-    _padding: u1 = 0,
+    decaln: bool = false, // DECALN - ESC # 8
+    test_mode: bool = false, // ESC # 测试模式
+    _padding: u7 = 0,
 };
 
 /// 光标结构
@@ -96,6 +107,18 @@ pub const TCursor = struct {
     x: usize = 0,
     y: usize = 0,
     state: CursorState = .default,
+};
+
+/// 保存的光标状态（用于 DECSC/DECRC）
+pub const SavedCursor = struct {
+    attr: Glyph = .{},
+    x: usize = 0,
+    y: usize = 0,
+    state: CursorState = .default,
+    top: usize = 0,
+    bot: usize = 0,
+    trantbl: [4]Charset = [_]Charset{.usa} ** 4,
+    charset: u8 = 0,
 };
 
 /// 选择模式
@@ -113,6 +136,7 @@ pub const SelectionType = enum(u8) {
 
 /// 选择吸附模式
 pub const SelectionSnap = enum(u8) {
+    none = 0,
     word = 1,
     line = 2,
 };
@@ -143,6 +167,7 @@ pub const CSIEscape = struct {
     arg: [32]i64 = .{0} ** 32, // 参数
     narg: usize = 0, // 参数数量
     mode: [2]u8 = .{0} ** 2, // 最终字符
+    carg: [32][16]i64 = .{.{0} ** 16} ** 32, // 冒号参数 (Colon Arguments)
 };
 
 /// STR 转义序列结构
@@ -201,4 +226,24 @@ pub const Term = struct {
 
     // 分配器
     allocator: std.mem.Allocator,
+
+    // 窗口标题
+    window_title: []const u8 = "stz",
+    window_title_dirty: bool = false,
+
+    // 颜色调色板
+    palette: [256]u32 = undefined,
+    default_fg: u32 = config.Config.colors.default_foreground, // 默认前景色
+    default_bg: u32 = config.Config.colors.default_background, // 默认背景色
+    default_cs: u32 = config.Config.colors.default_cursor, // 默认光标颜色
+
+    // 光标样式 (0-8, 参考配置文件)
+    cursor_style: u8 = 1,
+
+    // 保存的光标状态（主屏幕和备用屏幕各一个）
+    saved_cursor: [2]SavedCursor = [_]SavedCursor{.{}} ** 2,
+
+    // 剪贴板请求 (OSC 52)
+    clipboard_data: ?[]u8 = null,
+    clipboard_mask: u8 = 0, // Bit 0: CLIPBOARD, Bit 1: PRIMARY
 };

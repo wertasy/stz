@@ -11,12 +11,14 @@ stz 是使用 Zig 语言重写的 st (simple terminal) 终端模拟器。
 
 ### 已实现 ✅
 
-- ✅ **X11 后端**: 使用 Xlib 和 Xft 进行窗口管理和字体渲染
-- ✅ **VT100/VT220 支持**: 解析 ANSI 转义序列，支持光标移动、颜色、文本属性等
-- ✅ **UTF-8 支持**: 正确处理 UTF-8 编码字符和宽字符
-- ✅ **PTY 集成**: 与 shell 进程的伪终端通信
-- ✅ **基本输入**: 支持普通字符和部分控制键输入
-- ✅ **模块化架构**: 职责清晰的模块划分 (Terminal, Screen, Parser, Renderer, PTY)
+ - ✅ **X11 后端**: 使用 Xlib 和 Xft 进行窗口管理和字体渲染
+ - ✅ **VT100/VT220 支持**: 解析 ANSI 转义序列，支持光标移动、颜色、文本属性等
+ - ✅ **UTF-8 支持**: 正确处理 UTF-8 编码字符和宽字符
+ - ✅ **PTY 集成**: 与 shell 进程的伪终端通信
+ - ✅ **基本输入**: 支持普通字符和部分控制键输入
+ - ✅ **模块化架构**: 职责清晰的模块划分 (Terminal, Screen, Parser, Renderer, PTY)
+ - ✅ **URL 点击**: 自动检测并点击打开 URL（Ctrl+点击）
+ - ✅ **打印/导出**: 支持打印屏幕和选择内容（Print/Shift+Print）
 
 ### 待实现 ⚠️
 
@@ -82,7 +84,8 @@ stz/
         ├── parser.zig    # ANSI 转义序列解析
         ├── pty.zig       # PTY 管理
         ├── unicode.zig   # UTF-8 工具
-        └── selection.zig # (WIP) 文本选择
+        ├── selection.zig # 文本选择
+        └── printer.zig  # 打印/导出功能
 ```
 
 ## ⚙️ 配置

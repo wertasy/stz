@@ -42,6 +42,18 @@ pub const Terminal = struct {
         t.term.top = 0;
         t.term.bot = row - 1;
 
+        // 初始化保存的光标状态
+        for (0..2) |i| {
+            t.term.saved_cursor[i] = types.SavedCursor{
+                .attr = t.term.c.attr,
+                .x = 0,
+                .y = 0,
+                .state = .default,
+                .top = 0,
+                .bot = row - 1,
+            };
+        }
+
         return t;
     }
 
@@ -142,7 +154,7 @@ pub const Terminal = struct {
             if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
                 lines[self.term.c.y][self.term.c.x] = Glyph{
                     .u = u,
-                    .attr = self.term.c.attr,
+                    .attr = self.term.c.attr.attr,
                     .fg = self.term.c.attr.fg,
                     .bg = self.term.c.attr.bg,
                 };
@@ -155,6 +167,8 @@ pub const Terminal = struct {
                 if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
                     lines[self.term.c.y][self.term.c.x - 1] = Glyph{
                         .u = 0,
+                        .fg = self.term.c.attr.fg,
+                        .bg = self.term.c.attr.bg,
                         .attr = .{ .wide_dummy = true },
                     };
                 }
@@ -321,7 +335,7 @@ pub const Terminal = struct {
     /// 删除字符
     pub fn deleteChars(self: *Terminal, n: usize) !void {
         const count = @min(n, self.term.col - self.term.c.x);
-        const screen_buf = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen_buf = self.term.line;
 
         if (screen_buf) |scr| {
             if (self.term.c.y < scr.len) {
@@ -353,7 +367,7 @@ pub const Terminal = struct {
     /// 插入空字符
     pub fn insertBlanks(self: *Terminal, n: usize) !void {
         const count = @min(n, self.term.col - self.term.c.x);
-        const screen_buf = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen_buf = self.term.line;
 
         if (screen_buf) |scr| {
             if (self.term.c.y < scr.len) {
@@ -419,43 +433,7 @@ pub const Terminal = struct {
 
     /// 重置终端
     pub fn reset(self: *Terminal) !void {
-        // 重置光标
-        self.term.c = TCursor{
-            .attr = Glyph{
-                .fg = config.Config.colors.foreground,
-                .bg = config.Config.colors.background,
-            },
-            .x = 0,
-            .y = 0,
-            .state = .default,
-        };
-
-        // 重置制表符
-        if (self.term.tabs) |tabs| {
-            for (tabs) |*tab| {
-                tab.* = false;
-            }
-            // 设置默认制表符
-            for (0..self.term.col) |x| {
-                if (x % config.Config.tab_spaces == 0) {
-                    tabs[x] = true;
-                }
-            }
-        }
-
-        // 重置滚动区域
-        self.term.top = 0;
-        self.term.bot = self.term.row - 1;
-
-        // 重置模式
-        self.term.mode = .{
-            .utf8 = true,
-            .wrap = true,
-        };
-
-        // 清除屏幕
-        try self.clearScreen(2);
-        try self.clearLine(2);
+        try self.parser.resetTerminal();
     }
 
     /// 调整终端大小

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const boxdraw_data = @import("boxdraw_data.zig");
 
 const Glyph = types.Glyph;
 
@@ -14,36 +15,22 @@ pub const BoxDrawError = error{
 pub const BoxDraw = struct {
     /// 检查是否是框线字符
     pub fn isBoxDraw(u: u21) bool {
-        return u >= 0x2500 and u <= 0x259F;
-    }
-
-    /// 获取框线字符索引
-    pub fn getIndex(u: u21) !u8 {
-        if (!isBoxDraw(u)) {
-            return error.NotBoxDrawChar;
+        if (u >= 0x2800 and u <= 0x28FF) return true;
+        if (u >= 0x2500 and u <= 0x25FF) {
+            return boxdraw_data.boxdata[u - 0x2500] != 0;
         }
-
-        // 简化映射：实际需要完整的框线字符表
-        const index = @as(u8, (u - 0x2500) / 64);
-        return index;
+        return false;
     }
 
-    /// 绘制框线字符（简化实现）
-    /// 实际实现需要根据字符类型绘制不同的线条
-    pub fn draw(u: u21, x: i32, y: i32, w: i32, h: i32) !void {
-        _ = u;
-        _ = x;
-        _ = y;
-        _ = w;
-        _ = h;
-
-        // TODO: 实现完整的框线字符绘制
-        // 这需要根据具体的框线字符类型（竖线、横线、角等）
-        // 绘制对应的图形元素
-
-        // 常见的框线字符范围：
-        // 0x2500-0x257F: 框线
-        // 0x2580-0x259F: 块元素
+    /// 获取绘制数据
+    pub fn getDrawData(u: u21) u16 {
+        if (u >= 0x2800 and u <= 0x28FF) {
+            return boxdraw_data.BRL | @as(u16, @as(u8, @truncate(u)));
+        }
+        if (u >= 0x2500 and u <= 0x25FF) {
+            return boxdraw_data.boxdata[u - 0x2500];
+        }
+        return 0;
     }
 
     /// 检查字符是否需要特殊处理

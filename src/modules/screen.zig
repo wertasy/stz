@@ -128,42 +128,130 @@ pub fn deinit(term: *Term) void {
     term.tabs = null;
 }
 
+/// 获取当前可见的行数据（考虑滚动偏移）
+pub fn getVisibleLine(term: *const Term, y: usize) []Glyph {
+    // 如果处于备用屏幕模式，直接返回当前行（因为 line/alt 已经交换过了）
+    // 此时 term.line 指向的是备用屏幕缓冲区
+    if (term.mode.alt_screen) {
+        return term.line.?[y];
+    }
+
+    if (term.scr > 0) {
+        if (y < term.scr) {
+            // 在历史记录中
+            const newest_idx = (term.hist_idx + term.hist_max - 1) % term.hist_max;
+            const offset = term.scr - y - 1;
+            if (term.hist_cnt > 0) {
+                if (offset < term.hist_cnt) {
+                    const hist_fetch_idx = (newest_idx + term.hist_max - offset) % term.hist_max;
+                    return term.hist.?[hist_fetch_idx];
+                }
+            }
+            // 超出历史记录，返回第一行
+            return term.line.?[0];
+        } else {
+            // 在当前屏幕
+            return term.line.?[y - term.scr];
+        }
+    }
+
+    return term.line.?[y];
+}
+
 /// 调整终端大小
+/// 参考 st 的 tresize 实现，滑动屏幕以保持光标位置
 pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     const allocator = term.allocator;
 
-    // 调整主屏幕
-    if (term.line) |lines| {
-        for (lines) |line| {
-            allocator.free(line);
-        }
-        allocator.free(lines);
+    if (new_row < 1 or new_col < 1) {
+        return error.InvalidSize;
     }
 
-    // 调配备用屏幕
-    if (term.alt) |lines| {
-        for (lines) |line| {
-            allocator.free(line);
+    const old_row = term.row;
+    const old_col = term.col;
+
+    // 滑动屏幕内容以保持光标位置
+    // 如果光标在新屏幕外面，向上滚动屏幕
+    var valid_rows: usize = 0;
+    if (term.c.y >= new_row) {
+        const shift = term.c.y - new_row + 1;
+        // 释放顶部的行
+        for (0..shift) |y| {
+            if (term.line) |lines| allocator.free(lines[y]);
+            if (term.alt) |alt| allocator.free(alt[y]);
         }
-        allocator.free(lines);
+
+        valid_rows = old_row - shift;
+        // 如果有效行数依然超过新屏幕高度，进一步释放
+        if (valid_rows > new_row) {
+            for (new_row..valid_rows) |y| {
+                if (term.line) |lines| allocator.free(lines[y + shift]);
+                if (term.alt) |alt| allocator.free(alt[y + shift]);
+            }
+            valid_rows = new_row;
+        }
+
+        // 移动剩余的行到顶部
+        if (term.line) |lines| {
+            for (0..valid_rows) |y| {
+                lines[y] = lines[y + shift];
+            }
+        }
+        if (term.alt) |alt| {
+            for (0..valid_rows) |y| {
+                alt[y] = alt[y + shift];
+            }
+        }
+        term.c.y -= shift;
+    } else {
+        valid_rows = old_row;
+        // 如果新屏幕比旧屏幕矮，释放超出的行
+        if (new_row < old_row) {
+            for (new_row..old_row) |y| {
+                if (term.line) |lines| allocator.free(lines[y]);
+                if (term.alt) |alt| allocator.free(alt[y]);
+            }
+            valid_rows = new_row;
+        }
     }
 
-    // 分配新大小的行
-    term.line = try allocator.alloc([]Glyph, new_row);
-    term.alt = try allocator.alloc([]Glyph, new_row);
-    // Note: History resize is complicated (ring buffer), skip for now or clear it.
-    // Ideally we should resize history lines too. For simplicity, let's keep history as is but resize lines.
-    // If width changes, we need to resize history lines.
+    // 重新分配行数组
+    term.line = try allocator.realloc(term.line.?, new_row);
+    term.alt = try allocator.realloc(term.alt.?, new_row);
 
-    // Resize history buffer lines if width changed
-    if (new_col != term.col) {
+    // 调整现有行的宽度
+    for (0..valid_rows) |y| {
+        term.line.?[y] = try allocator.realloc(term.line.?[y], new_col);
+        term.alt.?[y] = try allocator.realloc(term.alt.?[y], new_col);
+
+        // 清除新扩展的区域（如果有）
+        if (new_col > old_col) {
+            for (old_col..new_col) |x| {
+                term.line.?[y][x] = Glyph{};
+                term.alt.?[y][x] = Glyph{};
+            }
+        }
+    }
+
+    // 分配并初始化新行
+    for (valid_rows..new_row) |y| {
+        term.line.?[y] = try allocator.alloc(Glyph, new_col);
+        term.alt.?[y] = try allocator.alloc(Glyph, new_col);
+        for (0..new_col) |x| {
+            term.line.?[y][x] = Glyph{};
+            term.alt.?[y][x] = Glyph{};
+        }
+    }
+
+    // 调整历史缓冲区（如果宽度改变）
+    if (new_col != old_col) {
         if (term.hist) |hist| {
             for (hist) |line| {
                 allocator.free(line);
             }
             allocator.free(hist);
         }
-        const hist_rows = term.hist_max; // Keep same history size
+        const hist_rows = term.hist_max;
         term.hist = try allocator.alloc([]Glyph, hist_rows);
         for (0..hist_rows) |y| {
             term.hist.?[y] = try allocator.alloc(Glyph, new_col);
@@ -176,51 +264,47 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
         term.scr = 0;
     }
 
-    // 分配每一行的字符
-    for (0..new_row) |y| {
-        term.line.?[y] = try allocator.alloc(Glyph, new_col);
-        term.alt.?[y] = try allocator.alloc(Glyph, new_col);
-
-        // 初始化为空格
-        for (0..new_col) |x| {
-            const default_glyph = Glyph{};
-            if (y < term.row and x < term.col) {
-                // 保留原有内容
-                term.line.?[y][x] = default_glyph;
-                term.alt.?[y][x] = default_glyph;
-            } else {
-                term.line.?[y][x] = default_glyph;
-                term.alt.?[y][x] = default_glyph;
-            }
-        }
-    }
-
     // 调整脏标记
-    if (term.dirty) |d| {
-        allocator.free(d);
-    }
-    term.dirty = try allocator.alloc(bool, new_row);
-    for (term.dirty.?) |*dirty| {
-        dirty.* = true;
+    term.dirty = try allocator.realloc(term.dirty.?, new_row);
+    for (0..new_row) |y| {
+        term.dirty.?[y] = true;
     }
 
     // 调整制表符
-    if (term.tabs) |t| {
-        allocator.free(t);
+    term.tabs = try allocator.realloc(term.tabs.?, new_col);
+    if (new_col > old_col) {
+        for (old_col..new_col) |x| {
+            term.tabs.?[x] = false;
+        }
     }
-    term.tabs = try allocator.alloc(bool, new_col);
-    for (term.tabs.?) |*tab| {
-        tab.* = false;
+    // 设置新的默认制表符
+    const tab_spaces = @import("config.zig").Config.tab_spaces;
+    var tab_col: usize = old_col;
+    if (tab_col % tab_spaces != 0) {
+        tab_col += tab_spaces - (tab_col % tab_spaces);
     }
-    // 设置默认制表符
-    for (0..new_col) |x| {
-        if (x % 8 == 0) {
-            term.tabs.?[x] = true;
+    if (new_col > tab_col) {
+        for (tab_col..new_col) |x| {
+            if (x % tab_spaces == 0) {
+                term.tabs.?[x] = true;
+            }
         }
     }
 
     term.row = new_row;
     term.col = new_col;
+
+    // 重置滚动区域
+    term.top = 0;
+    term.bot = new_row - 1;
+
+    // 限制光标位置
+    if (term.c.x >= new_col) {
+        term.c.x = new_col - 1;
+    }
+    if (term.c.y >= new_row) {
+        term.c.y = new_row - 1;
+    }
 }
 
 /// 清除区域
@@ -236,7 +320,7 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
     const sy1 = @min(gy1, term.row - 1);
     const sy2 = @min(gy2, term.row - 1);
 
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
 
     for (sy1..sy2 + 1) |y| {
         if (term.dirty) |dirty| {
@@ -257,8 +341,9 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
 
 /// 屏幕向上滚动
 pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
+    if (orig > term.bot) return;
     const limit_n = @min(n, term.bot - orig + 1);
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
 
     if (orig == 0 and limit_n > 0 and !term.mode.alt_screen) {
         // Save lines to history
@@ -289,7 +374,7 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
 
     // 清除底部行
     for (0..limit_n) |k| {
-        const idx = term.bot - limit_n + 1 + k;
+        const idx = term.bot + 1 - limit_n + k;
         if (screen) |scr| {
             for (scr[idx]) |*glyph| {
                 glyph.* = .{
@@ -305,8 +390,9 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
 
 /// 屏幕向下滚动
 pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
+    if (orig > term.bot) return;
     const limit_n = @min(n, term.bot - orig + 1);
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
 
     // 移动行
     var i: usize = term.bot;
@@ -358,7 +444,7 @@ pub fn setDirty(term: *Term, top: usize, bot: usize) void {
 
 /// 获取行长度（忽略尾部空格）
 pub fn lineLength(term: *Term, y: usize) usize {
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
     if (screen) |scr| {
         // 检查是否换行到下一行
         if (scr[y][term.col - 1].attr.wrap) {

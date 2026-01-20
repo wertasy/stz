@@ -27,6 +27,7 @@ pub const Pixmap = c.Pixmap;
 pub const XSetWindowAttributes = c.XSetWindowAttributes;
 pub const XRenderColor = c.XRenderColor;
 pub const XTextProperty = c.XTextProperty;
+pub const XRectangle = c.XRectangle;
 
 pub const ShiftMask = c.ShiftMask;
 pub const LockMask = c.LockMask;
@@ -51,6 +52,8 @@ pub const SelectionClear = c.SelectionClear;
 pub const PropertyNotify = c.PropertyNotify;
 pub const FocusIn = c.FocusIn;
 pub const FocusOut = c.FocusOut;
+pub const EnterNotify = c.EnterNotify;
+pub const LeaveNotify = c.LeaveNotify;
 
 // Mouse button constants
 pub const Button1 = c.Button1;
@@ -62,6 +65,8 @@ pub const Button5 = c.Button5;
 pub const CWBackPixel = c.CWBackPixel;
 pub const CWBorderPixel = c.CWBorderPixel;
 pub const CWBitGravity = c.CWBitGravity;
+pub const CWCursor = c.CWCursor;
+pub const NorthWestGravity = c.NorthWestGravity;
 pub const CWEventMask = c.CWEventMask;
 pub const CWColormap = c.CWColormap;
 
@@ -73,6 +78,8 @@ pub const PointerMotionMask = c.PointerMotionMask;
 pub const StructureNotifyMask = c.StructureNotifyMask;
 pub const ExposureMask = c.ExposureMask;
 pub const FocusChangeMask = c.FocusChangeMask;
+pub const EnterWindowMask = c.EnterWindowMask;
+pub const LeaveWindowMask = c.LeaveWindowMask;
 
 // Re-export common functions
 pub const XOpenDisplay = c.XOpenDisplay;
@@ -96,6 +103,7 @@ pub const XNextEvent = c.XNextEvent;
 pub const XCreatePixmap = c.XCreatePixmap;
 pub const XCopyArea = c.XCopyArea;
 pub const XkbKeycodeToKeysym = c.XkbKeycodeToKeysym;
+pub const XResizeWindow = c.XResizeWindow;
 
 pub const XftDrawCreate = c.XftDrawCreate;
 pub const XftFontOpenName = c.XftFontOpenName;
@@ -106,9 +114,13 @@ pub const XftDrawRect = c.XftDrawRect;
 pub const XftDrawString32 = c.XftDrawString32;
 pub const XftTextExtents32 = c.XftTextExtents32;
 pub const XftDrawChange = c.XftDrawChange;
+pub const XftDrawSetClipRectangles = c.XftDrawSetClipRectangles;
+pub const XftDrawSetClip = c.XftDrawSetClip;
 
 // X11 Selection/Clipboard Atoms
-pub const XA_PRIMARY = c.XA_PRIMARY;
+pub const XA_STRING = c.XA_STRING;
+pub const XA_ATOM = c.XA_ATOM;
+pub const PropModeReplace = c.PropModeReplace;
 // XA_CLIPBOARD might not be directly available in all C compilers via @cImport
 // Define it manually if not available, using XInternAtom at runtime in code
 const XA_CLIPBOARD_NAME = "CLIPBOARD";
@@ -146,6 +158,29 @@ pub const XLookupString = c.XLookupString;
 pub const XSendEvent = c.XSendEvent;
 pub const XDefaultRootWindow = c.XDefaultRootWindow;
 pub const XInternAtom = c.XInternAtom;
+pub const XCreateFontCursor = c.XCreateFontCursor;
+pub const XDefineCursor = c.XDefineCursor;
+pub const XFreeCursor = c.XFreeCursor;
+pub const XC_xterm = c.XC_xterm;
+pub const XC_left_ptr = c.XC_left_ptr;
+
+pub const XOpenIM = c.XOpenIM;
+pub const XCloseIM = c.XCloseIM;
+pub const XCreateIC = c.XCreateIC;
+pub const XDestroyIC = c.XDestroyIC;
+pub const XFilterEvent = c.XFilterEvent;
+pub const XSetICFocus = c.XSetICFocus;
+pub const XUnsetICFocus = c.XUnsetICFocus;
+pub const XSetLocaleModifiers = c.XSetLocaleModifiers;
+pub const Xutf8LookupString = c.Xutf8LookupString;
+
+pub const XIM = c.XIM;
+pub const XIC = c.XIC;
+pub const XNInputStyle = c.XNInputStyle;
+pub const XNClientWindow = c.XNClientWindow;
+pub const XNFocusWindow = c.XNFocusWindow;
+pub const XIMPreeditNothing = c.XIMPreeditNothing;
+pub const XIMStatusNothing = c.XIMStatusNothing;
 
 pub fn XConnectionNumber(dpy: *Display) c_int {
     return c.XConnectionNumber(dpy);

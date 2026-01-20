@@ -83,15 +83,7 @@ pub const Selector = struct {
 
     /// 标准化选择
     pub fn normalize(self: *Selector) void {
-        // 如果起始点和结束点相同（单点），不创建选择范围
-        if (self.selection.ob.x == self.selection.oe.x and self.selection.ob.y == self.selection.oe.y) {
-            self.selection.nb.x = std.math.maxInt(usize);
-            self.selection.nb.y = std.math.maxInt(usize);
-            self.selection.ne.x = 0;
-            self.selection.ne.y = 0;
-            return;
-        }
-
+        // 正常创建选择范围，即使是单字符选择
         if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
             self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)
                 self.selection.ob.x
@@ -132,6 +124,11 @@ pub const Selector = struct {
         // idle 模式表示没有选择，直接返回 false
         if (self.selection.mode == .idle or self.selection.ob.x == std.math.maxInt(usize)) {
             return false;
+        }
+
+        // empty 模式（已点击，等待拖动），单点也要高亮
+        if (self.selection.mode == .empty) {
+            return (x == self.selection.ob.x and y == self.selection.ob.y);
         }
 
         if (self.selection.type == .regular) {

@@ -629,22 +629,21 @@ pub const Parser = struct {
     fn oscHandle(self: *Parser, par: i32) !void {
         switch (par) {
             0 => { // 设置窗口和图标标题
-                if (self.str.narg > 1) {
-                    // TODO: 设置窗口标题 - 需要访问窗口模块
-                    // window.setTitle(self.str.args[1]);
-                    // window.setIconTitle(self.str.args[1]);
+                if (self.str.narg > 1 and self.str.args[1].len > 0) {
+                    self.term.window_title = self.str.args[1];
+                    self.term.window_title_dirty = true;
                 }
             },
             1 => { // 设置图标标题
-                if (self.str.narg > 1) {
-                    // TODO: 设置图标标题
-                    // window.setIconTitle(self.str.args[1]);
+                if (self.str.narg > 1 and self.str.args[1].len > 0) {
+                    self.term.window_title = self.str.args[1];
+                    self.term.window_title_dirty = true;
                 }
             },
             2 => { // 设置窗口标题
-                if (self.str.narg > 1) {
-                    // TODO: 设置窗口标题
-                    // window.setTitle(self.str.args[1]);
+                if (self.str.narg > 1 and self.str.args[1].len > 0) {
+                    self.term.window_title = self.str.args[1];
+                    self.term.window_title_dirty = true;
                 }
             },
             10 => { // 设置前景颜色

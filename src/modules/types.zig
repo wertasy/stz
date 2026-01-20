@@ -201,4 +201,8 @@ pub const Term = struct {
 
     // 分配器
     allocator: std.mem.Allocator,
+
+    // 窗口标题
+    window_title: []const u8 = "stz",
+    window_title_dirty: bool = false,
 };

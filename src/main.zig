@@ -354,6 +354,18 @@ pub fn main() !u8 {
             // 检测并高亮 URL
             try url_detector.highlightUrls();
 
+            // 检查窗口标题更新
+            if (terminal.term.window_title_dirty) {
+                // 创建 null-terminated 字符串用于 X11
+                var title_buf: [512]u8 = undefined;
+                const copy_len = @min(terminal.term.window_title.len, title_buf.len - 1);
+                std.mem.copyForwards(u8, title_buf[0..copy_len], terminal.term.window_title[0..copy_len]);
+                title_buf[copy_len] = 0;
+                // 创建带终止符的切片
+                window.setTitle(title_buf[0..copy_len :0]);
+                terminal.term.window_title_dirty = false;
+            }
+
             // 渲染
             try renderer.render(&terminal.term);
             try renderer.renderCursor(&terminal.term);

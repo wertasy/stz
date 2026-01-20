@@ -213,5 +213,8 @@ pub const boxdata = init: {
     data[0x92] = BBS + 2;
     data[0x93] = BBS + 3;
 
+    // Geometric Shapes (to avoid gaps in common symbols)
+    data[0xa0] = BBD + 0; // ■ (BLACK SQUARE) -> Full Block
+
     break :init data;
 };

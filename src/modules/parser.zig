@@ -137,20 +137,77 @@ pub const Parser = struct {
         }
 
         // 处理临时字符集切换 (SS2, SS3)
+        var prev_charset: ?u8 = null;
         if (self.term.esc.tstate) {
+            prev_charset = self.term.charset;
             self.term.charset = self.term.icharset;
             self.term.esc.tstate = false;
-            return;
         }
 
         // 普通字符 - 写入到屏幕
         self.term.lastc = c;
         try self.writeChar(c);
+
+        // 恢复临时切换前的字符集
+        if (prev_charset) |pc| {
+            self.term.charset = pc;
+        }
     }
+
+    /// VT100 字符集 0 (特殊图形字符集) 映射表
+    const vt100_0 = init: {
+        var mapping = [_]u21{0} ** 128;
+        mapping['$'] = 0x00a3; // 0x24: 磅符号
+        mapping['+'] = 0x2192; // 0x2b: 右箭头
+        mapping[','] = 0x2190; // 0x2c: 左箭头
+        mapping['-'] = 0x2191; // 0x2d: 上箭头
+        mapping['.'] = 0x2193; // 0x2e: 下箭头
+        mapping['0'] = 0x2588; // 0x30: 实心块
+        mapping['a'] = 0x2592; // 0x61: 棋盘格
+        mapping['f'] = 0x00b0; // 0x66: 度数符号
+        mapping['g'] = 0x00b1; // 0x67: 正负号
+        mapping['h'] = 0x2591; // 0x68: 浅色方块
+        mapping['i'] = 0x000b; // 0x69: 灯笼符号 (VT100 0x0b)
+        mapping['j'] = 0x2518; // 0x6a: 右下角
+        mapping['k'] = 0x2510; // 0x6b: 右上角
+        mapping['l'] = 0x250c; // 0x6c: 左上角
+        mapping['m'] = 0x2514; // 0x6d: 左下角
+        mapping['n'] = 0x253c; // 0x6e: 十十字架
+        mapping['o'] = 0x23ba; // 0x6f: 扫描线 1
+        mapping['p'] = 0x23bb; // 0x70: 扫描线 3
+        mapping['q'] = 0x2500; // 0x71: 水平线
+        mapping['r'] = 0x23bc; // 0x72: 扫描线 7
+        mapping['s'] = 0x23bd; // 0x73: 扫描线 9
+        mapping['t'] = 0x251c; // 0x74: 左 T 型
+        mapping['u'] = 0x2524; // 0x75: 右 T 型
+        mapping['v'] = 0x2534; // 0x76: 下 T 型
+        mapping['w'] = 0x252c; // 0x77: 上 T 型
+        mapping['x'] = 0x2502; // 0x78: 垂直线
+        mapping['y'] = 0x2264; // 0x79: 小于等于
+        mapping['z'] = 0x2265; // 0x7a: 大于等于
+        mapping['{'] = 0x03c0; // 0x7b: Pi
+        mapping['|'] = 0x2260; // 0x7c: 不等于
+        mapping['}'] = 0x00a3; // 0x7d: 磅符号
+        mapping['~'] = 0x00b7; // 0x7e: 中心点
+        mapping['_'] = 0x0020; // 0x5f: 空格
+        break :init mapping;
+    };
 
     /// 写入字符到屏幕
     fn writeChar(self: *Parser, u: u21) !void {
-        const width = @import("unicode.zig").runeWidth(u);
+        var codepoint = u;
+
+        // 字符集转换
+        if (self.term.trantbl[self.term.charset] == .graphic0) {
+            if (codepoint >= 0x24 and codepoint <= 0x7e) {
+                const translated = vt100_0[codepoint];
+                if (translated != 0) {
+                    codepoint = translated;
+                }
+            }
+        }
+
+        const width = @import("unicode.zig").runeWidth(codepoint);
 
         // 检查自动换行
         if (self.term.mode.wrap and self.term.c.state == .wrap_next) {
@@ -191,7 +248,7 @@ pub const Parser = struct {
         if (self.term.line) |lines| {
             if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
                 var glyph = self.term.c.attr;
-                glyph.u = u;
+                glyph.u = codepoint;
                 if (width == 2) {
                     glyph.attr.wide = true;
                 }
@@ -200,16 +257,17 @@ pub const Parser = struct {
 
             // 移动光标 - 处理宽字符
             if (width == 2 and self.term.c.x + 1 < self.term.col) {
-                self.term.c.x += 2;
-                if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
-                    lines[self.term.c.y][self.term.c.x] = Glyph{
+                const dummy_x = self.term.c.x + 1;
+                if (self.term.c.y < lines.len and dummy_x < lines[self.term.c.y].len) {
+                    lines[self.term.c.y][dummy_x] = Glyph{
                         .u = 0,
                         .attr = self.term.c.attr.attr,
                         .fg = self.term.c.attr.fg,
                         .bg = self.term.c.attr.bg,
                     };
-                    lines[self.term.c.y][self.term.c.x].attr.wide_dummy = true;
+                    lines[self.term.c.y][dummy_x].attr.wide_dummy = true;
                 }
+                self.term.c.x += 2;
             } else if (width > 0) {
                 self.term.c.x += width;
             }
@@ -282,6 +340,27 @@ pub const Parser = struct {
             },
             2 => { // 清除整个屏幕
                 try self.clearRegion(0, 0, self.term.col - 1, self.term.row - 1);
+            },
+            3 => { // 清除历史缓冲区 (Erase Scrollback)
+                if (self.term.hist) |hist| {
+                    for (hist) |line| {
+                        for (line) |*glyph| {
+                            glyph.* = .{
+                                .u = ' ',
+                                .fg = self.term.c.attr.fg,
+                                .bg = self.term.c.attr.bg,
+                                .attr = .{},
+                            };
+                        }
+                    }
+                }
+                self.term.hist_cnt = 0;
+                self.term.hist_idx = 0;
+                self.term.scr = 0;
+                // 标记全屏脏以刷新
+                if (self.term.dirty) |dirty| {
+                    for (0..dirty.len) |i| dirty[i] = true;
+                }
             },
             else => {},
         }
@@ -524,65 +603,145 @@ pub const Parser = struct {
                     self.term.c.attr.attr.struck = false;
                 },
                 38 => { // 前景色扩展
-                    i += 1;
-                    if (i < self.csi.narg) {
-                        const color_submode = self.csi.arg[i];
+                    var color_submode: i64 = -1;
+                    var r: i64 = -1;
+                    var g: i64 = -1;
+                    var b: i64 = -1;
+                    var index: i64 = -1;
+
+                    if (self.csi.carg[i][0] != -1) {
+                        // 冒号形式: 38:mode:index or 38:mode:r:g:b
+                        color_submode = self.csi.carg[i][0];
                         if (color_submode == 5) {
-                            // 索引颜色
-                            i += 1;
-                            if (i < self.csi.narg and self.csi.arg[i] >= 0 and self.csi.arg[i] <= 255) {
-                                self.term.c.attr.fg = @intCast(self.csi.arg[i]);
-                            }
+                            index = self.csi.carg[i][1];
                         } else if (color_submode == 2) {
-                            // 24 位 RGB 颜色
-                            i += 3;
-                            if (i < self.csi.narg) {
-                                const r = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 2]))));
-                                const g = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 1]))));
-                                const b = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i]))));
-                                self.term.c.attr.fg = (0xFF << 24) | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+                            // 支持 38:2:r:g:b 格式
+                            r = self.csi.carg[i][1];
+                            g = self.csi.carg[i][2];
+                            b = self.csi.carg[i][3];
+                        }
+                    } else {
+                        // 分号形式: 38;mode;index...
+                        i += 1;
+                        if (i < self.csi.narg) {
+                            color_submode = self.csi.arg[i];
+                            if (color_submode == 5) {
+                                i += 1;
+                                if (i < self.csi.narg) index = self.csi.arg[i];
+                            } else if (color_submode == 2) {
+                                i += 3;
+                                if (i < self.csi.narg) {
+                                    r = self.csi.arg[i - 2];
+                                    g = self.csi.arg[i - 1];
+                                    b = self.csi.arg[i];
+                                }
                             }
                         }
+                    }
+
+                    if (color_submode == 5 and index >= 0 and index <= 255) {
+                        self.term.c.attr.fg = @intCast(index);
+                    } else if (color_submode == 2 and r != -1) {
+                        const rr = @as(u8, @intCast(@max(0, @min(255, r))));
+                        const gg = @as(u8, @intCast(@max(0, @min(255, g))));
+                        const bb = @as(u8, @intCast(@max(0, @min(255, b))));
+                        self.term.c.attr.fg = (0xFF << 24) | (@as(u32, rr) << 16) | (@as(u32, gg) << 8) | @as(u32, bb);
                     }
                 },
                 39 => { // 默认前景色
                     self.term.c.attr.fg = config.Config.colors.default_foreground;
                 },
                 48 => { // 背景色扩展
-                    i += 1;
-                    if (i < self.csi.narg) {
-                        const color_submode = self.csi.arg[i];
+                    var color_submode: i64 = -1;
+                    var r: i64 = -1;
+                    var g: i64 = -1;
+                    var b: i64 = -1;
+                    var index: i64 = -1;
+
+                    if (self.csi.carg[i][0] != -1) {
+                        // 冒号形式
+                        color_submode = self.csi.carg[i][0];
                         if (color_submode == 5) {
-                            // 索引颜色
-                            i += 1;
-                            if (i < self.csi.narg and self.csi.arg[i] >= 0 and self.csi.arg[i] <= 255) {
-                                self.term.c.attr.bg = @intCast(self.csi.arg[i]);
-                            }
+                            index = self.csi.carg[i][1];
                         } else if (color_submode == 2) {
-                            // 24 位 RGB 颜色
-                            i += 3;
-                            if (i < self.csi.narg) {
-                                const r = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 2]))));
-                                const g = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i - 1]))));
-                                const b = @as(u8, @intCast(@max(0, @min(255, self.csi.arg[i]))));
-                                self.term.c.attr.bg = (0xFF << 24) | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+                            r = self.csi.carg[i][1];
+                            g = self.csi.carg[i][2];
+                            b = self.csi.carg[i][3];
+                        }
+                    } else {
+                        // 分号形式
+                        i += 1;
+                        if (i < self.csi.narg) {
+                            color_submode = self.csi.arg[i];
+                            if (color_submode == 5) {
+                                i += 1;
+                                if (i < self.csi.narg) index = self.csi.arg[i];
+                            } else if (color_submode == 2) {
+                                i += 3;
+                                if (i < self.csi.narg) {
+                                    r = self.csi.arg[i - 2];
+                                    g = self.csi.arg[i - 1];
+                                    b = self.csi.arg[i];
+                                }
                             }
                         }
+                    }
+
+                    if (color_submode == 5 and index >= 0 and index <= 255) {
+                        self.term.c.attr.bg = @intCast(index);
+                    } else if (color_submode == 2 and r != -1) {
+                        const rr = @as(u8, @intCast(@max(0, @min(255, r))));
+                        const gg = @as(u8, @intCast(@max(0, @min(255, g))));
+                        const bb = @as(u8, @intCast(@max(0, @min(255, b))));
+                        self.term.c.attr.bg = (0xFF << 24) | (@as(u32, rr) << 16) | (@as(u32, gg) << 8) | @as(u32, bb);
                     }
                 },
                 49 => { // 默认背景色
                     self.term.c.attr.bg = config.Config.colors.default_background;
                 },
                 58 => { // 下划线颜色
-                    i += 1;
-                    if (i < self.csi.narg and self.csi.arg[i] == 5) {
-                        i += 3;
-                        if (i < self.csi.narg) {
-                            self.term.c.attr.ucolor[0] = @as(i32, @intCast(self.csi.arg[i - 2]));
-                            self.term.c.attr.ucolor[1] = @as(i32, @intCast(self.csi.arg[i - 1]));
-                            self.term.c.attr.ucolor[2] = @as(i32, @intCast(self.csi.arg[i]));
-                            self.term.c.attr.attr.dirty_underline = true;
+                    var color_submode: i64 = -1;
+                    var r: i64 = -1;
+                    var g: i64 = -1;
+                    var b: i64 = -1;
+                    var index: i64 = -1;
+
+                    if (self.csi.carg[i][0] != -1) {
+                        color_submode = self.csi.carg[i][0];
+                        if (color_submode == 5) {
+                            index = self.csi.carg[i][1];
+                        } else if (color_submode == 2) {
+                            r = self.csi.carg[i][1];
+                            g = self.csi.carg[i][2];
+                            b = self.csi.carg[i][3];
                         }
+                    } else {
+                        i += 1;
+                        if (i < self.csi.narg) {
+                            color_submode = self.csi.arg[i];
+                            if (color_submode == 5) {
+                                i += 1;
+                                if (i < self.csi.narg) index = self.csi.arg[i];
+                            } else if (color_submode == 2) {
+                                i += 3;
+                                if (i < self.csi.narg) {
+                                    r = self.csi.arg[i - 2];
+                                    g = self.csi.arg[i - 1];
+                                    b = self.csi.arg[i];
+                                }
+                            }
+                        }
+                    }
+
+                    if (color_submode == 5 and index >= 0 and index <= 255) {
+                        self.term.c.attr.ucolor[0] = @intCast(index);
+                        self.term.c.attr.ucolor[1] = -1;
+                        self.term.c.attr.attr.dirty_underline = true;
+                    } else if (color_submode == 2 and r != -1) {
+                        self.term.c.attr.ucolor[0] = @intCast(r);
+                        self.term.c.attr.ucolor[1] = @intCast(g);
+                        self.term.c.attr.ucolor[2] = @intCast(b);
+                        self.term.c.attr.attr.dirty_underline = true;
                     }
                 },
                 59 => { // 默认下划线颜色
@@ -794,6 +953,18 @@ pub const Parser = struct {
         // 重置窗口标题
         self.term.window_title = "stz";
         self.term.window_title_dirty = true;
+
+        // 重置保存的光标
+        for (0..2) |i| {
+            self.term.saved_cursor[i] = types.SavedCursor{
+                .attr = self.term.c.attr,
+                .x = 0,
+                .y = 0,
+                .state = .default,
+                .top = 0,
+                .bot = self.term.row - 1,
+            };
+        }
 
         // 标记所有行为脏
         if (self.term.dirty) |dirty| {
@@ -1054,6 +1225,12 @@ pub const Parser = struct {
         self.csi.narg = 0;
         self.csi.priv = 0;
         self.csi.mode[1] = 0;
+        // 重置 carg
+        for (&self.csi.carg) |*row| {
+            for (row) |*cell| {
+                cell.* = -1; // 使用 -1 表示未使用
+            }
+        }
 
         if (self.csi.len == 0) return;
 
@@ -1066,41 +1243,55 @@ pub const Parser = struct {
         self.csi.buf[self.csi.len] = 0;
 
         while (p < self.csi.len) {
+            if (!std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
+                break; // 到达命令字符
+            }
+
             var val: i64 = 0;
-            const start = p;
+            var has_val = false;
             while (p < self.csi.len and std.ascii.isDigit(self.csi.buf[p])) {
                 val = val * 10 + @as(i64, @intCast(self.csi.buf[p] - '0'));
                 p += 1;
+                has_val = true;
             }
 
-            if (p == start) {
+            if (!has_val) {
                 val = 0; // 空参数默认为 0
             }
 
             if (self.csi.narg < 32) {
                 self.csi.arg[self.csi.narg] = val;
                 self.csi.narg += 1;
+
+                // 处理冒号参数 (子参数)
+                if (p < self.csi.len and self.csi.buf[p] == ':') {
+                    var ncar: usize = 0;
+                    while (ncar < 16 and p < self.csi.len and self.csi.buf[p] == ':') {
+                        p += 1;
+                        var cval: i64 = 0;
+                        var has_cval = false;
+                        while (p < self.csi.len and std.ascii.isDigit(self.csi.buf[p])) {
+                            cval = cval * 10 + @as(i64, @intCast(self.csi.buf[p] - '0'));
+                            p += 1;
+                            has_cval = true;
+                        }
+                        if (!has_cval) cval = 0;
+                        self.csi.carg[self.csi.narg - 1][ncar] = cval;
+                        ncar += 1;
+                    }
+                }
+            } else {
+                // 跳过过多参数
+                while (p < self.csi.len and (std.ascii.isDigit(self.csi.buf[p]) or self.csi.buf[p] == ':')) p += 1;
             }
 
             if (p >= self.csi.len) break;
 
             const sep = self.csi.buf[p];
-            if (sep == ';' or sep == ':') {
+            if (sep == ';') {
                 p += 1;
-                // 如果分隔符是最后一个字符，说明后面还有一个空参数
-                if (p >= self.csi.len) {
-                    if (self.csi.narg < 32) {
-                        self.csi.arg[self.csi.narg] = 0;
-                        self.csi.narg += 1;
-                    }
-                    break;
-                }
-            } else {
-                // 可能是终止符或其他标志 (如 SP q)
-                if (sep == ' ' and p + 1 < self.csi.len) {
-                    self.csi.mode[1] = self.csi.buf[p + 1];
-                    p += 2;
-                }
+            } else if (sep != ':') {
+                // 如果不是分隔符，可能是命令字符或 ' ' 等
                 break;
             }
         }
@@ -1410,6 +1601,8 @@ pub const Parser = struct {
                     .x = self.term.c.x,
                     .y = self.term.c.y,
                     .state = self.term.c.state,
+                    .top = self.term.top,
+                    .bot = self.term.bot,
                 };
             },
             .load => {
@@ -1417,6 +1610,8 @@ pub const Parser = struct {
                 self.term.c.attr = saved.attr;
                 try self.moveTo(saved.x, saved.y);
                 self.term.c.state = saved.state;
+                self.term.top = saved.top;
+                self.term.bot = saved.bot;
             },
         }
     }
@@ -1475,6 +1670,10 @@ pub const Parser = struct {
                 },
                 7 => self.term.mode.wrap = set,
                 25 => self.term.mode.hide_cursor = !set,
+                1000 => self.term.mode.mouse = set, // X10 鼠标报告
+                1002 => self.term.mode.mouse_btn = set, // 鼠标按键报告
+                1003 => self.term.mode.mouse_many = set, // 所有鼠标移动报告
+                1006 => self.term.mode.mouse_sgr = set, // SGR 鼠标编码
                 47 => { // 切换备用屏幕缓冲区
                     if (self.term.alt != null) {
                         // 如果当前在备用屏幕且要退出，先清除

@@ -16,7 +16,7 @@ pub const BoxDraw = struct {
     /// 检查是否是框线字符
     pub fn isBoxDraw(u: u21) bool {
         if (u >= 0x2800 and u <= 0x28FF) return true;
-        if (u >= 0x2500 and u <= 0x259F) {
+        if (u >= 0x2500 and u <= 0x25FF) {
             return boxdraw_data.boxdata[u - 0x2500] != 0;
         }
         return false;
@@ -25,9 +25,9 @@ pub const BoxDraw = struct {
     /// 获取绘制数据
     pub fn getDrawData(u: u21) u16 {
         if (u >= 0x2800 and u <= 0x28FF) {
-            return boxdraw_data.BRL | @as(u16, @truncate(u));
+            return boxdraw_data.BRL | @as(u16, @as(u8, @truncate(u)));
         }
-        if (u >= 0x2500 and u <= 0x259F) {
+        if (u >= 0x2500 and u <= 0x25FF) {
             return boxdraw_data.boxdata[u - 0x2500];
         }
         return 0;

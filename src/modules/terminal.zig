@@ -42,6 +42,18 @@ pub const Terminal = struct {
         t.term.top = 0;
         t.term.bot = row - 1;
 
+        // 初始化保存的光标状态
+        for (0..2) |i| {
+            t.term.saved_cursor[i] = types.SavedCursor{
+                .attr = t.term.c.attr,
+                .x = 0,
+                .y = 0,
+                .state = .default,
+                .top = 0,
+                .bot = row - 1,
+            };
+        }
+
         return t;
     }
 
@@ -155,6 +167,8 @@ pub const Terminal = struct {
                 if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
                     lines[self.term.c.y][self.term.c.x - 1] = Glyph{
                         .u = 0,
+                        .fg = self.term.c.attr.fg,
+                        .bg = self.term.c.attr.bg,
                         .attr = .{ .wide_dummy = true },
                     };
                 }

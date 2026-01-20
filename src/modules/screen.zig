@@ -322,6 +322,7 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
 
 /// 屏幕向上滚动
 pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
+    if (orig > term.bot) return;
     const limit_n = @min(n, term.bot - orig + 1);
     const screen = term.line;
 
@@ -354,7 +355,7 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
 
     // 清除底部行
     for (0..limit_n) |k| {
-        const idx = term.bot - limit_n + 1 + k;
+        const idx = term.bot + 1 - limit_n + k;
         if (screen) |scr| {
             for (scr[idx]) |*glyph| {
                 glyph.* = .{
@@ -370,6 +371,7 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
 
 /// 屏幕向下滚动
 pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
+    if (orig > term.bot) return;
     const limit_n = @min(n, term.bot - orig + 1);
     const screen = term.line;
 

@@ -1,5 +1,5 @@
 //! stz - 简单终端模拟器 (Zig 重写版)
-//! 主程序入口和事件循环（SDL2 版本）
+//! 主程序入口和事件循环
 
 const std = @import("std");
 const c = @cImport({
@@ -18,6 +18,7 @@ const Selector = @import("modules/selection.zig").Selector;
 const UrlDetector = @import("modules/url.zig").UrlDetector;
 const Printer = @import("modules/printer.zig").Printer;
 const config = @import("modules/config.zig");
+const types = @import("modules/types.zig");
 const screen = @import("modules/screen.zig");
 const c_locale = @cImport({
     @cInclude("locale.h");
@@ -111,6 +112,11 @@ pub fn main() !u8 {
     var mouse_pressed: bool = false;
     var mouse_x: usize = 0;
     var mouse_y: usize = 0;
+
+    // 点击检测变量
+    var last_click_time: i64 = 0;
+    var last_button: u32 = 0;
+    var click_count: u32 = 0;
 
     // Paste buffer (for receiving X11 selection)
     var paste_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096);
@@ -284,13 +290,32 @@ pub fn main() !u8 {
                     }
 
                     if (e.button == x11.Button1) {
+                        // 检测双击/三击
+                        const now = std.time.milliTimestamp();
+                        if (e.button == last_button and now - last_click_time < config.Config.selection.double_click_timeout_ms) {
+                            click_count = (click_count % 3) + 1;
+                        } else {
+                            click_count = 1;
+                        }
+                        last_click_time = now;
+                        last_button = e.button;
+
+                        const snap_mode: types.SelectionSnap = switch (click_count) {
+                            2 => .word,
+                            3 => .line,
+                            else => .none,
+                        };
+
                         // Left click: start selection
                         mouse_pressed = true;
                         mouse_x = cx;
                         mouse_y = cy;
                         // Clear previous selection
                         selector.clear();
-                        selector.start(cx, cy, .none);
+                        selector.start(cx, cy, snap_mode);
+                        if (snap_mode != .none) {
+                            selector.extend(&terminal.term, cx, cy, .regular, false);
+                        }
                         screen.setFullDirty(&terminal.term);
                     } else if (e.button == x11.Button2) {
                         // Middle click: paste from PRIMARY selection
@@ -347,7 +372,7 @@ pub fn main() !u8 {
                         mouse_pressed = false;
 
                         // 结束选择扩展
-                        selector.extend(cx, cy, .regular, true);
+                        selector.extend(&terminal.term, cx, cy, .regular, true);
 
                         if (was_dragging) {
                             // Only copy to clipboard if we actually performed a selection drag
@@ -372,7 +397,7 @@ pub fn main() !u8 {
                         const cx = @min(x, terminal.term.col - 1);
                         const cy = @min(y, terminal.term.row - 1);
 
-                        selector.extend(cx, cy, .regular, false);
+                        selector.extend(&terminal.term, cx, cy, .regular, false);
                         screen.setFullDirty(&terminal.term);
 
                         // Redraw with selection

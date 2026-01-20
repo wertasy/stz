@@ -62,17 +62,21 @@ pub const Selector = struct {
     }
 
     /// 扩展选择
-    pub fn extend(self: *Selector, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
+    pub fn extend(self: *Selector, term: *const types.Term, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
         // idle 表示完全空闲（未开始或已清除），不能扩展
         if (self.selection.mode == .idle) {
             return;
         }
 
         if (done) {
-            // 如果释放时还是 empty（点击未拖动），则清除
+            // 如果释放时还是 empty（点击未拖动），则根据 snap 模式决定是否进入 ready
             if (self.selection.mode == .empty) {
-                self.clear();
-                return;
+                if (self.selection.snap != .none) {
+                    self.selection.mode = .ready;
+                } else {
+                    self.clear();
+                    return;
+                }
             }
             // 拖动完成后保持状态以显示高亮
         } else {
@@ -83,13 +87,13 @@ pub const Selector = struct {
         self.selection.oe.x = col;
         self.selection.oe.y = row;
         self.selection.type = sel_type;
-        self.normalize();
+        self.normalize(term);
     }
 
     /// 标准化选择
-    pub fn normalize(self: *Selector) void {
+    pub fn normalize(self: *Selector, term: *const types.Term) void {
         // 只有在 ready 模式下才计算有效范围，支持单字符（ob == oe）
-        if (self.selection.mode != .ready) return;
+        if (self.selection.mode != .ready and self.selection.mode != .empty) return;
 
         if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
             self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)
@@ -109,21 +113,56 @@ pub const Selector = struct {
         self.selection.ne.y = @max(self.selection.ob.y, self.selection.oe.y);
 
         // 吸附处理
-        self.snap(&self.selection.nb, -1);
-        self.snap(&self.selection.ne, 1);
+        self.snap(term, &self.selection.nb, -1);
+        self.snap(term, &self.selection.ne, 1);
     }
 
     /// 吸附到单词或行
-    pub fn snap(self: *Selector, point: *Point, direction: i8) void {
+    pub fn snap(self: *Selector, term: *const types.Term, point: *Point, direction: i8) void {
+        const screen_opt = if (term.mode.alt_screen) term.alt else term.line;
+        if (screen_opt == null) return;
+        const screen = screen_opt.?;
+
         switch (self.selection.snap) {
             .none => {},
             .word => {
-                // TODO: 实现单词吸附
+                const delimiters = config.Config.selection.word_delimiters;
+                var x = point.x;
+                const y = point.y;
+                if (y >= screen.len) return;
+                const line = screen[y];
+                if (x >= line.len) return;
+
+                const initial_c = line[x].u;
+                const initial_is_delim = isDelim(initial_c, delimiters);
+
+                if (direction < 0) { // 向左扩展
+                    while (x > 0) {
+                        const next_x = x - 1;
+                        if (isDelim(line[next_x].u, delimiters) != initial_is_delim) break;
+                        x = next_x;
+                    }
+                } else { // 向右扩展
+                    while (x < line.len - 1) {
+                        const next_x = x + 1;
+                        if (isDelim(line[next_x].u, delimiters) != initial_is_delim) break;
+                        x = next_x;
+                    }
+                }
+                point.x = x;
             },
             .line => {
-                point.*.x = if (direction < 0) 0 else config.Config.window.cols - 1;
+                point.x = if (direction < 0) 0 else term.col - 1;
             },
         }
+    }
+
+    fn isDelim(c: u21, delimiters: []const u8) bool {
+        if (c == ' ' or c == 0) return true;
+        for (delimiters) |d| {
+            if (c == d) return true;
+        }
+        return false;
     }
 
     /// 检查是否选中

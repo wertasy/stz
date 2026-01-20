@@ -128,6 +128,8 @@ pub fn runeWidth(codepoint: u21) u8 {
     if (codepoint >= 0x2500 and codepoint <= 0x257F) return 1;
     // Block Elements
     if (codepoint >= 0x2580 and codepoint <= 0x259F) return 1;
+    // Geometric Shapes (Triangles, Squares, etc.)
+    if (codepoint >= 0x25A0 and codepoint <= 0x25FF) return 1;
     // Powerline Private Use Area (E0A0-E0D6 are usually 1 cell wide, but some icons are 2)
     // Usually nerd font icons are 1 or 2 depending on the font.
     // Assuming 1 for standard Powerline separators.

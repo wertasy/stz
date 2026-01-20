@@ -36,4 +36,38 @@ pub fn build(b: *std.Build) void {
 
     const run_step = b.step("run", "Run stz");
     run_step.dependOn(&run_cmd.step);
+
+    // 测试步骤
+    const unit_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/modules/parser_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    unit_tests.linkLibC();
+    unit_tests.linkSystemLibrary("X11");
+    unit_tests.linkSystemLibrary("Xft");
+    unit_tests.linkSystemLibrary("fontconfig");
+    unit_tests.linkSystemLibrary("freetype");
+
+    const run_unit_tests = b.addRunArtifact(unit_tests);
+
+    const selection_tests = b.addTest(.{
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/modules/selection_test.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
+    });
+    selection_tests.linkLibC();
+    selection_tests.linkSystemLibrary("X11");
+    selection_tests.linkSystemLibrary("Xft");
+    selection_tests.linkSystemLibrary("fontconfig");
+    selection_tests.linkSystemLibrary("freetype");
+    const run_selection_tests = b.addRunArtifact(selection_tests);
+
+    const test_step = b.step("test", "Run unit tests");
+    test_step.dependOn(&run_unit_tests.step);
+    test_step.dependOn(&run_selection_tests.step);
 }

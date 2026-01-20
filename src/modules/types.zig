@@ -111,6 +111,8 @@ pub const SavedCursor = struct {
     x: usize = 0,
     y: usize = 0,
     state: CursorState = .default,
+    top: usize = 0,
+    bot: usize = 0,
 };
 
 /// 选择模式
@@ -159,6 +161,7 @@ pub const CSIEscape = struct {
     arg: [32]i64 = .{0} ** 32, // 参数
     narg: usize = 0, // 参数数量
     mode: [2]u8 = .{0} ** 2, // 最终字符
+    carg: [32][16]i64 = .{.{0} ** 16} ** 32, // 冒号参数 (Colon Arguments)
 };
 
 /// STR 转义序列结构

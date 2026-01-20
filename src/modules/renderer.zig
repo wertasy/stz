@@ -22,6 +22,7 @@ pub const Renderer = struct {
     allocator: std.mem.Allocator,
     draw: *x11.XftDraw,
     font: *x11.XftFont,
+    fallbacks: std.ArrayList(*x11.XftFont),
 
     char_width: u32,
     char_height: u32,
@@ -72,11 +73,32 @@ pub const Renderer = struct {
         window.cell_width = char_width;
         window.cell_height = char_height;
 
+        var fallbacks = try std.ArrayList(*x11.XftFont).initCapacity(allocator, 4);
+        errdefer {
+            for (fallbacks.items) |f| x11.XftFontClose(window.dpy, f);
+            fallbacks.deinit(allocator);
+        }
+
+        // 加载常见备用字体 (CJK, Emoji, Symbols)
+        const fallback_names = [_][:0]const u8{
+            "Noto Sans Mono CJK SC:pixelsize=20",
+            "WenQuanYi Micro Hei:pixelsize=20",
+            "Noto Color Emoji:pixelsize=20",
+            "Symbola:pixelsize=20",
+        };
+
+        for (fallback_names) |name| {
+            if (x11.XftFontOpenName(window.dpy, window.screen, name)) |f| {
+                try fallbacks.append(allocator, f);
+            }
+        }
+
         return Renderer{
             .window = window,
             .allocator = allocator,
             .draw = draw.?,
             .font = font.?,
+            .fallbacks = fallbacks,
             .char_width = char_width,
             .char_height = char_height,
             .ascent = ascent,
@@ -92,6 +114,10 @@ pub const Renderer = struct {
     pub fn deinit(self: *Renderer) void {
         x11.XftDrawDestroy(self.draw);
         x11.XftFontClose(self.window.dpy, self.font);
+        for (self.fallbacks.items) |f| {
+            x11.XftFontClose(self.window.dpy, f);
+        }
+        self.fallbacks.deinit(self.allocator);
         // Free indexed colors
         for (0..300) |i| {
             if (self.loaded_colors[i]) {
@@ -191,6 +217,20 @@ pub const Renderer = struct {
         return .{ 0xFF, 0xFF, 0xFF };
     }
 
+    fn getFontForGlyph(self: *Renderer, u: u21) *x11.XftFont {
+        if (x11.C.XftCharExists(self.window.dpy, self.font, u) != 0) {
+            return self.font;
+        }
+
+        for (self.fallbacks.items) |f| {
+            if (x11.C.XftCharExists(self.window.dpy, f, u) != 0) {
+                return f;
+            }
+        }
+
+        return self.font;
+    }
+
     pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !void {
         const screen = term.line;
         if (screen == null) return;
@@ -236,6 +276,29 @@ pub const Renderer = struct {
             const y_pos = @as(i32, @intCast(y * self.char_height)) + border;
             x11.XftDrawRect(self.draw, &default_bg, 0, y_pos, @intCast(self.window.width), @intCast(self.char_height));
 
+            // 第一阶段：绘制所有非默认背景
+            for (0..@min(term.col, line_data.len)) |x| {
+                const glyph = line_data[x];
+                const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
+
+                var bg_idx = glyph.bg;
+
+                var reverse = glyph.attr.reverse != term.mode.reverse;
+                if (selector.isSelected(x, y)) {
+                    reverse = !reverse;
+                }
+
+                if (reverse) {
+                    bg_idx = glyph.fg;
+                }
+
+                if (bg_idx != config.Config.colors.default_background) {
+                    var bg_col = try self.getColor(term, bg_idx);
+                    x11.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                }
+            }
+
+            // 第二阶段：绘制所有字符
             for (0..@min(term.col, line_data.len)) |x| {
                 const glyph = line_data[x];
                 const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
@@ -267,11 +330,6 @@ pub const Renderer = struct {
                     if (!blink_state) continue;
                 }
 
-                if (bg_idx != config.Config.colors.default_background) {
-                    var bg_col = try self.getColor(term, bg_idx);
-                    x11.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
-                }
-
                 if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
                     var fg = try self.getColor(term, fg_idx);
                     var bg = try self.getColor(term, bg_idx);
@@ -279,7 +337,8 @@ pub const Renderer = struct {
                 } else if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, fg_idx);
                     const char = @as(u32, glyph.u);
-                    x11.XftDrawString32(self.draw, &fg, self.font, x_pos, y_pos + self.ascent, &char, 1);
+                    const font = self.getFontForGlyph(glyph.u);
+                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
 
                 if (glyph.attr.underline) {
@@ -388,7 +447,8 @@ pub const Renderer = struct {
                     if (glyph.u != ' ' and glyph.u != 0) {
                         var fg = try self.getColor(term, cursor_fg_idx);
                         const char = @as(u32, glyph.u);
-                        x11.XftDrawString32(self.draw, &fg, self.font, x_pos, y_pos + self.ascent, &char, 1);
+                        const font = self.getFontForGlyph(glyph.u);
+                        x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                     }
                 }
             },
@@ -397,7 +457,8 @@ pub const Renderer = struct {
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const char = @as(u32, glyph.u);
-                    x11.XftDrawString32(self.draw, &fg, self.font, x_pos, y_pos + self.ascent, &char, 1);
+                    const font = self.getFontForGlyph(glyph.u);
+                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
             3 => { // blinking underline
@@ -431,7 +492,8 @@ pub const Renderer = struct {
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, 258);
                     const char = @as(u32, glyph.u);
-                    x11.XftDrawString32(self.draw, &fg, self.font, x_pos, y_pos + self.ascent, &char, 1);
+                    const font = self.getFontForGlyph(glyph.u);
+                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
             else => {},

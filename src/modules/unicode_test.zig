@@ -86,3 +86,15 @@ test "Emoji should have width 2" {
     try std.testing.expectEqual(@as(u8, 2), unicode.runeWidth(0x1F900)); // 🤩
     try std.testing.expectEqual(@as(u8, 2), unicode.runeWidth(0x1F9FF)); // 🧿
 }
+
+test "Geometric Shapes should have width 1" {
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25B2)); // ▲
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25BC)); // ▼
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25C0)); // ◀
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25B6)); // ▶
+}
+
+test "Braille characters should have width 1" {
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x2800));
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x28FF));
+}

@@ -27,6 +27,7 @@ pub const Pixmap = c.Pixmap;
 pub const XSetWindowAttributes = c.XSetWindowAttributes;
 pub const XRenderColor = c.XRenderColor;
 pub const XTextProperty = c.XTextProperty;
+pub const XRectangle = c.XRectangle;
 
 pub const ShiftMask = c.ShiftMask;
 pub const LockMask = c.LockMask;
@@ -113,6 +114,8 @@ pub const XftDrawRect = c.XftDrawRect;
 pub const XftDrawString32 = c.XftDrawString32;
 pub const XftTextExtents32 = c.XftTextExtents32;
 pub const XftDrawChange = c.XftDrawChange;
+pub const XftDrawSetClipRectangles = c.XftDrawSetClipRectangles;
+pub const XftDrawSetClip = c.XftDrawSetClip;
 
 // X11 Selection/Clipboard Atoms
 pub const XA_STRING = c.XA_STRING;

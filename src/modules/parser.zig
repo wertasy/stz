@@ -44,11 +44,14 @@ pub const Parser = struct {
     /// 写入数据到 PTY
     fn ptyWrite(self: *Parser, data: []const u8) void {
         if (self.pty) |pty_ptr| {
+            // std.log.info("Sending PTY response: {s}", .{std.fmt.fmtSliceEscapeLower(data)});
             const PTYType = @import("pty.zig").PTY;
             const pty = @as(*PTYType, @ptrCast(@alignCast(@constCast(pty_ptr))));
             _ = pty.write(data) catch |err| {
                 std.log.err("PTY write failed: {any}\n", .{err});
             };
+        } else {
+            std.log.err("PTY pointer is null, cannot send response\n", .{});
         }
     }
 
@@ -1015,6 +1018,9 @@ pub const Parser = struct {
 
     fn csiHandle(self: *Parser) !void {
         const mode = self.csi.mode[0];
+        // std.log.info("CSI Handle: {c} priv={c} args={any}", .{ mode, self.csi.priv, self.csi.arg[0..self.csi.narg] });
+
+        // 如果没有参数，设置默认值 0
         if (self.csi.narg == 0) {
             self.csi.arg[0] = 0;
             self.csi.narg = 1;

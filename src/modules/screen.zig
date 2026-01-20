@@ -301,7 +301,7 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
     const sy1 = @min(gy1, term.row - 1);
     const sy2 = @min(gy2, term.row - 1);
 
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
 
     for (sy1..sy2 + 1) |y| {
         if (term.dirty) |dirty| {
@@ -323,7 +323,7 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
 /// 屏幕向上滚动
 pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
     const limit_n = @min(n, term.bot - orig + 1);
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
 
     if (orig == 0 and limit_n > 0 and !term.mode.alt_screen) {
         // Save lines to history
@@ -371,7 +371,7 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
 /// 屏幕向下滚动
 pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
     const limit_n = @min(n, term.bot - orig + 1);
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
 
     // 移动行
     var i: usize = term.bot;
@@ -423,7 +423,7 @@ pub fn setDirty(term: *Term, top: usize, bot: usize) void {
 
 /// 获取行长度（忽略尾部空格）
 pub fn lineLength(term: *Term, y: usize) usize {
-    const screen = if (term.mode.alt_screen) term.alt else term.line;
+    const screen = term.line;
     if (screen) |scr| {
         // 检查是否换行到下一行
         if (scr[y][term.col - 1].attr.wrap) {

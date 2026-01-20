@@ -191,7 +191,7 @@ pub const Renderer = struct {
     }
 
     pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !void {
-        const screen = if (term.mode.alt_screen) term.alt else term.line;
+        const screen = term.line;
         if (screen == null) return;
 
         // Default background color
@@ -476,7 +476,7 @@ pub const Renderer = struct {
         const y_pos = @as(i32, @intCast(cy * self.char_height)) + border;
 
         // Get glyph under cursor
-        const screen = if (term.mode.alt_screen) term.alt else term.line;
+        const screen = term.line;
         var glyph = Glyph{};
         if (screen) |scr| {
             if (cy < scr.len and cx < scr[cy].len) {

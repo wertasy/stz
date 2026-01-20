@@ -321,7 +321,7 @@ pub const Terminal = struct {
     /// 删除字符
     pub fn deleteChars(self: *Terminal, n: usize) !void {
         const count = @min(n, self.term.col - self.term.c.x);
-        const screen_buf = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen_buf = self.term.line;
 
         if (screen_buf) |scr| {
             if (self.term.c.y < scr.len) {
@@ -353,7 +353,7 @@ pub const Terminal = struct {
     /// 插入空字符
     pub fn insertBlanks(self: *Terminal, n: usize) !void {
         const count = @min(n, self.term.col - self.term.c.x);
-        const screen_buf = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen_buf = self.term.line;
 
         if (screen_buf) |scr| {
             if (self.term.c.y < scr.len) {

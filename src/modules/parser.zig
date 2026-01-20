@@ -4,6 +4,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
+const screen = @import("screen.zig");
 
 const Term = types.Term;
 const Glyph = types.Glyph;
@@ -345,40 +346,7 @@ pub const Parser = struct {
         if (self.term.c.y < self.term.top or self.term.c.y > self.term.bot) {
             return;
         }
-
-        const scroll_lines = @min(n, self.term.bot - self.term.c.y + 1);
-        if (scroll_lines == 0) return;
-
-        if (self.term.line) |lines| {
-            // 滚动现有内容向下
-            var y = self.term.bot;
-            while (y >= self.term.c.y + scroll_lines) : (y -= 1) {
-                if (y < lines.len and y - scroll_lines < lines.len) {
-                    @memcpy(lines[y], lines[y - scroll_lines]);
-                }
-            }
-            // 插入新行
-            var i: usize = 0;
-            while (i < scroll_lines) : (i += 1) {
-                const insert_y = self.term.c.y + i;
-                if (insert_y < lines.len) {
-                    var j: usize = 0;
-                    while (j < self.term.col) : (j += 1) {
-                        var glyph = self.term.c.attr;
-                        glyph.u = ' ';
-                        lines[insert_y][j] = glyph;
-                    }
-                }
-            }
-        }
-
-        // 设置脏标记
-        if (self.term.dirty) |dirty| {
-            var row = self.term.c.y;
-            while (row <= self.term.bot) : (row += 1) {
-                if (row < dirty.len) dirty[row] = true;
-            }
-        }
+        try self.scrollDown(self.term.c.y, n);
     }
 
     /// 删除行
@@ -386,40 +354,7 @@ pub const Parser = struct {
         if (self.term.c.y < self.term.top or self.term.c.y > self.term.bot) {
             return;
         }
-
-        const scroll_lines = @min(n, self.term.bot - self.term.c.y + 1);
-        if (scroll_lines == 0) return;
-
-        if (self.term.line) |lines| {
-            // 向上滚动内容
-            var y = self.term.c.y;
-            while (y + scroll_lines <= self.term.bot) : (y += 1) {
-                if (y < lines.len and y + scroll_lines < lines.len) {
-                    @memcpy(lines[y], lines[y + scroll_lines]);
-                }
-            }
-            // 清除底部行
-            var i: usize = 0;
-            while (i < scroll_lines) : (i += 1) {
-                const clear_y = self.term.bot - i + 1;
-                if (clear_y < lines.len) {
-                    var j: usize = 0;
-                    while (j < self.term.col) : (j += 1) {
-                        var glyph = self.term.c.attr;
-                        glyph.u = ' ';
-                        lines[clear_y][j] = glyph;
-                    }
-                }
-            }
-        }
-
-        // 设置脏标记
-        if (self.term.dirty) |dirty| {
-            var row = self.term.c.y;
-            while (row <= self.term.bot) : (row += 1) {
-                if (row < dirty.len) dirty[row] = true;
-            }
-        }
+        try self.scrollUp(self.term.c.y, n);
     }
 
     /// 删除字符
@@ -458,80 +393,12 @@ pub const Parser = struct {
 
     /// 向上滚动
     fn scrollUp(self: *Parser, orig: usize, n: usize) !void {
-        const scroll_lines = @min(n, self.term.bot - orig + 1);
-        if (scroll_lines == 0) return;
-
-        if (self.term.line) |lines| {
-            // 向上滚动内容
-            var y = orig;
-            while (y + scroll_lines <= self.term.bot) : (y += 1) {
-                if (y < lines.len and y + scroll_lines < lines.len) {
-                    @memcpy(lines[y], lines[y + scroll_lines]);
-                }
-            }
-
-            // 清除底部行
-            var i: usize = 0;
-            while (i < scroll_lines) : (i += 1) {
-                const clear_y = self.term.bot - scroll_lines + 1 + i;
-                if (clear_y < lines.len) {
-                    const clear_glyph = self.term.c.attr;
-                    var glyph_var = clear_glyph;
-                    glyph_var.u = ' ';
-                    for (0..self.term.col) |x| {
-                        lines[clear_y][x] = glyph_var;
-                    }
-                }
-            }
-        }
-
-        // 设置脏标记
-        if (self.term.dirty) |dirty| {
-            var row = orig;
-            while (row <= self.term.bot) : (row += 1) {
-                if (row < dirty.len) dirty[row] = true;
-            }
-        }
+        try screen.scrollUp(self.term, orig, n);
     }
 
     /// 向下滚动
     fn scrollDown(self: *Parser, orig: usize, n: usize) !void {
-        const scroll_lines = @min(n, self.term.bot - orig + 1);
-        if (scroll_lines == 0) return;
-
-        if (self.term.line) |lines| {
-            // 向下滚动内容
-            var y: usize = self.term.bot;
-            while (y >= orig + scroll_lines) {
-                if (y < lines.len and y - scroll_lines < lines.len) {
-                    @memcpy(lines[y], lines[y - scroll_lines]);
-                }
-                if (y == 0) break;
-                y -= 1;
-            }
-
-            // 清除顶部行
-            var i: usize = 0;
-            while (i < scroll_lines) : (i += 1) {
-                const clear_y = orig + i;
-                if (clear_y < lines.len) {
-                    const clear_glyph = self.term.c.attr;
-                    var glyph_var = clear_glyph;
-                    glyph_var.u = ' ';
-                    for (0..self.term.col) |x| {
-                        lines[clear_y][x] = glyph_var;
-                    }
-                }
-            }
-        }
-
-        // 设置脏标记
-        if (self.term.dirty) |dirty| {
-            var row = orig;
-            while (row <= self.term.bot) : (row += 1) {
-                if (row < dirty.len) dirty[row] = true;
-            }
-        }
+        try screen.scrollDown(self.term, orig, n);
     }
 
     /// 擦除光标处的字符
@@ -728,29 +595,30 @@ pub const Parser = struct {
 
     /// 新行
     fn newLine(self: *Parser) !void {
-        self.term.c.y += 1;
-        if (self.term.c.y > self.term.bot) {
-            self.term.c.y = self.term.bot;
-            if (self.term.line) |lines| {
-                // 滚动屏幕
-                var y = self.term.top;
-                while (y < self.term.bot) : (y += 1) {
-                    if (y + 1 < lines.len) {
-                        @memcpy(lines[y], lines[y + 1]);
-                    }
-                }
-                // 清除最后一行
-                var clear_glyph = self.term.c.attr;
-                clear_glyph.u = ' ';
-                for (0..self.term.col) |x| {
-                    lines[self.term.bot][x] = clear_glyph;
-                }
-            }
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
+        if (self.term.c.y == self.term.bot) {
+            try self.scrollUp(self.term.top, 1);
+        } else {
+            self.term.c.y += 1;
+        }
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
         }
     }
 
     /// 移动光标
     fn moveCursor(self: *Parser, dx: i32, dy: i32) !void {
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
         var new_x = @as(isize, @intCast(self.term.c.x)) + dx;
         var new_y = @as(isize, @intCast(self.term.c.y)) + dy;
 
@@ -770,6 +638,11 @@ pub const Parser = struct {
 
     /// 移动光标到绝对位置
     fn moveTo(self: *Parser, x: usize, y: usize) !void {
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
         var new_x = x;
         var new_y = y;
 

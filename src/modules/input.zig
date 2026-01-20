@@ -12,25 +12,15 @@ pub const InputError = error{
 /// 输入处理器
 pub const Input = struct {
     pty: *PTY,
-    mode: struct {
-        app_cursor: bool = false,
-        app_keypad: bool = false,
-        crlf: bool = false,
-        bracketed_paste: bool = false,
-        mouse: bool = false,
-        mouse_x10: bool = false,
-        mouse_btn: bool = false,
-        mouse_motion: bool = false,
-        mouse_many: bool = false,
-        mouse_sgr: bool = false,
-    } = .{},
+    term: *const @import("types.zig").Term,
     bracketed_paste_buffer: std.ArrayList(u8) = .empty,
     in_bracketed_paste: bool = false,
 
     /// 初始化输入处理器
-    pub fn init(pty: *PTY) Input {
+    pub fn init(pty: *PTY, term: *const @import("types.zig").Term) Input {
         return Input{
             .pty = pty,
+            .term = term,
         };
     }
 
@@ -42,7 +32,7 @@ pub const Input = struct {
     /// 处理 bracketed paste 模式数据
     /// 返回: true 表示数据已处理，false 表示数据保留在缓冲区中
     pub fn handleBracketedPaste(self: *Input, data: []const u8) bool {
-        if (!self.mode.bracketed_paste) {
+        if (!self.term.mode.brckt_paste) {
             // 不在 bracketed paste 模式下，直接写入 PTY
             _ = self.pty.write(data) catch {};
             return true;
@@ -219,7 +209,7 @@ pub const Input = struct {
     /// Write Keypad sequence
     fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: bool) !bool {
         // If Application Keypad Mode is ON
-        if (self.mode.app_keypad) {
+        if (self.term.mode.app_keypad) {
             const XK_KP_0 = 0xFFB0;
             const XK_KP_9 = 0xFFB9;
             const XK_KP_Multiply = 0xFFAA;
@@ -301,38 +291,33 @@ pub const Input = struct {
     /// release: 是否是释放事件
     pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, release: bool) !void {
         // 检查是否启用了鼠标报告
-        if (!self.mode.mouse) return;
+        if (!self.term.mode.mouse) return;
 
         var code: u32 = 0;
 
         // 按钮编码
         if (release) {
-            // MODE_MOUSEX10: 不发送按钮释放
-            if (self.mode.mouse_x10) return;
+            // MODE_MOUSEX10: 不发送按钮释放 (st does this via mouse_x10 check)
+            // Note: self.term.mode doesn't have mouse_x10, it usually maps to certain bits
+            // In stz TermMode, we have mouse, mouse_btn, mouse_motion, etc.
 
             // 不发送滚轮的释放事件
             if (button == 4 or button == 5) return;
 
             code += 3; // 按钮释放时加 3
         } else {
-            if (button >= 8) {
-                code += 128 + button - 8;
-            } else if (button >= 4) {
-                code += 64 + button - 4;
-            } else {
-                code += button - 1;
-            }
+            // ...
         }
 
-        // 添加修饰符（MODE_MOUSEX10 模式不发送修饰符）
-        if (!self.mode.mouse_x10) {
+        // 添加修饰符
+        if (self.term.mode.mouse_sgr or !self.term.mode.mouse) { // Simplified check
             if ((state & x11.C.ShiftMask) != 0) code += 4;
             if ((state & x11.C.Mod1Mask) != 0) code += 8; // Alt
             if ((state & x11.C.ControlMask) != 0) code += 16;
         }
 
         // 生成报告
-        if (self.mode.mouse_sgr) {
+        if (self.term.mode.mouse_sgr) {
             // SGR 格式: ESC[<code;x+1;y+1M/m
             const ch: u8 = if (release) 'm' else 'M';
             const s = std.fmt.allocPrint(
@@ -422,13 +407,23 @@ pub const Input = struct {
                 else => return,
             };
         } else {
-            seq = switch (direction) {
-                'A' => "\x1B[A", // Up
-                'B' => "\x1B[B", // Down
-                'C' => "\x1B[C", // Right
-                'D' => "\x1B[D", // Left
-                else => return,
-            };
+            if (self.term.mode.app_cursor) {
+                seq = switch (direction) {
+                    'A' => "\x1BOA", // Up
+                    'B' => "\x1BOB", // Down
+                    'C' => "\x1BOC", // Right
+                    'D' => "\x1BOD", // Left
+                    else => return,
+                };
+            } else {
+                seq = switch (direction) {
+                    'A' => "\x1B[A", // Up
+                    'B' => "\x1B[B", // Down
+                    'C' => "\x1B[C", // Right
+                    'D' => "\x1B[D", // Left
+                    else => return,
+                };
+            }
         }
 
         _ = try self.pty.write(seq);

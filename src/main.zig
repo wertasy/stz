@@ -83,7 +83,7 @@ pub fn main() !u8 {
     window.resizeToGrid(cols, rows);
 
     // 初始化输入处理器
-    var input = Input.init(&pty);
+    var input = Input.init(&pty, &terminal.term);
 
     // 初始化选择器
     var selector = Selector.init(allocator);
@@ -165,9 +165,15 @@ pub fn main() !u8 {
                     if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
                         selector.clear();
                         terminal.kscrollUp(term.row); // Scroll one screen up
+                        try renderer.render(term, &selector);
+                        try renderer.renderCursor(term);
+                        window.present();
                     } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
                         selector.clear();
                         terminal.kscrollDown(term.row); // Scroll one screen down
+                        try renderer.render(term, &selector);
+                        try renderer.renderCursor(term);
+                        window.present();
                     } else if (keysym == XK_Print) {
                         // Print key handling
                         if (ctrl) {
@@ -233,6 +239,7 @@ pub fn main() !u8 {
                 },
                 x11.ButtonPress => {
                     const ev = event.xbutton;
+                    const shift = (ev.state & x11.ShiftMask) != 0;
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
                     const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
@@ -273,18 +280,24 @@ pub fn main() !u8 {
                         mouse_pressed = true;
                         selector.start(cx, cy, .none);
                     } else if (ev.button == x11.Button4) { // Scroll Up
-                        if (terminal.term.mode.mouse) {
+                        if (terminal.term.mode.mouse and !shift) {
                             try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
                         } else {
                             selector.clear();
                             terminal.kscrollUp(3);
+                            try renderer.render(term, &selector);
+                            try renderer.renderCursor(term);
+                            window.present();
                         }
                     } else if (ev.button == x11.Button5) { // Scroll Down
-                        if (terminal.term.mode.mouse) {
+                        if (terminal.term.mode.mouse and !shift) {
                             try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
                         } else {
                             selector.clear();
                             terminal.kscrollDown(3);
+                            try renderer.render(term, &selector);
+                            try renderer.renderCursor(term);
+                            window.present();
                         }
                     } else {
                         // Check if mouse reporting is enabled
@@ -515,6 +528,12 @@ pub fn main() !u8 {
 
             // 处理终端数据
             try terminal.processBytes(read_buffer[0..n]);
+
+            // 如果有新输出且当前在查看历史，回到实时屏幕 (可选行为，st 默认如此)
+            if (n > 0 and terminal.term.scr > 0) {
+                terminal.term.scr = 0;
+                screen.setFullDirty(&terminal.term);
+            }
 
             // 检测并高亮 URL
             try url_detector.highlightUrls();

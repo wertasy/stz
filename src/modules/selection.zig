@@ -68,22 +68,29 @@ pub const Selector = struct {
             return;
         }
 
-        // done=true 且还是 empty 模式（点击后立即释放），清除选择
-        if (done and self.selection.mode == .empty) {
-            self.clear();
-            return;
+        if (done) {
+            // 如果释放时还是 empty（点击未拖动），则清除
+            if (self.selection.mode == .empty) {
+                self.clear();
+                return;
+            }
+            // 拖动完成后保持状态以显示高亮
+        } else {
+            // 只要有位移或 MotionNotify，就进入 .ready 模式
+            self.selection.mode = .ready;
         }
 
         self.selection.oe.x = col;
         self.selection.oe.y = row;
         self.selection.type = sel_type;
         self.normalize();
-        self.selection.mode = if (done) .idle else .ready;
     }
 
     /// 标准化选择
     pub fn normalize(self: *Selector) void {
-        // 正常创建选择范围，即使是单字符选择
+        // 只有在 ready 模式下才计算有效范围，支持单字符（ob == oe）
+        if (self.selection.mode != .ready) return;
+
         if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
             self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)
                 self.selection.ob.x
@@ -124,11 +131,6 @@ pub const Selector = struct {
         // idle 模式表示没有选择，直接返回 false
         if (self.selection.mode == .idle or self.selection.ob.x == std.math.maxInt(usize)) {
             return false;
-        }
-
-        // empty 模式（已点击，等待拖动），单点也要高亮
-        if (self.selection.mode == .empty) {
-            return (x == self.selection.ob.x and y == self.selection.ob.y);
         }
 
         if (self.selection.type == .regular) {
@@ -239,8 +241,9 @@ pub const Selector = struct {
     /// 复制到系统剪贴板
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {
+            const trimmed = std.mem.trim(u8, text, " \n\r\t");
             // 不要复制空文本
-            if (text.len == 0) return;
+            if (trimmed.len == 0) return;
 
             if (self.dpy) |dpy| {
                 // Use XSetSelectionOwner to claim PRIMARY selection
@@ -254,11 +257,11 @@ pub const Selector = struct {
                 }
 
                 // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
-                _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
+                _ = x11.XStoreBytes(dpy, trimmed.ptr, @intCast(trimmed.len));
 
-                std.log.info("已复制 {d} 字符到剪贴板 (Primary Selection Acquired)\n", .{text.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (Primary Selection Acquired)\n", .{trimmed.len});
             } else {
-                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{text.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{trimmed.len});
             }
         }
     }

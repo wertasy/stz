@@ -310,14 +310,12 @@ pub fn main() !u8 {
                     if (mouse_pressed) {
                         mouse_pressed = false;
 
-                        // 完成选择（可能清除也可能复制）
+                        // 结束选择扩展
                         selector.extend(cx, cy, .regular, true);
 
-                        // 如果有选择内容，则复制到剪贴板
-                        const text = selector.getText(&terminal.term) catch "";
-                        if (text.len > 0) {
-                            selector.copyToClipboard() catch {};
-                        }
+                        // On release, copy to clipboard
+                        _ = selector.getText(&terminal.term) catch {};
+                        selector.copyToClipboard() catch {};
 
                         // Redraw to clear selection highlight
                         try renderer.render(&terminal.term, &selector);

@@ -45,16 +45,21 @@ pub const Selector = struct {
         }
     }
 
-/// 开始选择
+    /// 开始选择
     pub fn start(self: *Selector, col: usize, row: usize, snap_mode: SelectionSnap) void {
-        self.selection.mode = .empty;  // 已点击，但还没有拖动
+        // 完全重置选择范围，避免旧选择残留导致的高亮
+        self.selection.mode = .idle;
         self.selection.type = .regular;
         self.selection.snap = snap_mode;
         self.selection.oe.x = col;
         self.selection.oe.y = row;
         self.selection.ob.x = col;
         self.selection.ob.y = row;
-        // 不调用 normalize()，避免创建单字符选择
+        // 重置范围到无效状态，等待拖动
+        self.selection.nb.x = std.math.maxInt(usize);
+        self.selection.nb.y = std.math.maxInt(usize);
+        self.selection.ne.x = 0;
+        self.selection.ne.y = 0;
     }
 
     /// 扩展选择
@@ -78,9 +83,6 @@ pub const Selector = struct {
     }
 
     /// 标准化选择
-
-
-
     pub fn normalize(self: *Selector) void {
         if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
             self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)
@@ -119,11 +121,8 @@ pub const Selector = struct {
 
     /// 检查是否选中
     pub fn isSelected(self: *Selector, x: usize, y: usize) bool {
-        if (self.selection.mode == .empty or self.selection.ob.x == std.math.maxInt(usize)) {
-            // 如果是起始点，也可以认为是选中（类似于 st 的视觉反馈）
-            if (self.selection.mode == .empty and x == self.selection.ob.x and y == self.selection.ob.y) {
-                return true;
-            }
+        // idle 模式表示没有选择，直接返回 false
+        if (self.selection.mode == .idle or self.selection.ob.x == std.math.maxInt(usize)) {
             return false;
         }
 

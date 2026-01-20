@@ -181,6 +181,11 @@ pub fn main() !u8 {
                             try printer.printSelection(&terminal.term, &selector);
                         }
                     } else {
+                        // 开始输入时清除选择高亮
+                        if (selector.selection.mode != .idle) {
+                            selector.clear();
+                            screen.setFullDirty(&terminal.term);
+                        }
                         try input.handleKey(&event.xkey);
                     }
                 },
@@ -402,6 +407,13 @@ pub fn main() !u8 {
                             }
                         }
                     }
+
+                    // 粘贴完成后清除选择高亮
+                    selector.clear();
+                    screen.setFullDirty(&terminal.term);
+                    try renderer.render(&terminal.term, &selector);
+                    try renderer.renderCursor(&terminal.term);
+                    window.present();
                 },
                 x11.SelectionClear => {
                     const ev = event.xselectionclear;

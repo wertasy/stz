@@ -140,4 +140,14 @@ pub const Window = struct {
             _ = x11.XSync(self.dpy, x11.False); // Or XFlush
         }
     }
+
+    /// 设置窗口标题
+    pub fn setTitle(self: *Window, title: [:0]const u8) void {
+        _ = x11.XStoreName(self.dpy, self.win, title);
+    }
+
+    /// 设置图标标题
+    pub fn setIconTitle(self: *Window, title: [:0]const u8) void {
+        _ = x11.XSetIconName(self.dpy, self.win, title);
+    }
 };

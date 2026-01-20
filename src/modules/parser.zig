@@ -587,44 +587,91 @@ pub const Parser = struct {
 
     /// 处理 OSC/字符串序列
     fn strHandle(self: *Parser) !void {
+        // 清除字符串序列标志
+        self.term.esc.str = false;
+        self.term.esc.str_end = false;
+
+        // 解析字符串参数
+        try self.strParse();
+
+        // 获取第一个参数
+        const par = if (self.str.narg > 0) std.fmt.parseInt(i32, self.str.args[0], 10) catch 0 else 0;
+
         switch (self.str.type) {
             ']' => { // OSC - 操作系统命令
-                try self.oscHandle();
+                try self.oscHandle(par);
             },
             'P' => { // DCS - 设备控制字符串
-                // 处理设备控制
+                // 处理设备控制 (例如同步更新)
+                if (std.mem.eql(u8, self.str.buf, "=1s")) {
+                    // 开始同步更新
+                } else if (std.mem.eql(u8, self.str.buf, "=2s")) {
+                    // 结束同步更新
+                }
             },
             'k' => { // 设置标题（兼容）
-                // 设置窗口标题
+                // 老式标题设置兼容性
+                if (self.str.narg > 0 and self.str.args[0].len > 0) {
+                    // TODO: 设置窗口标题
+                }
+            },
+            '_' => { // APC - 应用程序命令
+                // 忽略
+            },
+            '^' => { // PM - 隐私消息
+                // 忽略
             },
             else => {},
         }
     }
 
     /// 处理 OSC 序列
-    fn oscHandle(self: *Parser) !void {
-        if (self.str.narg == 0) return;
-
-        const cmd = std.fmt.parseInt(i32, self.str.args[0], 10) catch 0;
-
-        switch (cmd) {
-            0, 1, 2 => { // 设置标题
+    fn oscHandle(self: *Parser, par: i32) !void {
+        switch (par) {
+            0 => { // 设置窗口和图标标题
                 if (self.str.narg > 1) {
-                    // 设置窗口标题
+                    // TODO: 设置窗口标题 - 需要访问窗口模块
+                    // window.setTitle(self.str.args[1]);
+                    // window.setIconTitle(self.str.args[1]);
                 }
             },
-            4 => { // 设置颜色
-                if (self.str.narg >= 3) {
-                    // 设置颜色索引
+            1 => { // 设置图标标题
+                if (self.str.narg > 1) {
+                    // TODO: 设置图标标题
+                    // window.setIconTitle(self.str.args[1]);
                 }
             },
-            10, 11, 12 => { // 设置前景、背景、光标颜色
+            2 => { // 设置窗口标题
+                if (self.str.narg > 1) {
+                    // TODO: 设置窗口标题
+                    // window.setTitle(self.str.args[1]);
+                }
+            },
+            10 => { // 设置前景颜色
                 if (self.str.narg >= 2) {
-                    // 设置颜色
+                    // TODO: 解析颜色并设置前景色
                 }
             },
-            104 => { // 重置颜色
-                // 重置颜色
+            11 => { // 设置背景颜色
+                if (self.str.narg >= 2) {
+                    // TODO: 解析颜色并设置背景色
+                }
+            },
+            12 => { // 设置光标颜色
+                if (self.str.narg >= 2) {
+                    // TODO: 解析颜色并设置光标颜色
+                }
+            },
+            4 => { // 设置调色板颜色
+                if (self.str.narg >= 3) {
+                    // TODO: 设置调色板索引颜色
+                }
+            },
+            104 => { // 重置调色板颜色
+                // TODO: 重置调色板颜色
+            },
+            110, 111, 112 => { // 重置前景/背景/光标颜色
+                // TODO: 重置到默认值
             },
             else => {},
         }
@@ -632,20 +679,27 @@ pub const Parser = struct {
 
     /// 解析字符串参数
     fn strParse(self: *Parser) !void {
-        var p: [*]const u8 = self.str.buf;
+        var start: usize = 0;
         self.str.narg = 0;
+        if (self.str.len >= self.str.siz) {
+            // 缓冲区已满，无法添加终止符
+            return;
+        }
         self.str.buf[self.str.len] = 0;
 
-        while (self.str.narg < 16 and p[0] != 0) {
-            self.str.args[self.str.narg] = p;
+        while (self.str.narg < 16 and start < self.str.len) {
+            const arg_start = start;
 
-            while (p[0] != 0 and p[0] != ';') {
-                p += 1;
+            // 查找分号或字符串结束
+            while (start < self.str.len and self.str.buf[start] != 0 and self.str.buf[start] != ';') {
+                start += 1;
             }
 
-            if (p[0] == ';') {
-                p[0] = 0;
-                p += 1;
+            // 创建参数切片
+            self.str.args[self.str.narg] = self.str.buf[arg_start..start];
+
+            if (start < self.str.len and self.str.buf[start] == ';') {
+                start += 1; // 跳过分号
             }
 
             self.str.narg += 1;

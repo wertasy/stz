@@ -1,0 +1,20 @@
+# Zig 构建产物
+zig-cache/
+zig-out/
+zig-out/
+*.d
+*.o
+
+# Zig 构建缓存
+.zig-cache/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+
+# IDE 配置
+.vscode/
+.idea/
+*.swp
+*.swo
+*~

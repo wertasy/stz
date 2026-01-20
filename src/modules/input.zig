@@ -88,34 +88,35 @@ pub const Input = struct {
 
     /// 写入 ESC 字符
     fn writeEsc(self: *Input) !void {
-        _ = try self.pty.write(&.{0x1B});
+        const seq = "\x1B";
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入回车
     fn writeReturn(self: *Input, alt: bool) !void {
         const seq = if (alt) "\x1BO\r" else "\r";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入制表符
     fn writeTab(self: *Input, alt: bool) !void {
         const seq = if (alt) "\x1BO[Z" else "\t";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入退格
     fn writeBackspace(self: *Input, alt: bool, ctrl: bool) !void {
         if (ctrl and !alt) {
-            _ = try self.pty.write(&.{0x08}); // Ctrl+H
+            _ = try std.posix.write(self.pty_master, "\x08"); // Ctrl+H
         } else {
-            _ = try self.pty.write(&.{0x7F}); // DEL
+            _ = try std.posix.write(self.pty_master, "\x7F"); // DEL
         }
     }
 
     /// 写入删除
     fn writeDelete(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[3~" else if (ctrl) "\x1B[3;5~" else "\x1B[3~";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入箭头键
@@ -162,25 +163,25 @@ pub const Input = struct {
     /// 写入 Home 键
     fn writeHome(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[1;3H" else if (ctrl) "\x1B[1;5H" else "\x1B[H";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入 End 键
     fn writeEnd(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[1;3F" else if (ctrl) "\x1B[1;5F" else "\x1B[F";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入 PageUp 键
     fn writePageUp(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[5;3~" else if (ctrl) "\x1B[5;5~" else "\x1B[5~";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入 PageDown 键
     fn writePageDown(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[6;3~" else if (ctrl) "\x1B[6;5~" else "\x1B[6~";
-        _ = try self.pty.write(seq);
+        _ = try std.posix.write(self.pty_master, seq);
     }
 
     /// 写入功能键
@@ -214,7 +215,7 @@ pub const Input = struct {
         else
             std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq});
 
-        _ = try self.pty.write(seq[0..len]);
+        _ = try std.posix.write(self.pty_master, seq[0..len]);
     }
 
     /// 写入可打印字符
@@ -228,11 +229,11 @@ pub const Input = struct {
         } else if (alt) {
             // Alt + 字符
             const seq = [_]u8{ 0x1B, c };
-            _ = try self.pty.write(&seq);
+            _ = try std.posix.write(self.pty_master, &seq);
         } else {
             // 普通字符
             const seq = [_]u8{c};
-            _ = try self.pty.write(&seq);
+            _ = try std.posix.write(self.pty_master, &seq);
         }
     }
 };

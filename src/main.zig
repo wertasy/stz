@@ -623,14 +623,14 @@ pub fn main() !u8 {
             }
 
             std.log.info("Read {d} bytes from PTY\n", .{n});
-            // if (n > 0) {
-            // std.log.debug("PTY Read: {d} bytes: {s}\n", .{ n, read_buffer[0..n] });
-            // }
+
+            // 记录处理前的同步模式状态
+            const was_sync = terminal.term.mode.sync_update;
 
             // 处理终端数据
             try terminal.processBytes(read_buffer[0..n]);
 
-            // 如果有新输出且当前在查看历史，回到实时屏幕 (可选行为，st 默认如此)
+            // 如果有新输出且当前在查看历史，回到实时屏幕
             if (n > 0 and terminal.term.scr > 0) {
                 terminal.term.scr = 0;
                 screen.setFullDirty(&terminal.term);
@@ -641,18 +641,18 @@ pub fn main() !u8 {
 
             // 检查窗口标题更新
             if (terminal.term.window_title_dirty) {
-                // 创建 null-terminated 字符串用于 X11
                 var title_buf: [512]u8 = undefined;
                 const copy_len = @min(terminal.term.window_title.len, title_buf.len - 1);
                 std.mem.copyForwards(u8, title_buf[0..copy_len], terminal.term.window_title[0..copy_len]);
                 title_buf[copy_len] = 0;
-                // 创建带终止符的切片
                 window.setTitle(title_buf[0..copy_len :0]);
                 terminal.term.window_title_dirty = false;
             }
 
-            // 渲染
-            if (!terminal.term.mode.sync_update) {
+            // 渲染判定：
+            // 1. 如果当前不在同步更新模式，则渲染。
+            // 2. 如果刚刚关闭了同步更新模式 (was_sync=true, now=false)，则必须强制渲染一次。
+            if (!terminal.term.mode.sync_update or (was_sync and !terminal.term.mode.sync_update)) {
                 try renderer.render(&terminal.term, &selector);
                 try renderer.renderCursor(&terminal.term);
                 window.present();

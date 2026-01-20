@@ -243,8 +243,10 @@ pub const Renderer = struct {
             // Determine which line to draw
             const line_data = screen_mod.getVisibleLine(term, y);
 
-            // Check dirty flag
-            if (term.scr == 0 and selector.selection.mode == .idle) {
+            // 脏标记检查逻辑优化：
+            // 只有在主屏幕且非滚动查看状态下，才通过脏标记跳过渲染。
+            // 在备用屏幕 (vi/btop) 或查看历史时，为了显示正确性，通常需要全量检查。
+            if (term.scr == 0 and !term.mode.alt_screen and selector.selection.mode == .idle) {
                 if (term.dirty) |dirty| {
                     if (y < dirty.len and !dirty[y]) continue;
                 }

@@ -363,21 +363,31 @@ pub fn main() !u8 {
                         if (terminal.term.mode.mouse and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
-                            selector.clear();
-                            terminal.kscrollUp(3);
-                            try renderer.render(term, &selector);
-                            try renderer.renderCursor(term);
-                            window.present();
+                            if (terminal.term.mode.alt_screen) {
+                                // Alt Screen: send Up arrow key (3 times for speed)
+                                for (0..3) |_| try input.writeArrow(false, 'A', false, false);
+                            } else {
+                                selector.clear();
+                                terminal.kscrollUp(3);
+                                try renderer.render(term, &selector);
+                                try renderer.renderCursor(term);
+                                window.present();
+                            }
                         }
                     } else if (e.button == x11.Button5) { // Scroll Down
                         if (terminal.term.mode.mouse and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
-                            selector.clear();
-                            terminal.kscrollDown(3);
-                            try renderer.render(term, &selector);
-                            try renderer.renderCursor(term);
-                            window.present();
+                            if (terminal.term.mode.alt_screen) {
+                                // Alt Screen: send Down arrow key (3 times for speed)
+                                for (0..3) |_| try input.writeArrow(false, 'B', false, false);
+                            } else {
+                                selector.clear();
+                                terminal.kscrollDown(3);
+                                try renderer.render(term, &selector);
+                                try renderer.renderCursor(term);
+                                window.present();
+                            }
                         }
                     } else {
                         // Check if mouse reporting is enabled

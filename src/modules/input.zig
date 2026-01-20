@@ -312,7 +312,7 @@ pub const Input = struct {
         _ = try self.pty.write(seq);
     }
 
-    fn writeArrow(self: *Input, alt: bool, direction: u8, ctrl: bool, shift: bool) !void {
+    pub fn writeArrow(self: *Input, alt: bool, direction: u8, ctrl: bool, shift: bool) !void {
         var seq: []const u8 = "";
         if (ctrl) {
             seq = switch (direction) {

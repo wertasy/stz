@@ -293,17 +293,22 @@ pub const Parser = struct {
         if (self.term.line) |lines| {
             if (self.term.c.y < lines.len) {
                 const line = lines[self.term.c.y];
-                // 从右向左移动字符，腾出空间
-                // 源范围: [c.x, col - 1 - insert_count]
-                // 目标范围: [c.x + insert_count, col - 1]
-                const src_end = self.term.col - 1 - insert_count;
-                var src = src_end;
-                while (src >= self.term.c.x) : (src -= 1) {
-                    const dest = src + insert_count;
-                    if (dest < line.len) {
-                        line[dest] = line[src];
+
+                // 仅当不需要清除到行尾时才移动字符
+                // 如果 insert_count == max_chars，说明光标后所有字符都要被移出屏幕，无需移动
+                if (insert_count < max_chars) {
+                    // 从右向左移动字符，腾出空间
+                    // 源范围: [c.x, col - 1 - insert_count]
+                    // 目标范围: [c.x + insert_count, col - 1]
+                    const src_end = self.term.col - 1 - insert_count;
+                    var src = src_end;
+                    while (src >= self.term.c.x) : (src -= 1) {
+                        const dest = src + insert_count;
+                        if (dest < line.len) {
+                            line[dest] = line[src];
+                        }
+                        if (src == 0) break; // 防止下溢
                     }
-                    if (src == 0) break; // 防止下溢
                 }
 
                 // 填充空白
@@ -993,7 +998,7 @@ pub const Parser = struct {
         try self.moveTo(0, 0);
     }
 
-    fn cursorSaveRestore(self: *Parser, mode: types.CursorMove) !void {
+    fn cursorSaveRestore(self: *Parser, mode: types.CursorMoveMode) !void {
         const alt = @intFromBool(self.term.mode.alt_screen);
         if (mode == .save) self.term.saved_cursor[alt] = .{ .attr = self.term.c.attr, .x = self.term.c.x, .y = self.term.c.y, .state = self.term.c.state, .top = self.term.top, .bot = self.term.bot } else {
             const s = self.term.saved_cursor[alt];

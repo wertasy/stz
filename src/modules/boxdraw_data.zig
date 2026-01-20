@@ -15,6 +15,7 @@ pub const BBQ = 5 << 10; // Box Block Quadrants
 pub const BRL = 6 << 10; // Box Braille (data is lower byte of U28XX)
 pub const BBS = 1 << 14; // Box Block Shades
 pub const BDB = 1 << 15; // Box Draw is Bold
+pub const BTR = 1 << 13; // Box Triangle (up/down/left/right)
 
 // (BDL/BDA) Light/Double/Heavy x Left/Up/Right/Down/Horizontal/Vertical
 // Heavy is light+double (literally drawing light+double align to form heavy)
@@ -215,6 +216,10 @@ pub const boxdata = init: {
 
     // Geometric Shapes (to avoid gaps in common symbols)
     data[0xa0] = BBD + 0; // ■ (BLACK SQUARE) -> Full Block
+    data[0xb2] = BTR + 1; // ▲ (U+25B2)
+    data[0xbc] = BTR + 2; // ▼ (U+25BC)
+    data[0xc0] = BTR + 3; // ◀ (U+25C0)
+    data[0xb6] = BTR + 4; // ▶ (U+25B6)
 
     break :init data;
 };

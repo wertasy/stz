@@ -512,6 +512,49 @@ pub const Renderer = struct {
         const midx = x + w2_line;
         const midy = y + h2_line;
         const cat = data & ~@as(u16, boxdraw_data.BDB | 0xff);
+        if (cat == boxdraw_data.BTR) {
+            const type_ = data & 0xFF;
+
+            // 目标：宽度和高度都是 1 个字符的宽度 (W x W 正方形区域)
+            const side = @as(f32, @floatFromInt(w));
+            const target_w = side;
+            const target_h = side;
+
+            // 居中于原始 WxH 区域 (通常 H > W)
+            const tx = @as(f32, @floatFromInt(x)) + (@as(f32, @floatFromInt(w)) - target_w) / 2.0;
+            const ty = @as(f32, @floatFromInt(y)) + (@as(f32, @floatFromInt(h)) - target_h) / 2.0;
+
+            var points: [3]x11.C.XPoint = undefined;
+            switch (type_) {
+                1 => { // Up ▲
+                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty) };
+                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
+                },
+                2 => { // Down ▼
+                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
+                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
+                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty + target_h) };
+                },
+                3 => { // Left ◀
+                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
+                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h / 2.0) };
+                },
+                4 => { // Right ▶
+                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
+                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h / 2.0) };
+                },
+                else => return,
+            }
+
+            const gc = x11.XCreateGC(self.window.dpy, self.window.buf, 0, null);
+            defer _ = x11.XFreeGC(self.window.dpy, gc);
+            _ = x11.C.XSetForeground(self.window.dpy, gc, color.pixel);
+            _ = x11.C.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, 3, x11.C.Convex, x11.C.CoordModeOrigin);
+            return;
+        }
         if (cat == boxdraw_data.BRL) {
             const bw1 = @divTrunc(w + 1, 2);
             const bh1 = @divTrunc(h + 2, 4);
@@ -522,6 +565,7 @@ pub const Renderer = struct {
             if (data & 4 != 0) x11.XftDrawRect(self.draw, color, x, y + bh2, @intCast(bw1), @intCast(bh3 - bh2));
             if (data & 8 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y, @intCast(w - bw1), @intCast(bh1));
             if (data & 16 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1));
+            if (data & 32 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1)); // This was likely a placeholder
             if (data & 32 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh2, @intCast(w - bw1), @intCast(bh3 - bh2));
             if (data & 64 != 0) x11.XftDrawRect(self.draw, color, x, y + bh3, @intCast(bw1), @intCast(h - bh3));
             if (data & 128 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh3, @intCast(w - bw1), @intCast(h - bh3));

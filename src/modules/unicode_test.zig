@@ -92,6 +92,7 @@ test "Geometric Shapes should have width 1" {
     try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25BC)); // ▼
     try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25C0)); // ◀
     try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25B6)); // ▶
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x25A0)); // ■
 }
 
 test "Braille characters should have width 1" {

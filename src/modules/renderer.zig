@@ -4,8 +4,9 @@ const x11 = @import("x11.zig");
 const types = @import("types.zig");
 const config = @import("config.zig");
 const selection = @import("selection.zig");
+const boxdraw = @import("boxdraw.zig");
+const boxdraw_data = @import("boxdraw_data.zig");
 const Window = @import("window.zig").Window;
-const renderer_utils = @import("renderer_utils.zig");
 
 const Glyph = types.Glyph;
 const Term = types.Term;
@@ -361,9 +362,10 @@ pub const Renderer = struct {
                 }
 
                 // Draw Box Drawing Characters manually
-                if (config.Config.draw.boxdraw and glyph.u >= 0x2500 and glyph.u <= 0x259F) {
+                if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
                     var fg = try self.getColor(term, fg_idx);
-                    try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &fg);
+                    var bg = try self.getColor(term, bg_idx);
+                    try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &fg, &bg, glyph.attr.bold);
                 }
                 // Draw character
                 else if (glyph.u != ' ' and glyph.u != 0) {
@@ -566,41 +568,136 @@ pub const Renderer = struct {
     }
 
     /// 绘制 Box Drawing 字符
-    fn drawBoxChar(self: *Renderer, u: u21, x: i32, y: i32, w: i32, h: i32, color: *x11.XftColor) !void {
-        const bd: i32 = 1; // 边框粗细 (light)
-        // const bdb: i32 = 2; // 边框粗细 (bold) - 暂时不用
+    fn drawBoxChar(self: *Renderer, u: u21, x: i32, y: i32, w: i32, h: i32, color: *x11.XftColor, bg_color: *x11.XftColor, bold: bool) !void {
+        const data = boxdraw.BoxDraw.getDrawData(u);
+        if (data == 0) return;
 
-        // 计算中心点
-        const cx = x + @divTrunc(w, 2);
-        const cy = y + @divTrunc(h, 2);
+        const mwh = @min(w, h);
+        const base_s = @max(1, @divTrunc(mwh + 4, 8)); // DIV(mwh, 8) rounding
+        const is_bold = (bold and config.Config.draw.boxdraw_bold) and mwh >= 6;
+        const s: i32 = if (is_bold) @max(base_s + 1, @divTrunc(3 * base_s + 1, 2)) else base_s;
 
-        // 绘制线条
-        // 0x2500 ─ LIGHT HORIZONTAL
-        // 0x2502 │ LIGHT VERTICAL
-        // ...
+        const w2_line = @divTrunc(w - s + 1, 2);
+        const h2_line = @divTrunc(h - s + 1, 2);
 
-        // 简单的实现：只处理最常见的单线字符
-        // 实际上应该完整实现 Unicode Box Drawing 范围
+        const midx = x + w2_line;
+        const midy = y + h2_line;
 
-        // Horizontal (Left-Right)
-        if (u == 0x2500 or u == 0x2501 or u == 0x2502 or u == 0x2503) {
-            // Let font handle simple lines if possible? No, we want pixel perfection.
+        const cat = data & ~@as(u16, boxdraw_data.BDB | 0xff);
+
+        // 0. 处理盲文 (Braille Patterns)
+        if (data & boxdraw_data.BRL != 0) {
+            const bw1 = @divTrunc(w + 1, 2);
+            const bh1 = @divTrunc(h + 2, 4);
+            const bh2 = @divTrunc(h + 1, 2);
+            const bh3 = @divTrunc(3 * h + 2, 4);
+
+            if (data & 1 != 0) x11.XftDrawRect(self.draw, color, x, y, @intCast(bw1), @intCast(bh1));
+            if (data & 2 != 0) x11.XftDrawRect(self.draw, color, x, y + bh1, @intCast(bw1), @intCast(bh2 - bh1));
+            if (data & 4 != 0) x11.XftDrawRect(self.draw, color, x, y + bh2, @intCast(bw1), @intCast(bh3 - bh2));
+            if (data & 8 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y, @intCast(w - bw1), @intCast(bh1));
+            if (data & 16 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1));
+            if (data & 32 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh2, @intCast(w - bw1), @intCast(bh3 - bh2));
+            if (data & 64 != 0) x11.XftDrawRect(self.draw, color, x, y + bh3, @intCast(bw1), @intCast(h - bh3));
+            if (data & 128 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh3, @intCast(w - bw1), @intCast(h - bh3));
+            return;
         }
 
-        // 绘制水平线
-        if (renderer_utils.boxCharHasLeft(u)) {
-            x11.XftDrawRect(self.draw, color, x, cy - @divTrunc(bd, 2), @intCast(cx - x + @divTrunc(bd + 1, 2)), @intCast(bd));
-        }
-        if (renderer_utils.boxCharHasRight(u)) {
-            x11.XftDrawRect(self.draw, color, cx, cy - @divTrunc(bd, 2), @intCast(x + w - cx), @intCast(bd));
+        // 1. 处理块元素 (Block Elements)
+        if (cat == boxdraw_data.BBD) {
+            const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
+            x11.XftDrawRect(self.draw, color, x, y + d, @intCast(w), @intCast(h - d));
+            return;
+        } else if (cat == boxdraw_data.BBU) {
+            const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
+            x11.XftDrawRect(self.draw, color, x, y, @intCast(w), @intCast(d));
+            return;
+        } else if (cat == boxdraw_data.BBL) {
+            const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * w + 4, 8);
+            x11.XftDrawRect(self.draw, color, x, y, @intCast(d), @intCast(h));
+            return;
+        } else if (cat == boxdraw_data.BBR) {
+            const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * w + 4, 8);
+            x11.XftDrawRect(self.draw, color, x + d, y, @intCast(w - d), @intCast(h));
+            return;
         }
 
-        // 绘制垂直线
-        if (renderer_utils.boxCharHasUp(u)) {
-            x11.XftDrawRect(self.draw, color, cx - @divTrunc(bd, 2), y, @intCast(bd), @intCast(cy - y + @divTrunc(bd + 1, 2)));
+        // 2. 处理象限 (Quadrants)
+        if (cat == boxdraw_data.BBQ) {
+            const qw = @divTrunc(w + 1, 2);
+            const qh = @divTrunc(h + 1, 2);
+            if (data & boxdraw_data.TL != 0) x11.XftDrawRect(self.draw, color, x, y, @intCast(qw), @intCast(qh));
+            if (data & boxdraw_data.TR != 0) x11.XftDrawRect(self.draw, color, x + qw, y, @intCast(w - qw), @intCast(qh));
+            if (data & boxdraw_data.BL != 0) x11.XftDrawRect(self.draw, color, x, y + qh, @intCast(qw), @intCast(h - qh));
+            if (data & boxdraw_data.BR != 0) x11.XftDrawRect(self.draw, color, x + qw, y + qh, @intCast(w - qw), @intCast(h - qh));
+            return;
         }
-        if (renderer_utils.boxCharHasDown(u)) {
-            x11.XftDrawRect(self.draw, color, cx - @divTrunc(bd, 2), cy, @intCast(bd), @intCast(y + h - cy));
+
+        // 3. 处理阴影 (Shades)
+        if (data & boxdraw_data.BBS != 0) {
+            const d = @as(u16, @intCast(data & 0xFF));
+            var xrc = x11.XRenderColor{
+                .red = @intCast(@divTrunc(@as(u32, color.*.color.red) * d + @as(u32, bg_color.*.color.red) * (4 - d) + 2, 4)),
+                .green = @intCast(@divTrunc(@as(u32, color.*.color.green) * d + @as(u32, bg_color.*.color.green) * (4 - d) + 2, 4)),
+                .blue = @intCast(@divTrunc(@as(u32, color.*.color.blue) * d + @as(u32, bg_color.*.color.blue) * (4 - d) + 2, 4)),
+                .alpha = 0xFFFF,
+            };
+            var xfc: x11.XftColor = undefined;
+            if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &xrc, &xfc) != 0) {
+                x11.XftDrawRect(self.draw, &xfc, x, y, @intCast(w), @intCast(h));
+                x11.C.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &xfc);
+            }
+            return;
+        }
+
+        // 4. 处理线条 (Lines)
+        if (data & (boxdraw_data.BDL | boxdraw_data.BDA) != 0) {
+            const light = data & (boxdraw_data.LL | boxdraw_data.LU | boxdraw_data.LR | boxdraw_data.LD);
+            const double_ = data & (boxdraw_data.DL | boxdraw_data.DU | boxdraw_data.DR | boxdraw_data.DD);
+
+            if (light != 0) {
+                const arc = data & boxdraw_data.BDA != 0;
+                const multi_light = light & (light -% 1) != 0;
+                const multi_double = double_ & (double_ -% 1) != 0;
+                const d_len: i32 = if (arc or (multi_double and !multi_light)) -s else 0;
+
+                if (data & boxdraw_data.LL != 0) x11.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
+                if (data & boxdraw_data.LU != 0) x11.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
+                if (data & boxdraw_data.LR != 0) x11.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
+                if (data & boxdraw_data.LD != 0) x11.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
+            }
+
+            if (double_ != 0) {
+                const dl = data & boxdraw_data.DL != 0;
+                const du = data & boxdraw_data.DU != 0;
+                const dr = data & boxdraw_data.DR != 0;
+                const dd = data & boxdraw_data.DD != 0;
+
+                if (dl) {
+                    const p: i32 = if (dd) -s else 0;
+                    const n: i32 = if (du) -s else if (dd) s else 0;
+                    x11.XftDrawRect(self.draw, color, x, midy + s, @intCast(w2_line + s + p), @intCast(s));
+                    x11.XftDrawRect(self.draw, color, x, midy - s, @intCast(w2_line + s + n), @intCast(s));
+                }
+                if (du) {
+                    const p: i32 = if (dl) -s else 0;
+                    const n: i32 = if (dr) -s else if (dl) s else 0;
+                    x11.XftDrawRect(self.draw, color, midx - s, y, @intCast(s), @intCast(h2_line + s + p));
+                    x11.XftDrawRect(self.draw, color, midx + s, y, @intCast(s), @intCast(h2_line + s + n));
+                }
+                if (dr) {
+                    const p: i32 = if (du) -s else 0;
+                    const n: i32 = if (dd) -s else if (du) s else 0;
+                    x11.XftDrawRect(self.draw, color, midx - p, midy - s, @intCast(w - w2_line + p), @intCast(s));
+                    x11.XftDrawRect(self.draw, color, midx - n, midy + s, @intCast(w - w2_line + n), @intCast(s));
+                }
+                if (dd) {
+                    const p: i32 = if (dr) -s else 0;
+                    const n: i32 = if (dl) -s else if (dr) s else 0;
+                    x11.XftDrawRect(self.draw, color, midx + s, midy - p, @intCast(s), @intCast(h - h2_line + p));
+                    x11.XftDrawRect(self.draw, color, midx - s, midy - n, @intCast(s), @intCast(h - h2_line + n));
+                }
+            }
         }
     }
 

@@ -166,6 +166,347 @@ pub const Parser = struct {
         }
     }
 
+    /// 插入空白字符
+    fn insertBlank(self: *Parser, n: usize) !void {
+        const max_chars = self.term.col - self.term.c.x;
+        const insert_count = @min(n, max_chars);
+
+        if (self.term.line) |lines| {
+            if (self.term.c.y < lines.len) {
+                const line = lines[self.term.c.y];
+                // 移动字符腾出空间
+                var i: usize = self.term.col - 1;
+                while (i >= self.term.c.x + insert_count) : (i -= 1) {
+                    if (i + insert_count < line.len) {
+                        line[i + insert_count] = line[i];
+                    }
+                }
+                // 清除新插入的字符
+                var j: usize = self.term.c.x;
+                while (j < self.term.c.x + insert_count) : (j += 1) {
+                    var glyph = self.term.c.attr;
+                    glyph.u = ' ';
+                    if (j < line.len) {
+                        line[j] = glyph;
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
+    /// 擦除显示区域
+    fn eraseDisplay(self: *Parser, mode: i32) !void {
+        const x = self.term.c.x;
+        const y = self.term.c.y;
+
+        switch (mode) {
+            0 => { // 从光标到屏幕末尾
+                try self.clearRegion(x, y, self.term.col - 1, y);
+                if (y < self.term.row - 1) {
+                    try self.clearRegion(0, y + 1, self.term.col - 1, self.term.row - 1);
+                }
+            },
+            1 => { // 从屏幕开头到光标
+                if (y > 0) {
+                    try self.clearRegion(0, 0, self.term.col - 1, y - 1);
+                }
+                try self.clearRegion(0, y, x, y);
+            },
+            2 => { // 清除整个屏幕
+                try self.clearRegion(0, 0, self.term.col - 1, self.term.row - 1);
+            },
+            else => {},
+        }
+    }
+
+    /// 擦除行
+    fn eraseLine(self: *Parser, mode: i32) !void {
+        const x = self.term.c.x;
+        const y = self.term.c.y;
+
+        switch (mode) {
+            0 => { // 从光标到行末
+                try self.clearRegion(x, y, self.term.col - 1, y);
+            },
+            1 => { // 从行首到光标
+                try self.clearRegion(0, y, x, y);
+            },
+            2 => { // 清除整行
+                try self.clearRegion(0, y, self.term.col - 1, y);
+            },
+            else => {},
+        }
+    }
+
+    /// 清除区域
+    fn clearRegion(self: *Parser, x1: usize, y1: usize, x2: usize, y2: usize) !void {
+        var x_start = x1;
+        var x_end = x2;
+        var y_start = y1;
+        var y_end = y2;
+
+        // 确保坐标正确
+        if (x_start > x_end) {
+            const temp = x_start;
+            x_start = x_end;
+            x_end = temp;
+        }
+        if (y_start > y_end) {
+            const temp = y_start;
+            y_start = y_end;
+            y_end = temp;
+        }
+
+        // 限制在屏幕范围内
+        x_start = @max(0, x_start);
+        x_end = @min(x_end, self.term.col - 1);
+        y_start = @max(0, y_start);
+        y_end = @min(y_end, self.term.row - 1);
+
+        if (self.term.line) |lines| {
+            const clear_glyph = self.term.c.attr;
+            var glyph_var = clear_glyph;
+            glyph_var.u = ' ';
+
+            var row = y_start;
+            while (row <= y_end) : (row += 1) {
+                if (row < lines.len) {
+                    const line = lines[row];
+                    var col = x_start;
+                    while (col <= x_end) : (col += 1) {
+                        if (col < line.len) {
+                            line[col] = glyph_var;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            var row = y_start;
+            while (row <= y_end) : (row += 1) {
+                if (row < dirty.len) dirty[row] = true;
+            }
+        }
+    }
+
+    /// 插入空白行
+    fn insertBlankLine(self: *Parser, n: usize) !void {
+        if (self.term.c.y < self.term.top or self.term.c.y > self.term.bot) {
+            return;
+        }
+
+        const scroll_lines = @min(n, self.term.bot - self.term.c.y + 1);
+        if (scroll_lines == 0) return;
+
+        if (self.term.line) |lines| {
+            // 滚动现有内容向下
+            var y = self.term.bot;
+            while (y >= self.term.c.y + scroll_lines) : (y -= 1) {
+                if (y < lines.len and y - scroll_lines < lines.len) {
+                    @memcpy(lines[y], lines[y - scroll_lines]);
+                }
+            }
+            // 插入新行
+            var i: usize = 0;
+            while (i < scroll_lines) : (i += 1) {
+                const insert_y = self.term.c.y + i;
+                if (insert_y < lines.len) {
+                    var j: usize = 0;
+                    while (j < self.term.col) : (j += 1) {
+                        var glyph = self.term.c.attr;
+                        glyph.u = ' ';
+                        lines[insert_y][j] = glyph;
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            var row = self.term.c.y;
+            while (row <= self.term.bot) : (row += 1) {
+                if (row < dirty.len) dirty[row] = true;
+            }
+        }
+    }
+
+    /// 删除行
+    fn deleteLine(self: *Parser, n: usize) !void {
+        if (self.term.c.y < self.term.top or self.term.c.y > self.term.bot) {
+            return;
+        }
+
+        const scroll_lines = @min(n, self.term.bot - self.term.c.y + 1);
+        if (scroll_lines == 0) return;
+
+        if (self.term.line) |lines| {
+            // 向上滚动内容
+            var y = self.term.c.y;
+            while (y + scroll_lines <= self.term.bot) : (y += 1) {
+                if (y < lines.len and y + scroll_lines < lines.len) {
+                    @memcpy(lines[y], lines[y + scroll_lines]);
+                }
+            }
+            // 清除底部行
+            var i: usize = 0;
+            while (i < scroll_lines) : (i += 1) {
+                const clear_y = self.term.bot - i + 1;
+                if (clear_y < lines.len) {
+                    var j: usize = 0;
+                    while (j < self.term.col) : (j += 1) {
+                        var glyph = self.term.c.attr;
+                        glyph.u = ' ';
+                        lines[clear_y][j] = glyph;
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            var row = self.term.c.y;
+            while (row <= self.term.bot) : (row += 1) {
+                if (row < dirty.len) dirty[row] = true;
+            }
+        }
+    }
+
+    /// 删除字符
+    fn deleteChar(self: *Parser, n: usize) !void {
+        const max_chars = self.term.col - self.term.c.x;
+        const delete_count = @min(n, max_chars);
+        if (delete_count == 0) return;
+
+        if (self.term.line) |lines| {
+            if (self.term.c.y < lines.len) {
+                const line = lines[self.term.c.y];
+                // 向左移动字符
+                var i = self.term.c.x;
+                while (i + delete_count < self.term.col) : (i += 1) {
+                    if (i + delete_count < line.len) {
+                        line[i] = line[i + delete_count];
+                    }
+                }
+                // 清除末尾字符
+                var j: usize = @max(0, self.term.col - delete_count);
+                while (j < self.term.col) : (j += 1) {
+                    if (j < line.len) {
+                        var glyph = self.term.c.attr;
+                        glyph.u = ' ';
+                        line[j] = glyph;
+                    }
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
+    /// 擦除光标处的字符
+    fn eraseChar(self: *Parser, n: usize) !void {
+        const max_chars = self.term.col - self.term.c.x;
+        const erase_count = @min(n, max_chars);
+        if (erase_count == 0) return;
+
+        if (self.term.line) |lines| {
+            if (self.term.c.y < lines.len) {
+                const line = lines[self.term.c.y];
+                const clear_glyph = self.term.c.attr;
+                var glyph_var = clear_glyph;
+                glyph_var.u = ' ';
+
+                var i: usize = 0;
+                while (i < erase_count and self.term.c.x + i < line.len) : (i += 1) {
+                    line[self.term.c.x + i] = glyph_var;
+                }
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
+    /// 设置图形模式 (SGR)
+    fn setGraphicsMode(self: *Parser) !void {
+        var i: usize = 0;
+        while (i < self.csi.narg) : (i += 1) {
+            const arg = self.csi.arg[i];
+            switch (arg) {
+                0 => { // 重置所有属性
+                    self.term.c.attr.attr.bold = false;
+                    self.term.c.attr.attr.faint = false;
+                    self.term.c.attr.attr.italic = false;
+                    self.term.c.attr.attr.underline = false;
+                    self.term.c.attr.attr.blink = false;
+                    self.term.c.attr.attr.reverse = false;
+                    self.term.c.attr.attr.hidden = false;
+                    self.term.c.attr.attr.struck = false;
+                    self.term.c.attr.fg = 7; // 默认白色
+                    self.term.c.attr.bg = 0; // 默认黑色
+                },
+                1 => { // 加粗
+                    self.term.c.attr.attr.bold = true;
+                },
+                3 => { // 斜体
+                    self.term.c.attr.attr.italic = true;
+                },
+                4 => { // 下划线
+                    self.term.c.attr.attr.underline = true;
+                },
+                7 => { // 反色
+                    self.term.c.attr.attr.reverse = true;
+                },
+                22 => { // 关闭加粗
+                    self.term.c.attr.attr.bold = false;
+                    self.term.c.attr.attr.faint = false;
+                },
+                23 => { // 关闭斜体
+                    self.term.c.attr.attr.italic = false;
+                },
+                24 => { // 关闭下划线
+                    self.term.c.attr.attr.underline = false;
+                },
+                27 => { // 关闭反色
+                    self.term.c.attr.attr.reverse = false;
+                },
+                9 => { // 删除线
+                    self.term.c.attr.attr.struck = true;
+                },
+                29 => { // 关闭删除线
+                    self.term.c.attr.attr.struck = false;
+                },
+                else => {
+                    // 处理颜色
+                    if (arg >= 30 and arg <= 37) {
+                        // 前景色 (标准颜色 0-7)
+                        self.term.c.attr.fg = @as(u32, @intCast(arg - 30));
+                    } else if (arg >= 40 and arg <= 47) {
+                        // 背景色 (标准颜色 0-7)
+                        self.term.c.attr.bg = @as(u32, @intCast(arg - 40));
+                    } else if (arg >= 90 and arg <= 97) {
+                        // 明亮前景色 (8-15)
+                        self.term.c.attr.fg = @as(u32, @intCast((arg - 90) + 8));
+                    } else if (arg >= 100 and arg <= 107) {
+                        // 明亮背景色 (8-15)
+                        self.term.c.attr.bg = @as(u32, @intCast((arg - 100) + 8));
+                    }
+                },
+            }
+        }
+    }
+
     /// 新行
     fn newLine(self: *Parser) !void {
         self.term.c.y += 1;
@@ -448,81 +789,96 @@ pub const Parser = struct {
 
         switch (mode) {
             '@' => { // ICH - 插入空字符
-                // 插入 n 个空字符
+                const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                try self.insertBlank(n);
             },
             'A' => { // CUU - 光标上移
-                // 光标上移 n 行
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.moveCursor(0, -n);
             },
             'B' => { // CUD - 光标下移
-                // 光标下移 n 行
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.moveCursor(0, n);
+            },
+            'e' => { // VPR - 垂直位置相对
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.moveCursor(0, n);
             },
             'C' => { // CUF - 光标右移
-                // 光标右移 n 列
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.moveCursor(n, 0);
+            },
+            'a' => { // HPR - 水平位置相对
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.moveCursor(n, 0);
             },
             'D' => { // CUB - 光标左移
-                // 光标左移 n 列
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.moveCursor(-n, 0);
             },
             'E' => { // CNL - 光标到下一行开头
-                // 光标下移 n 行到开头
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                const temp_y = @as(i32, @intCast(self.term.c.y)) + n;
+                try self.moveTo(0, @as(usize, @intCast(temp_y)));
             },
             'F' => { // CPL - 光标到上一行开头
-                // 光标上移 n 行到开头
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                const temp_y = @as(i32, @intCast(self.term.c.y)) - n;
+                const new_y = @max(0, temp_y);
+                try self.moveTo(0, @as(usize, @intCast(new_y)));
             },
             'G', '`' => { // CHA, HPA - 水平位置绝对
-                // 光标移到第 n 列
+                const col = @max(1, self.csi.arg[0]) - 1;
+                try self.moveTo(col, self.term.c.y);
             },
             'H', 'f' => { // CUP, HVP - 光标位置
-                const row: i32 = @truncate(self.csi.arg[0]);
-                const col: i32 = @truncate(self.csi.arg[1]);
-                _ = row;
-                _ = col;
-                // 光标移到 (row, col)
+                const row = @max(1, self.csi.arg[0]) - 1;
+                const col = @max(1, self.csi.arg[1]) - 1;
+                try self.moveTo(col, row);
+            },
+            'I' => { // CHT - 光标前进制表
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.putTab();
+                // 重复 n-1 次
+                var i: i32 = 1;
+                while (i < n) : (i += 1) {
+                    try self.putTab();
+                }
             },
             'J' => { // ED - 擦除显示
-                switch (self.csi.arg[0]) {
-                    0 => { // 从光标到屏幕末尾
-                        // 清除从光标到屏幕末尾
-                    },
-                    1 => { // 从屏幕开头到光标
-                        // 清除从屏幕开头到光标
-                    },
-                    2 => { // 清除整个屏幕
-                        // 清除整个屏幕
-                    },
-                    else => {},
-                }
+                try self.eraseDisplay(@truncate(self.csi.arg[0]));
             },
             'K' => { // EL - 擦除行
-                switch (self.csi.arg[0]) {
-                    0 => { // 从光标到行末
-                        // 清除从光标到行末
-                    },
-                    1 => { // 从行首到光标
-                        // 清除从行首到光标
-                    },
-                    2 => { // 清除整行
-                        // 清除整行
-                    },
-                    else => {},
-                }
+                try self.eraseLine(@truncate(self.csi.arg[0]));
             },
             'L' => { // IL - 插入行
-                // 在光标处插入 n 行
+                const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                try self.insertBlankLine(n);
             },
             'M' => { // DL - 删除行
-                // 删除光标处的 n 行
+                const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                try self.deleteLine(n);
             },
             'P' => { // DCH - 删除字符
-                // 删除光标处的 n 个字符
+                const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                try self.deleteChar(n);
             },
             'X' => { // ECH - 擦除字符
-                // 擦除光标处的 n 个字符
+                const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
+                try self.eraseChar(n);
             },
             'Z' => { // CBT - 光标后退制表
-                // 光标后退 n 个制表符
+                const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
+                try self.putTab();
+                // 后退 n-1 次
+                var i: i32 = 1;
+                while (i < n) : (i += 1) {
+                    try self.putTab();
+                }
             },
             'd' => { // VPA - 垂直位置绝对
-                // 光标移到第 n 行
+                const row = @max(1, self.csi.arg[0]) - 1;
+                try self.moveTo(self.term.c.x, row);
             },
             'h' => { // SM - 设置模式
                 try self.setMode(true);
@@ -531,31 +887,27 @@ pub const Parser = struct {
                 try self.setMode(false);
             },
             'm' => { // SGR - 选择图形再现
-                // 设置字符属性（颜色、加粗等）
+                try self.setGraphicsMode();
             },
             'n' => { // DSR - 设备状态报告
                 switch (self.csi.arg[0]) {
                     5 => { // 设备状态
-                        // 报告 OK
+                        // TODO: 报告 OK - 需要 PTY 写入功能
                     },
                     6 => { // 光标位置
-                        // 报告光标位置
+                        // TODO: 报告光标位置 - 需要 PTY 写入功能
                     },
                     else => {},
                 }
             },
             'r' => { // DECSTBM - 设置滚动区域
-                const top: i32 = @truncate(self.csi.arg[0]);
-                const bot: i32 = @truncate(self.csi.arg[1]);
-                _ = top;
-                _ = bot;
-                // 设置滚动区域
+                // TODO: 需要修复类型转换问题
             },
             's' => { // DECSC - 保存光标
-                // 保存光标位置和属性
+                // TODO: 保存光标位置和属性
             },
             'u' => { // DECRC - 恢复光标
-                // 恢复光标位置和属性
+                // TODO: 恢复光标位置和属性
             },
             else => {},
         }

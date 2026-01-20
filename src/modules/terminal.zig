@@ -417,4 +417,9 @@ pub const Terminal = struct {
         try self.clearScreen(2);
         try self.clearLine(2);
     }
+
+    /// 调整终端大小
+    pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
+        try screen.resize(&self.term, new_row, new_col);
+    }
 };

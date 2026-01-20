@@ -33,7 +33,6 @@ pub const Window = struct {
             std.log.err("SDL init failed: {s}\n", .{sdl.SDL_GetError()});
             return error.InitFailed;
         }
-        defer sdl.SDL_Quit();
 
         // 计算窗口大小
         const font_size = config.Config.font.size;
@@ -84,6 +83,8 @@ pub const Window = struct {
     /// 清理窗口
     pub fn deinit(self: *Window) void {
         sdl.SDL_DestroyRenderer(self.renderer);
+        sdl.SDL_DestroyWindow(self.window);
+        sdl.SDL_Quit();
     }
 
     /// 显示窗口
@@ -103,17 +104,13 @@ pub const Window = struct {
 
     /// 清屏
     pub fn clear(self: *Window) void {
-        if (self.renderer) |r| {
-            _ = sdl.SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
-            _ = sdl.SDL_RenderClear(r);
-        }
+        _ = sdl.SDL_SetRenderDrawColor(self.renderer, 0, 0, 0, 255);
+        _ = sdl.SDL_RenderClear(self.renderer);
     }
 
     /// 呈现
     pub fn present(self: *Window) void {
-        if (self.renderer) |r| {
-            sdl.SDL_RenderPresent(r);
-        }
+        sdl.SDL_RenderPresent(self.renderer);
     }
 
     /// 等待垂直同步

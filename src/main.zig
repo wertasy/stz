@@ -48,18 +48,23 @@ pub fn main() !u8 {
 
     // 初始化终端
     var terminal = try Terminal.init(rows, cols, allocator);
+    // 修复 Parser 中的 Term 指针（解决移动语义导致的悬垂指针问题）
+    terminal.parser.term = &terminal.term;
     defer terminal.deinit();
 
     // 初始化窗口
     var window = try Window.init("stz", cols, rows, allocator);
     defer window.deinit();
 
+    // 显示窗口
+    window.show();
+
     // 初始化渲染器
     var renderer = try Renderer.init(&window, allocator);
     defer renderer.deinit();
 
     // 初始化输入处理器
-    var input = Input.init(pty.master);
+    var input = Input.init(&pty);
 
     // 初始化选择器
     var selector = Selector.init(allocator);
@@ -149,8 +154,8 @@ pub fn main() !u8 {
                         const rect_y = @as(i32, @intCast(event.motion.y)) - @as(i32, @intCast(config.Config.window.border_pixels));
                         const cell_width_i32 = @as(i32, @intCast(window.cell_width));
                         const cell_height_i32 = @as(i32, @intCast(window.cell_height));
-                        const col = @max(0, @min(rect_x / cell_width_i32, @as(i32, @intCast(cols)) - 1));
-                        const row = @max(0, @min(rect_y / cell_height_i32, @as(i32, @intCast(rows)) - 1));
+                        const col = @max(0, @min(@divTrunc(rect_x, cell_width_i32), @as(i32, @intCast(cols)) - 1));
+                        const row = @max(0, @min(@divTrunc(rect_y, cell_height_i32), @as(i32, @intCast(rows)) - 1));
 
                         selector.extend(col, row, .regular, false);
                     }
@@ -158,8 +163,8 @@ pub fn main() !u8 {
                     const rect_y = @as(i32, @intCast(event.motion.y)) - @as(i32, @intCast(config.Config.window.border_pixels));
                     const cell_width_i32 = @as(i32, @intCast(window.cell_width));
                     const cell_height_i32 = @as(i32, @intCast(window.cell_height));
-                    mouse_x = @max(0, @min(rect_x / cell_width_i32, @as(i32, @intCast(cols)) - 1));
-                    mouse_y = @max(0, @min(rect_y / cell_height_i32, @as(i32, @intCast(rows)) - 1));
+                    mouse_x = @max(0, @min(@divTrunc(rect_x, cell_width_i32), @as(i32, @intCast(cols)) - 1));
+                    mouse_y = @max(0, @min(@divTrunc(rect_y, cell_height_i32), @as(i32, @intCast(rows)) - 1));
                 },
 
                 sdl.SDL_WINDOWEVENT => {
@@ -175,8 +180,8 @@ pub fn main() !u8 {
                         const new_rows_h = new_h - border_w;
                         const cell_w_i32 = @as(i32, @intCast(window.cell_width));
                         const cell_h_i32 = @as(i32, @intCast(window.cell_height));
-                        const new_cols = @max(config.Config.window.min_cols, @as(usize, @intCast(new_cols_w / cell_w_i32)));
-                        const new_rows = @max(config.Config.window.min_rows, @as(usize, @intCast(new_rows_h / cell_h_i32)));
+                        const new_cols = @max(config.Config.window.min_cols, @as(usize, @intCast(@divTrunc(new_cols_w, cell_w_i32))));
+                        const new_rows = @max(config.Config.window.min_rows, @as(usize, @intCast(@divTrunc(new_rows_h, cell_h_i32))));
 
                         // 调整终端
                         try terminal.resize(new_rows, new_cols);
@@ -199,8 +204,7 @@ pub fn main() !u8 {
         // 呈现
         window.present();
 
-        // 限制帧率
-        std.time.sleep(16_000_000); // ~60 FPS
+        // 垂直同步由 SDL_RENDERER_PRESENTVSYNC 自动处理
     }
 
     // 清除 URL 高亮

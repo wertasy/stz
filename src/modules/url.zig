@@ -92,7 +92,7 @@ pub const UrlDetector = struct {
         const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
         if (screen == null) return;
 
-        for (0..@min(self.term.row, screen.len)) |y| {
+        for (0..@min(self.term.row, screen.?.len)) |y| {
             for (0..@min(self.term.col, screen.?[y].len)) |x| {
                 screen.?[y][x].attr.url = false;
             }

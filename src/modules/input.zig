@@ -3,7 +3,7 @@
 
 const std = @import("std");
 const sdl = @import("sdl.zig");
-const pty = @import("pty.zig");
+const PTY = @import("pty.zig").PTY;
 
 pub const InputError = error{
     InvalidKey,
@@ -12,7 +12,7 @@ pub const InputError = error{
 
 /// 输入处理器
 pub const Input = struct {
-    pty_master: std.posix.fd_t,
+    pty: *PTY,
     mode: struct {
         app_cursor: bool = false,
         app_keypad: bool = false,
@@ -20,9 +20,9 @@ pub const Input = struct {
     } = .{},
 
     /// 初始化输入处理器
-    pub fn init(pty_master: std.posix.fd_t) Input {
+    pub fn init(pty: *PTY) Input {
         return Input{
-            .pty_master = pty_master,
+            .pty = pty,
         };
     }
 
@@ -32,6 +32,9 @@ pub const Input = struct {
         const keycode = event.keysym.sym;
         const mod = event.keysym.mod;
         const state = event.state;
+
+        // Log input for debugging
+        std.log.info("handleKey: scancode={d}, keycode={d}, mod={d}, state={d}", .{ scancode, keycode, mod, state });
 
         // 只处理按下事件
         if (state != sdl.SDL_PRESSED) {
@@ -73,7 +76,7 @@ pub const Input = struct {
             else => {
                 // 可打印字符
                 if (keycode >= 32 and keycode <= 126) {
-                    try self.writePrintable(@as(u8, keycode), alt, ctrl, shift);
+                    try self.writePrintable(@intCast(keycode), alt, ctrl, shift);
                 }
             },
         }
@@ -89,34 +92,34 @@ pub const Input = struct {
     /// 写入 ESC 字符
     fn writeEsc(self: *Input) !void {
         const seq = "\x1B";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入回车
     fn writeReturn(self: *Input, alt: bool) !void {
         const seq = if (alt) "\x1BO\r" else "\r";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入制表符
     fn writeTab(self: *Input, alt: bool) !void {
         const seq = if (alt) "\x1BO[Z" else "\t";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入退格
     fn writeBackspace(self: *Input, alt: bool, ctrl: bool) !void {
         if (ctrl and !alt) {
-            _ = try std.posix.write(self.pty_master, "\x08"); // Ctrl+H
+            _ = try self.pty.write("\x08"); // Ctrl+H
         } else {
-            _ = try std.posix.write(self.pty_master, "\x7F"); // DEL
+            _ = try self.pty.write("\x7F"); // DEL
         }
     }
 
     /// 写入删除
     fn writeDelete(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[3~" else if (ctrl) "\x1B[3;5~" else "\x1B[3~";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入箭头键
@@ -163,25 +166,25 @@ pub const Input = struct {
     /// 写入 Home 键
     fn writeHome(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[1;3H" else if (ctrl) "\x1B[1;5H" else "\x1B[H";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入 End 键
     fn writeEnd(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[1;3F" else if (ctrl) "\x1B[1;5F" else "\x1B[F";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入 PageUp 键
     fn writePageUp(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[5;3~" else if (ctrl) "\x1B[5;5~" else "\x1B[5~";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入 PageDown 键
     fn writePageDown(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[6;3~" else if (ctrl) "\x1B[6;5~" else "\x1B[6~";
-        _ = try std.posix.write(self.pty_master, seq);
+        _ = try self.pty.write(seq);
     }
 
     /// 写入功能键
@@ -206,21 +209,23 @@ pub const Input = struct {
             10 => "[21~",
             11 => "[23~",
             12 => "[24~",
+            else => return,
         };
 
         // 应用修饰符
         var seq: [32]u8 = undefined;
-        const len = if (modifiers > 0)
-            std.fmt.bufPrint(&seq, "\x1B[{s}{s}", .{ modifiers, base_seq })
+        const formatted_seq = if (modifiers > 0)
+            try std.fmt.bufPrint(&seq, "\x1B[{d}{s}", .{ modifiers, base_seq })
         else
-            std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq});
+            try std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq});
 
-        _ = try std.posix.write(self.pty_master, seq[0..len]);
+        _ = try self.pty.write(formatted_seq);
     }
 
     /// 写入可打印字符
     fn writePrintable(self: *Input, c: u8, alt: bool, ctrl: bool, shift: bool) !void {
         _ = shift;
+        std.log.info("writePrintable: char='{c}' ({d}), alt={any}, ctrl={any}", .{ c, c, alt, ctrl });
         if (ctrl) {
             // Ctrl + 字符
             const ctrl_char = c & 0x1F; // 只使用低5位
@@ -229,11 +234,11 @@ pub const Input = struct {
         } else if (alt) {
             // Alt + 字符
             const seq = [_]u8{ 0x1B, c };
-            _ = try std.posix.write(self.pty_master, &seq);
+            _ = try self.pty.write(&seq);
         } else {
             // 普通字符
             const seq = [_]u8{c};
-            _ = try std.posix.write(self.pty_master, &seq);
+            _ = try self.pty.write(&seq);
         }
     }
 };

@@ -103,8 +103,92 @@ pub const Parser = struct {
             return;
         }
 
-        // 普通字符 - 由 terminal 模块处理
+        // 普通字符 - 写入到屏幕
         self.term.lastc = c;
+        try self.writeChar(c);
+    }
+
+    /// 写入字符到屏幕
+    fn writeChar(self: *Parser, u: u21) !void {
+        const width = @import("unicode.zig").runeWidth(u);
+
+        // 检查自动换行
+        if (self.term.mode.wrap and self.term.c.state == .wrap_next) {
+            if (width > 0) {
+                try self.newLine();
+            }
+            self.term.c.state = .default;
+        }
+
+        // 检查是否需要换行
+        if (self.term.c.x + width > self.term.col) {
+            if (self.term.mode.wrap) {
+                try self.newLine();
+            } else {
+                self.term.c.x = @max(self.term.c.x, width) - width;
+            }
+        }
+
+        // 限制光标位置
+        if (self.term.c.x >= self.term.col) {
+            try self.newLine();
+            self.term.c.x = 0;
+        }
+
+        // 写入字符
+        if (self.term.line) |lines| {
+            if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
+                var glyph = self.term.c.attr;
+                glyph.u = u;
+                if (width == 2) {
+                    glyph.attr.wide = true;
+                }
+                lines[self.term.c.y][self.term.c.x] = glyph;
+            }
+
+            // 移动光标 - 处理宽字符
+            if (width == 2 and self.term.c.x + 1 < self.term.col) {
+                self.term.c.x += 2;
+                if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
+                    var dummy = self.term.c.attr;
+                    dummy.u = 0;
+                    dummy.attr.wide_dummy = true;
+                    lines[self.term.c.y][self.term.c.x - 1] = dummy;
+                }
+            } else if (width > 0) {
+                self.term.c.x += width;
+            }
+        }
+
+        // 设置脏标记
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) {
+                dirty[self.term.c.y] = true;
+            }
+        }
+    }
+
+    /// 新行
+    fn newLine(self: *Parser) !void {
+        self.term.c.y += 1;
+        if (self.term.c.y > self.term.bot) {
+            self.term.c.y = self.term.bot;
+            if (self.term.line) |lines| {
+                // 滚动屏幕
+                var y = self.term.top;
+                while (y < self.term.bot) : (y += 1) {
+                    if (y + 1 < lines.len) {
+                        @memcpy(lines[y], lines[y + 1]);
+                    }
+                }
+                // 清除最后一行
+                var clear_glyph = self.term.c.attr;
+                clear_glyph.u = ' ';
+                for (0..self.term.col) |x| {
+                    lines[self.term.bot][x] = clear_glyph;
+                }
+            }
+        }
     }
 
     /// 处理控制字符

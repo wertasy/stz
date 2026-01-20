@@ -16,8 +16,64 @@ pub fn decode(utf8_bytes: []const u8) Utf8Error!u21 {
         return error.InvalidUtf8;
     }
 
-    // 使用 Zig 标准库的 utf8Decode
-    return utf8.utf8Decode(utf8_bytes) catch error.InvalidUtf8;
+    // 检查字节长度是否足够
+    const needed_len = utf8ByteLength(utf8_bytes[0]);
+    if (needed_len == 0 or needed_len > utf8_bytes.len) {
+        return error.InvalidUtf8;
+    }
+
+    // 手动解码以避免标准库的断言问题
+    return utf8DecodeManual(utf8_bytes[0..needed_len]);
+}
+
+/// 手动 UTF-8 解码实现
+fn utf8DecodeManual(utf8_bytes: []const u8) Utf8Error!u21 {
+    const len = utf8_bytes.len;
+    const b0 = utf8_bytes[0];
+
+    if (len == 1) {
+        // 0xxxxxxx
+        return b0;
+    } else if (len == 2) {
+        // 110xxxxx 10xxxxxx
+        if (b0 & 0xE0 != 0xC0) return error.InvalidUtf8;
+        const b1 = utf8_bytes[1];
+        if (b1 & 0xC0 != 0x80) return error.InvalidUtf8;
+        const codepoint = (@as(u21, b0 & 0x1F) << 6) | @as(u21, b1 & 0x3F);
+        // 检查过短编码
+        if (codepoint < 0x80) return error.OverlongEncoding;
+        return codepoint;
+    } else if (len == 3) {
+        // 1110xxxx 10xxxxxx 10xxxxxx
+        if (b0 & 0xF0 != 0xE0) return error.InvalidUtf8;
+        const b1 = utf8_bytes[1];
+        const b2 = utf8_bytes[2];
+        if (b1 & 0xC0 != 0x80) return error.InvalidUtf8;
+        if (b2 & 0xC0 != 0x80) return error.InvalidUtf8;
+        const codepoint = (@as(u21, b0 & 0x0F) << 12) | (@as(u21, b1 & 0x3F) << 6) | @as(u21, b2 & 0x3F);
+        // 检查过短编码
+        if (codepoint < 0x800) return error.OverlongEncoding;
+        // 检查代理区
+        if (codepoint >= 0xD800 and codepoint <= 0xDFFF) return error.InvalidCodepoint;
+        return codepoint;
+    } else if (len == 4) {
+        // 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+        if (b0 & 0xF8 != 0xF0) return error.InvalidUtf8;
+        const b1 = utf8_bytes[1];
+        const b2 = utf8_bytes[2];
+        const b3 = utf8_bytes[3];
+        if (b1 & 0xC0 != 0x80) return error.InvalidUtf8;
+        if (b2 & 0xC0 != 0x80) return error.InvalidUtf8;
+        if (b3 & 0xC0 != 0x80) return error.InvalidUtf8;
+        const codepoint = (@as(u21, b0 & 0x07) << 18) | (@as(u21, b1 & 0x3F) << 12) | (@as(u21, b2 & 0x3F) << 6) | @as(u21, b3 & 0x3F);
+        // 检查过短编码
+        if (codepoint < 0x10000) return error.OverlongEncoding;
+        // 检查超出 Unicode 范围
+        if (codepoint > 0x10FFFF) return error.InvalidCodepoint;
+        return codepoint;
+    } else {
+        return error.InvalidUtf8;
+    }
 }
 
 /// 将 Unicode 码点编码为 UTF-8 字节序列

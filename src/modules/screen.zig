@@ -22,20 +22,24 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
     term.allocator = allocator;
 
     // 分配主屏幕
-    term.line = try allocator.alloc([]Glyph, row);
-    errdefer allocator.free(term.line);
+    const line_buf = try allocator.alloc([]Glyph, row);
+    errdefer allocator.free(line_buf);
+    term.line = line_buf;
 
     // 分配备用屏幕
-    term.alt = try allocator.alloc([]Glyph, row);
-    errdefer allocator.free(term.alt);
+    const alt_buf = try allocator.alloc([]Glyph, row);
+    errdefer allocator.free(alt_buf);
+    term.alt = alt_buf;
 
     // 分配脏标记
-    term.dirty = try allocator.alloc(bool, row);
-    errdefer allocator.free(term.dirty);
+    const dirty_buf = try allocator.alloc(bool, row);
+    errdefer allocator.free(dirty_buf);
+    term.dirty = dirty_buf;
 
     // 分配制表符
-    term.tabs = try allocator.alloc(bool, col);
-    errdefer allocator.free(term.tabs);
+    const tabs_buf = try allocator.alloc(bool, col);
+    errdefer allocator.free(tabs_buf);
+    term.tabs = tabs_buf;
 
     // 初始化每一行
     for (0..row) |y| {

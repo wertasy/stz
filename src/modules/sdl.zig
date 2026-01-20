@@ -20,6 +20,13 @@ pub const SDL_RenderClear = c.SDL_RenderClear;
 pub const SDL_CreateTexture = c.SDL_CreateTexture;
 pub const SDL_DestroyTexture = c.SDL_DestroyTexture;
 pub const SDL_RenderCopy = c.SDL_RenderCopy;
+pub const SDL_CreateRGBSurfaceFrom = c.SDL_CreateRGBSurfaceFrom;
+pub const SDL_FreeSurface = c.SDL_FreeSurface;
+pub const SDL_CreateTextureFromSurface = c.SDL_CreateTextureFromSurface;
+pub const SDL_QueryTexture = c.SDL_QueryTexture;
+pub const SDL_SetTextureBlendMode = c.SDL_SetTextureBlendMode;
+pub const SDL_SetTextureColorMod = c.SDL_SetTextureColorMod;
+pub const SDL_BLENDMODE_BLEND = c.SDL_BLENDMODE_BLEND;
 
 pub const SDL_Event = c.SDL_Event;
 pub const SDL_Window = c.SDL_Window;

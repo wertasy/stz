@@ -154,6 +154,7 @@ zig build -Drelease-fast && perf record -g ./zig-out/bin/stz && perf report
 
 ## 参考资料
 
+- 原始 C 版本 st 项目代码路径：/home/10292721@zte.intra/Github/suckless/st
 - Zig 0.15.2 标准库路径：/opt/zig-x86_64-linux-0.15.2/lib/std
 - [Zig 学习资源](https://ziglang.org/learn/)
 - [SDL2 文档](https://wiki.libsdl.org/CategoryAPI)

@@ -3,6 +3,7 @@
 
 const std = @import("std");
 const sdl = @import("sdl.zig");
+const ft = @import("ft.zig");
 const types = @import("types.zig");
 const config = @import("config.zig");
 
@@ -13,6 +14,8 @@ const Window = @import("window.zig").Window;
 pub const RendererError = error{
     CreateTextureFailed,
     RenderFailed,
+    FontInitFailed,
+    FontLoadFailed,
 };
 
 /// 颜色映射表
@@ -65,6 +68,12 @@ const ColorTable = struct {
     }
 };
 
+const CacheKey = struct {
+    u: u21,
+    bold: bool,
+    italic: bool,
+};
+
 /// 渲染器结构
 pub const Renderer = struct {
     window: *Window,
@@ -75,18 +84,53 @@ pub const Renderer = struct {
     char_width: u32 = 0,
     char_height: u32 = 0,
 
+    ft_lib: ft.FT_Library = null,
+    ft_face: ft.FT_Face = null,
+    glyph_cache: std.AutoHashMap(CacheKey, *sdl.SDL_Texture),
+
     /// 初始化渲染器
     pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
-        return Renderer{
+        var renderer = Renderer{
             .window = window,
             .allocator = allocator,
             .char_width = window.cell_width,
             .char_height = window.cell_height,
+            .glyph_cache = std.AutoHashMap(CacheKey, *sdl.SDL_Texture).init(allocator),
         };
+
+        // 初始化 FreeType
+        if (ft.FT_Init_FreeType(&renderer.ft_lib) != 0) {
+            return error.FontInitFailed;
+        }
+
+        // 加载字体
+        // 简单起见，这里先硬编码一个路径，实际应该用 FontConfig
+        const font_path = "/usr/share/fonts/dejavu/DejaVuSansMono.ttf";
+        if (ft.FT_New_Face(renderer.ft_lib, font_path, 0, &renderer.ft_face) != 0) {
+            // 尝试备用字体
+            if (ft.FT_New_Face(renderer.ft_lib, "/usr/share/fonts/liberation-mono/LiberationMono-Regular.ttf", 0, &renderer.ft_face) != 0) {
+                std.log.err("Failed to load font: {s}\n", .{font_path});
+                return error.FontLoadFailed;
+            }
+        }
+
+        // 设置字体大小
+        _ = ft.FT_Set_Pixel_Sizes(renderer.ft_face, 0, @intCast(config.Config.font.size));
+
+        return renderer;
     }
 
     /// 清理渲染器
     pub fn deinit(self: *Renderer) void {
+        var it = self.glyph_cache.iterator();
+        while (it.next()) |entry| {
+            sdl.SDL_DestroyTexture(entry.value_ptr.*);
+        }
+        self.glyph_cache.deinit();
+
+        _ = ft.FT_Done_Face(self.ft_face);
+        _ = ft.FT_Done_FreeType(self.ft_lib);
+
         if (self.font_texture) |tex| {
             sdl.SDL_DestroyTexture(tex);
         }
@@ -102,9 +146,10 @@ pub const Renderer = struct {
 
         // 渲染每个字符
         for (0..@min(term.row, screen.?.len)) |y| {
-            if (term.dirty) |dirty| {
-                if (y >= dirty.len or !dirty[y]) continue;
-            }
+            // 暂时禁用 dirty 检查，强制重绘，以修复黑屏问题
+            // if (term.dirty) |dirty| {
+            //     if (y >= dirty.len or !dirty[y]) continue;
+            // }
 
             for (0..@min(term.col, screen.?[y].len)) |x| {
                 const glyph = screen.?[y][x];
@@ -126,9 +171,82 @@ pub const Renderer = struct {
         }
     }
 
+    /// 获取或创建字形纹理
+    fn getGlyphTexture(self: *Renderer, u: u21, bold: bool, italic: bool) !?*sdl.SDL_Texture {
+        const key = CacheKey{ .u = u, .bold = bold, .italic = italic };
+        if (self.glyph_cache.get(key)) |tex| {
+            return tex;
+        }
+
+        // 获取字符索引
+        const index = ft.FT_Get_Char_Index(self.ft_face, u);
+
+        // 加载字形
+        // TODO: 处理粗体和斜体 (FT_Outline_Embolden / FT_Matrix)
+        if (ft.FT_Load_Glyph(self.ft_face, index, ft.FT_LOAD_RENDER) != 0) {
+            return null;
+        }
+
+        const bitmap = ft.getBitmap(self.ft_face);
+
+        if (bitmap.width == 0 or bitmap.rows == 0) {
+            return null;
+        }
+
+        // 创建临时缓冲区 (ARGB8888)
+        const width = bitmap.width;
+        const height = bitmap.rows;
+        const size = width * height * 4;
+        const buffer = try self.allocator.alloc(u8, size);
+        defer self.allocator.free(buffer);
+
+        // 转换位图 (Grayscale -> ARGB)
+        for (0..height) |r| {
+            for (0..width) |c_idx| {
+                const src_idx = r * @as(usize, @intCast(bitmap.pitch)) + c_idx;
+                const dst_idx = (r * width + c_idx) * 4;
+                const alpha = bitmap.buffer[src_idx];
+
+                buffer[dst_idx + 0] = 255; // B
+                buffer[dst_idx + 1] = 255; // G
+                buffer[dst_idx + 2] = 255; // R
+                buffer[dst_idx + 3] = alpha; // A
+            }
+        }
+
+        // 创建表面
+        // rmask, gmask, bmask, amask for ARGB8888 (Little Endian: B G R A)
+        // Buffer layout: Byte 0 = B, Byte 1 = G, Byte 2 = R, Byte 3 = A
+        // Little Endian u32: 0xAARRGGBB
+        const surface = sdl.SDL_CreateRGBSurfaceFrom(
+            buffer.ptr,
+            @intCast(width),
+            @intCast(height),
+            32,
+            @intCast(width * 4),
+            0x00FF0000, // R mask (Byte 2)
+            0x0000FF00, // G mask (Byte 1)
+            0x000000FF, // B mask (Byte 0)
+            0xFF000000, // A mask (Byte 3)
+        );
+        if (surface == null) return error.CreateTextureFailed;
+        defer sdl.SDL_FreeSurface(surface);
+
+        // 创建纹理
+        const texture = sdl.SDL_CreateTextureFromSurface(self.window.renderer, surface) orelse return error.CreateTextureFailed;
+
+        // 设置混合模式
+        _ = sdl.SDL_SetTextureBlendMode(texture, sdl.SDL_BLENDMODE_BLEND);
+
+        // 缓存纹理
+        try self.glyph_cache.put(key, texture);
+
+        return texture;
+    }
+
     /// 绘制单元格背景
     fn drawCellBg(self: *Renderer, x: i32, y: i32, rgb: [3]u8) !void {
-        const renderer = self.window.renderer orelse return;
+        const renderer = self.window.renderer;
 
         const rect = sdl.SDL_Rect{
             .x = x,
@@ -141,60 +259,49 @@ pub const Renderer = struct {
         _ = sdl.SDL_RenderFillRect(renderer, &rect);
     }
 
-    /// 绘制字符（简化版本 - 需要字体支持）
+    /// 绘制字符
     fn drawGlyph(self: *Renderer, x: i32, y: i32, glyph: Glyph, rgb: [3]u8) !void {
-        const renderer = self.window.renderer orelse return;
+        const renderer = self.window.renderer;
+
+        // 获取字形纹理
+        const tex_opt = try self.getGlyphTexture(glyph.u, glyph.attr.bold, glyph.attr.italic);
+        if (tex_opt) |texture| {
+            _ = sdl.SDL_SetTextureColorMod(texture, rgb[0], rgb[1], rgb[2]);
+
+            var w: c_int = 0;
+            var h: c_int = 0;
+            _ = sdl.SDL_QueryTexture(texture, null, null, &w, &h);
+
+            const cell_w = @as(c_int, @intCast(self.char_width));
+            const cell_h = @as(c_int, @intCast(self.char_height));
+
+            // 垂直居中
+            const dst_x = x + @divTrunc(cell_w - w, 2);
+            const dst_y = y + @divTrunc(cell_h - h, 2);
+
+            const dst = sdl.SDL_Rect{
+                .x = dst_x,
+                .y = dst_y,
+                .w = w,
+                .h = h,
+            };
+
+            _ = sdl.SDL_RenderCopy(renderer, texture, null, &dst);
+        }
 
         _ = sdl.SDL_SetRenderDrawColor(renderer, rgb[0], rgb[1], rgb[2], 255);
 
-        const char_w: i32 = @intCast(self.char_width);
-        const char_h: i32 = @intCast(self.char_height);
-
-        // 根据属性调整渲染
-        if (glyph.attr.bold) {
-            // 粗体：绘制稍大的矩形
-            const bold_rect = sdl.SDL_Rect{
-                .x = x - 1,
-                .y = y - 1,
-                .w = char_w + 2,
-                .h = char_h + 2,
-            };
-            _ = sdl.SDL_RenderFillRect(renderer, &bold_rect);
-        }
-
         if (glyph.attr.underline) {
             // 下划线
-            const underline_y = y + char_h - 3;
+            const char_h: i32 = @intCast(self.char_height);
+            const underline_y = y + char_h - 2;
             const underline_rect = sdl.SDL_Rect{
                 .x = x,
                 .y = underline_y,
-                .w = char_w,
-                .h = 3,
+                .w = @intCast(self.char_width),
+                .h = 1,
             };
             _ = sdl.SDL_RenderFillRect(renderer, &underline_rect);
-        }
-
-        // 绘制字符主体
-        const char_rect = sdl.SDL_Rect{
-            .x = x + 2,
-            .y = y + 2,
-            .w = char_w - 4,
-            .h = char_h - 4,
-        };
-        _ = sdl.SDL_RenderFillRect(renderer, &char_rect);
-
-        // 反色模式
-        if (glyph.attr.reverse) {
-            // 反色：交换前景和背景
-            const rev_rect = sdl.SDL_Rect{
-                .x = x,
-                .y = y,
-                .w = char_w,
-                .h = char_h,
-            };
-            const rev_rgb = ColorTable.getIndexColor(glyph.bg);
-            _ = sdl.SDL_SetRenderDrawColor(renderer, rev_rgb[0], rev_rgb[1], rev_rgb[2], 255);
-            _ = sdl.SDL_RenderFillRect(renderer, &rev_rect);
         }
     }
 
@@ -217,8 +324,8 @@ pub const Renderer = struct {
                     .w = @intCast(self.char_width),
                     .h = @intCast(self.char_height),
                 };
-                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer.?, cursor_color[0], cursor_color[1], cursor_color[2], 255);
-                _ = sdl.SDL_RenderFillRect(self.window.renderer.?, &rect);
+                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer, cursor_color[0], cursor_color[1], cursor_color[2], 255);
+                _ = sdl.SDL_RenderFillRect(self.window.renderer, &rect);
             },
             3, 4 => { // 闪烁下划线/稳定下划线
                 const char_h: i32 = @intCast(self.char_height);
@@ -229,30 +336,19 @@ pub const Renderer = struct {
                     .w = @intCast(self.char_width),
                     .h = 3,
                 };
-                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer.?, cursor_color[0], cursor_color[1], cursor_color[2], 255);
-                _ = sdl.SDL_RenderFillRect(self.window.renderer.?, &rect);
+                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer, cursor_color[0], cursor_color[1], cursor_color[2], 255);
+                _ = sdl.SDL_RenderFillRect(self.window.renderer, &rect);
             },
             5, 6 => { // 闪烁竖线/稳定竖线
-                const bar_width: i32 = @intCast(config.Config.cursor.cursorthickness);
+                const bar_width: i32 = @intCast(config.Config.cursor.thickness);
                 const rect = sdl.SDL_Rect{
                     .x = x,
                     .y = y,
                     .w = bar_width,
                     .h = @intCast(self.char_height),
                 };
-                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer.?, cursor_color[0], cursor_color[1], cursor_color[2], 255);
-                _ = sdl.SDL_RenderFillRect(self.window.renderer.?, &rect);
-            },
-            5, 6 => { // 闪烁竖线/稳定竖线
-                const bar_width: i32 = @intCast(config.Config.cursor.cursorthickness);
-                const rect = sdl.SDL_Rect{
-                    .x = x,
-                    .y = y,
-                    .w = bar_width,
-                    .h = @intCast(self.char_height),
-                };
-                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer.?, cursor_color[0], cursor_color[1], cursor_color[2], 255);
-                _ = sdl.SDL_RenderFillRect(self.window.renderer.?, &rect);
+                _ = sdl.SDL_SetRenderDrawColor(self.window.renderer, cursor_color[0], cursor_color[1], cursor_color[2], 255);
+                _ = sdl.SDL_RenderFillRect(self.window.renderer, &rect);
             },
             else => {},
         }

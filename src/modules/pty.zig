@@ -6,6 +6,7 @@ const builtin = @import("builtin");
 const c = @cImport({
     @cInclude("pty.h");
     @cInclude("sys/ioctl.h");
+    @cInclude("sys/wait.h");
     @cInclude("stdlib.h");
     @cInclude("unistd.h");
     @cInclude("termios.h");
@@ -107,6 +108,7 @@ pub const PTY = struct {
 
     /// 写入数据
     pub fn write(self: *PTY, data: []const u8) !usize {
+        std.log.info("PTY write: {d} bytes: {any}", .{ data.len, data });
         var written: usize = 0;
         while (written < data.len) {
             const n = c.write(self.master, data[written..].ptr, data.len - written);

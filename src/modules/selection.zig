@@ -86,7 +86,7 @@ pub const Selector = struct {
 
         // 吸附处理
         self.snap(&self.selection.nb, -1);
-        self.snap(&self.selection.ne.x, 1);
+        self.snap(&self.selection.ne, 1);
     }
 
     /// 吸附到单词或行
@@ -98,7 +98,6 @@ pub const Selector = struct {
             .line => {
                 point.*.x = if (direction < 0) 0 else config.Config.window.cols - 1;
             },
-            else => {},
         }
     }
 
@@ -188,7 +187,14 @@ pub const Selector = struct {
     /// 清除选择
     pub fn clear(self: *Selector) void {
         self.selection.mode = .idle;
-        self.selection.ob.x = usize.max;
+        self.selection.ob.x = std.math.maxInt(usize);
+    }
+
+    /// 清除高亮标记
+    pub fn clearHighlights(self: *Selector, term: *types.Term) void {
+        _ = self;
+        _ = term;
+        // TODO: 清除脏标记或重绘选择区域
     }
 
     /// 复制到系统剪贴板

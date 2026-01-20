@@ -68,8 +68,10 @@ pub const TermMode = packed struct(u32) {
     brckt_paste: bool = false,
     num_lock: bool = false,
     blink: bool = false, // 光标/文本闪烁
-    focused: bool = false, // 窗口焦点状态
-    _padding: u10 = 0,
+    focused: bool = false, // 窗口焦点状态 (State)
+    focused_report: bool = false, // CSI ? 1004 h/l - 焦点报告模式 (Mode)
+    sync_update: bool = false, // CSI ? 2026 h/l - 同步更新模式
+    _padding: u8 = 0,
 };
 
 /// 字符集

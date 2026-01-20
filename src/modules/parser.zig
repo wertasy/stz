@@ -66,10 +66,11 @@ pub const Parser = struct {
                 self.term.esc.str = false;
                 self.term.esc.str_end = true;
                 try self.strHandle();
+                if (c != 0x1B) return;
             } else {
                 try self.strPut(c);
+                return;
             }
-            return;
         }
 
         // 处理控制字符
@@ -1224,6 +1225,7 @@ pub const Parser = struct {
 
         self.csi.narg = 0;
         self.csi.priv = 0;
+        self.csi.mode[0] = 0;
         self.csi.mode[1] = 0;
         // 重置 carg
         for (&self.csi.carg) |*row| {
@@ -1234,9 +1236,9 @@ pub const Parser = struct {
 
         if (self.csi.len == 0) return;
 
-        // 检查私有标志 '?'
-        if (self.csi.buf[p] == '?') {
-            self.csi.priv = 1;
+        // 检查私有标志 '?', '>', '<', '=' 等
+        if (!std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
+            self.csi.priv = self.csi.buf[p];
             p += 1;
         }
 
@@ -1244,7 +1246,7 @@ pub const Parser = struct {
 
         while (p < self.csi.len) {
             if (!std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
-                break; // 到达命令字符
+                break; // 到达中间字符或命令字符
             }
 
             var val: i64 = 0;
@@ -1291,9 +1293,15 @@ pub const Parser = struct {
             if (sep == ';') {
                 p += 1;
             } else if (sep != ':') {
-                // 如果不是分隔符，可能是命令字符或 ' ' 等
+                // 如果不是分隔符，可能是中间字符 (0x20-0x2F) 或命令字符 (0x40-0x7E)
                 break;
             }
+        }
+
+        // 处理中间字符 (如果存在)
+        if (p < self.csi.len and self.csi.buf[p] >= 0x20 and self.csi.buf[p] <= 0x2F) {
+            self.csi.mode[1] = self.csi.buf[p];
+            p += 1;
         }
 
         // 获取模式字符 (最后一个字符)
@@ -1448,9 +1456,9 @@ pub const Parser = struct {
                 const n = @as(i32, @intCast(@max(1, self.csi.arg[0])));
                 var i: i32 = 0;
                 while (i < n) : (i += 1) {
-                    try self.putTab();
                     // 后退一个制表位
                     var x = self.term.c.x;
+                    if (x > 0) x -= 1;
                     while (x > 0) : (x -= 1) {
                         if (self.term.tabs) |tabs| {
                             if (x < tabs.len and tabs[x]) {
@@ -1673,7 +1681,9 @@ pub const Parser = struct {
                 1000 => self.term.mode.mouse = set, // X10 鼠标报告
                 1002 => self.term.mode.mouse_btn = set, // 鼠标按键报告
                 1003 => self.term.mode.mouse_many = set, // 所有鼠标移动报告
+                1004 => self.term.mode.focused_report = set, // 焦点报告模式
                 1006 => self.term.mode.mouse_sgr = set, // SGR 鼠标编码
+                2026 => self.term.mode.sync_update = set, // 同步更新模式
                 47 => { // 切换备用屏幕缓冲区
                     if (self.term.alt != null) {
                         // 如果当前在备用屏幕且要退出，先清除

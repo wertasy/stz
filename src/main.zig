@@ -110,6 +110,7 @@ pub fn main() !u8 {
 
     var quit: bool = false;
     var mouse_pressed: bool = false;
+    var pressed_button: u32 = 0;
     var mouse_x: usize = 0;
     var mouse_y: usize = 0;
 
@@ -207,19 +208,22 @@ pub fn main() !u8 {
                             selector.clear();
                             screen.setFullDirty(&terminal.term);
                         }
-                        if (window.ic) |ic| {
+
+                        // 优先处理特殊按键（Backspace, Delete, 方向键等）
+                        // 这样可以避免 XIM (Xutf8LookupString) 将 Backspace 转换为 \x08 (Ctrl-H)
+                        if (try input.handleKey(&ev.xkey)) {
+                            // 如果 handleKey 处理了该按键，直接跳过
+                        } else if (window.ic) |ic| {
                             var status: x11.C.Status = undefined;
                             var buf: [128]u8 = undefined;
                             const len = x11.Xutf8LookupString(ic, &ev.xkey, &buf, buf.len, null, &status);
-                            if (len > 0) {
-                                _ = try pty.write(buf[0..@intCast(len)]);
-                            } else {
-                                // If Xutf8LookupString returns nothing, fallback to handleKey
-                                // This ensures control keys like Ctrl+C still work
-                                try input.handleKey(&ev.xkey);
+                            if (status == x11.C.XLookupChars or status == x11.C.XLookupBoth) {
+                                if (len > 0) {
+                                    _ = try pty.write(buf[0..@intCast(len)]);
+                                }
                             }
                         } else {
-                            try input.handleKey(&ev.xkey);
+                            // 备选方案
                         }
                     }
                 },
@@ -254,16 +258,20 @@ pub fn main() !u8 {
                             });
 
                             // 重绘
-                            try renderer.render(&terminal.term, &selector);
-                            try renderer.renderCursor(&terminal.term);
-                            window.present();
+                            if (!terminal.term.mode.sync_update) {
+                                try renderer.render(&terminal.term, &selector);
+                                try renderer.renderCursor(&terminal.term);
+                                window.present();
+                            }
                         }
                     }
                 },
                 x11.Expose => {
-                    try renderer.render(&terminal.term, &selector);
-                    try renderer.renderCursor(&terminal.term);
-                    window.present();
+                    if (!terminal.term.mode.sync_update) {
+                        try renderer.render(&terminal.term, &selector);
+                        try renderer.renderCursor(&terminal.term);
+                        window.present();
+                    }
                 },
                 x11.ButtonPress => {
                     const e = ev.xbutton;
@@ -289,6 +297,21 @@ pub fn main() !u8 {
                         continue; // 跳到下一个事件，不处理选择
                     }
 
+                    // 鼠标报告优先，除非按下 Shift 键强制进行终端选择
+                    if (terminal.term.mode.mouse and !shift) {
+                        // 如果当前有本地选择，点击时清除它
+                        if (selector.selection.mode != .idle) {
+                            selector.clear();
+                            screen.setFullDirty(&terminal.term);
+                        }
+                        try input.sendMouseReport(cx, cy, e.button, e.state, 0);
+                        if (e.button >= 1 and e.button <= 3) {
+                            mouse_pressed = true;
+                            pressed_button = e.button;
+                        }
+                        continue;
+                    }
+
                     if (e.button == x11.Button1) {
                         // 检测双击/三击
                         const now = std.time.milliTimestamp();
@@ -308,6 +331,7 @@ pub fn main() !u8 {
 
                         // Left click: start selection
                         mouse_pressed = true;
+                        pressed_button = e.button;
                         mouse_x = cx;
                         mouse_y = cy;
                         // Clear previous selection
@@ -325,10 +349,11 @@ pub fn main() !u8 {
                     } else if (e.button == x11.Button3) {
                         // Right click: extend selection or copy
                         mouse_pressed = true;
+                        pressed_button = e.button;
                         selector.start(cx, cy, .none);
                     } else if (e.button == x11.Button4) { // Scroll Up
                         if (terminal.term.mode.mouse and !shift) {
-                            try input.sendMouseReport(cx, cy, e.button, e.state, false);
+                            try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
                             selector.clear();
                             terminal.kscrollUp(3);
@@ -338,7 +363,7 @@ pub fn main() !u8 {
                         }
                     } else if (e.button == x11.Button5) { // Scroll Down
                         if (terminal.term.mode.mouse and !shift) {
-                            try input.sendMouseReport(cx, cy, e.button, e.state, false);
+                            try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
                             selector.clear();
                             terminal.kscrollDown(3);
@@ -349,7 +374,7 @@ pub fn main() !u8 {
                     } else {
                         // Check if mouse reporting is enabled
                         if (terminal.term.mode.mouse) {
-                            try input.sendMouseReport(cx, cy, e.button, e.state, false);
+                            try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         }
                     }
                 },
@@ -362,14 +387,19 @@ pub fn main() !u8 {
                     const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
+                    const shift = (e.state & x11.ShiftMask) != 0;
 
-                    if (terminal.term.mode.mouse) {
-                        try input.sendMouseReport(cx, cy, e.button, e.state, true);
+                    if (terminal.term.mode.mouse and !shift) {
+                        try input.sendMouseReport(cx, cy, e.button, e.state, 1);
+                        mouse_pressed = false;
+                        pressed_button = 0;
+                        continue;
                     }
 
                     if (mouse_pressed) {
                         const was_dragging = (selector.selection.mode == .ready);
                         mouse_pressed = false;
+                        pressed_button = 0;
 
                         // 结束选择扩展
                         selector.extend(&terminal.term, cx, cy, .regular, true);
@@ -387,16 +417,22 @@ pub fn main() !u8 {
                     }
                 },
                 x11.MotionNotify => {
-                    if (mouse_pressed) {
-                        const e = ev.xmotion;
-                        const cell_w = @as(c_int, @intCast(window.cell_width));
-                        const cell_h = @as(c_int, @intCast(window.cell_height));
-                        const border = @as(i32, @intCast(config.Config.window.border_pixels));
-                        const x = @as(usize, @intCast(@divTrunc(@max(0, e.x - border), cell_w)));
-                        const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
-                        const cx = @min(x, terminal.term.col - 1);
-                        const cy = @min(y, terminal.term.row - 1);
+                    const e = ev.xmotion;
+                    const cell_w = @as(c_int, @intCast(window.cell_width));
+                    const cell_h = @as(c_int, @intCast(window.cell_height));
+                    const border = @as(i32, @intCast(config.Config.window.border_pixels));
+                    const x = @as(usize, @intCast(@divTrunc(@max(0, e.x - border), cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
+                    const cx = @min(x, terminal.term.col - 1);
+                    const cy = @min(y, terminal.term.row - 1);
+                    const shift = (e.state & x11.ShiftMask) != 0;
 
+                    if (terminal.term.mode.mouse and !shift) {
+                        try input.sendMouseReport(cx, cy, pressed_button, e.state, 2);
+                        continue;
+                    }
+
+                    if (mouse_pressed) {
                         selector.extend(&terminal.term, cx, cy, .regular, false);
                         screen.setFullDirty(&terminal.term);
 
@@ -493,6 +529,9 @@ pub fn main() !u8 {
                     std.log.info("FocusIn\n", .{});
                     terminal.term.mode.focused = true;
                     if (window.ic) |ic| x11.XSetICFocus(ic);
+                    if (terminal.term.mode.focused_report) {
+                        _ = pty.write("\x1B[I") catch {};
+                    }
                     try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();
@@ -501,6 +540,9 @@ pub fn main() !u8 {
                     std.log.info("FocusOut\n", .{});
                     terminal.term.mode.focused = false;
                     if (window.ic) |ic| x11.XUnsetICFocus(ic);
+                    if (terminal.term.mode.focused_report) {
+                        _ = pty.write("\x1B[O") catch {};
+                    }
                     try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();
@@ -600,9 +642,11 @@ pub fn main() !u8 {
             }
 
             // 渲染
-            try renderer.render(&terminal.term, &selector);
-            try renderer.renderCursor(&terminal.term);
-            window.present();
+            if (!terminal.term.mode.sync_update) {
+                try renderer.render(&terminal.term, &selector);
+                try renderer.renderCursor(&terminal.term);
+                window.present();
+            }
         }
     }
 

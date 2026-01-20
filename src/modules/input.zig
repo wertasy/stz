@@ -30,10 +30,8 @@ pub const Input = struct {
     }
 
     /// 处理 bracketed paste 模式数据
-    /// 返回: true 表示数据已处理，false 表示数据保留在缓冲区中
     pub fn handleBracketedPaste(self: *Input, data: []const u8) bool {
         if (!self.term.mode.brckt_paste) {
-            // 不在 bracketed paste 模式下，直接写入 PTY
             _ = self.pty.write(data) catch {};
             return true;
         }
@@ -43,7 +41,6 @@ pub const Input = struct {
 
         var i: usize = 0;
         while (i < data.len) {
-            // 检查是否是开始序列
             if (!self.in_bracketed_paste and i + 6 <= data.len and
                 std.mem.eql(u8, data[i .. i + 6], start_seq))
             {
@@ -52,41 +49,32 @@ pub const Input = struct {
                 continue;
             }
 
-            // 检查是否是结束序列
             if (self.in_bracketed_paste and i + 6 <= data.len and
                 std.mem.eql(u8, data[i .. i + 6], end_seq))
             {
                 self.in_bracketed_paste = false;
-
-                // 写入缓冲的内容到 PTY
                 if (self.bracketed_paste_buffer.items.len > 0) {
                     _ = self.pty.write(self.bracketed_paste_buffer.items) catch {};
                     self.bracketed_paste_buffer.clearRetainingCapacity();
                 }
-
                 i += 6;
                 continue;
             }
 
-            // 如果在 bracketed paste 模式下，缓冲数据
             if (self.in_bracketed_paste) {
                 self.bracketed_paste_buffer.append(self.pty.allocator, data[i]) catch {};
             } else {
-                // 不在 bracketed paste 模式下，直接写入 PTY
                 _ = self.pty.write(data[i .. i + 1]) catch {};
             }
-
             i += 1;
         }
-
         return true;
     }
 
     /// 处理键盘事件
-    pub fn handleKey(self: *Input, event: *const x11.C.XKeyEvent) !void {
+    /// 返回: true 表示按键已被特殊处理，false 表示应由输入法继续处理
+    pub fn handleKey(self: *Input, event: *const x11.C.XKeyEvent) !bool {
         var keysym: x11.KeySym = 0;
-
-        // 获取 KeySym (不处理控制键，只处理 Shift)
         keysym = x11.C.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.C.ShiftMask) != 0) 1 else 0);
 
         const state = event.state;
@@ -94,27 +82,22 @@ pub const Input = struct {
         const alt = (state & x11.C.Mod1Mask) != 0;
         const shift = (state & x11.C.ShiftMask) != 0;
 
-        // Log input for debugging
-        // std.log.info("handleKey: keycode={d}, keysym=0x{x}, state={d}, ctrl={}, alt={}, shift={}", .{ event.keycode, keysym, state, ctrl, alt, shift });
-
-        // Handle special keys first (Arrows, F-keys, Home/End, etc.)
+        // 如果是特殊功能键，拦截并处理
         if (try self.handleSpecialKey(keysym, ctrl, alt, shift)) {
-            return;
+            return true;
         }
 
-        // Handle normal characters
-        // Control keys (Ctrl+A..Z, etc) are handled here if not special
-        if (keysym >= 32 and keysym <= 126) {
+        // 处理 Ctrl+字母 等组合键
+        if (ctrl and keysym >= 32 and keysym <= 126) {
             try self.writePrintable(@intCast(keysym), alt, ctrl, shift);
-        } else if (keysym >= 0xA0 and keysym <= 0xFF) {
-            // Latin-1 supplement
-            try self.writePrintable(@intCast(keysym), alt, ctrl, shift);
+            return true;
         }
-        // TODO: Handle UTF-8 input for other keysyms
+
+        // 其他普通字符交给 XIM 处理
+        return false;
     }
 
     fn handleSpecialKey(self: *Input, keysym: x11.KeySym, ctrl: bool, alt: bool, shift: bool) !bool {
-        // X11 KeySym definitions
         const XK_BackSpace = 0xFF08;
         const XK_Tab = 0xFF09;
         const XK_Return = 0xFF0D;
@@ -125,15 +108,13 @@ pub const Input = struct {
         const XK_Up = 0xFF52;
         const XK_Right = 0xFF53;
         const XK_Down = 0xFF54;
-        const XK_Prior = 0xFF55; // PageUp
-        const XK_Next = 0xFF56; // PageDown
+        const XK_Prior = 0xFF55;
+        const XK_Next = 0xFF56;
         const XK_End = 0xFF57;
         const XK_Insert = 0xFF63;
         const XK_ISO_Left_Tab = 0xFE20;
-
         const XK_F1 = 0xFFBE;
         const XK_F12 = 0xFFC9;
-
         const XK_KP_Enter = 0xFF8D;
         const XK_KP_Home = 0xFF95;
         const XK_KP_Left = 0xFF96;
@@ -156,11 +137,11 @@ pub const Input = struct {
 
         switch (keysym) {
             XK_Return => try self.writeReturn(alt),
-            XK_KP_Enter => try self.writeReturn(alt), // Handle KP Enter like Return
+            XK_KP_Enter => try self.writeReturn(alt),
             XK_Escape => try self.writeEsc(),
-            XK_BackSpace => try self.writeBackspace(alt, ctrl),
+            XK_BackSpace => try self.writeBackspace(alt, ctrl, shift),
             XK_Tab => try self.writeTab(alt),
-            XK_ISO_Left_Tab => try self.writeTab(alt), // Shift+Tab usually produces this
+            XK_ISO_Left_Tab => try self.writeTab(alt),
             XK_Delete => try self.writeDelete(alt, ctrl),
             XK_KP_Delete => try self.writeDelete(alt, ctrl),
             XK_Up => try self.writeArrow(alt, 'A', ctrl, shift),
@@ -179,39 +160,30 @@ pub const Input = struct {
             XK_KP_Prior => try self.writePageUp(alt, ctrl),
             XK_Next => try self.writePageDown(alt, ctrl),
             XK_KP_Next => try self.writePageDown(alt, ctrl),
-            XK_Insert => { // TODO: Insert key
-            },
-            XK_KP_Insert => { // TODO: Insert key
-            },
+            XK_Insert => {},
+            XK_KP_Insert => {},
             else => {
                 if (keysym >= XK_F1 and keysym <= XK_F12) {
                     try self.writeFunction(@intCast(keysym - XK_F1 + 1), shift, ctrl, alt);
                     return true;
                 }
-
-                // Keypad Number handling
                 if (keysym >= XK_KP_0 and keysym <= XK_KP_9) {
                     return try self.writeKeypad(keysym, shift, ctrl, alt);
                 }
-                // Keypad Operators
                 if (keysym == XK_KP_Add or keysym == XK_KP_Subtract or keysym == XK_KP_Multiply or
                     keysym == XK_KP_Divide or keysym == XK_KP_Decimal or keysym == XK_KP_Separator)
                 {
                     return try self.writeKeypad(keysym, shift, ctrl, alt);
                 }
-
                 return false;
             },
         }
         return true;
     }
 
-    /// Write Keypad sequence
     fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: bool) !bool {
-        // If Application Keypad Mode is ON
         if (self.term.mode.app_keypad) {
             const XK_KP_0 = 0xFFB0;
-            const XK_KP_9 = 0xFFB9;
             const XK_KP_Multiply = 0xFFAA;
             const XK_KP_Add = 0xFFAB;
             const XK_KP_Separator = 0xFFAC;
@@ -220,7 +192,7 @@ pub const Input = struct {
             const XK_KP_Divide = 0xFFAF;
 
             var c: u8 = 0;
-            if (keysym >= XK_KP_0 and keysym <= XK_KP_9) {
+            if (keysym >= XK_KP_0 and keysym <= 0xFFB9) {
                 c = 'p' + @as(u8, @intCast(keysym - XK_KP_0));
             } else if (keysym == XK_KP_Multiply) {
                 c = 'j';
@@ -237,38 +209,26 @@ pub const Input = struct {
             } else {
                 return false;
             }
-
             var seq: [3]u8 = undefined;
             const s = try std.fmt.bufPrint(&seq, "\x1BO{c}", .{c});
             _ = try self.pty.write(s);
             return true;
         } else {
-            // Numeric Mode: Let it fall through to printable characters?
-            // Usually, these keysyms (XK_KP_0 etc) are NOT in the ASCII range (0xFFB0).
-            // We need to map them to their ASCII equivalents manually if we want them to print numbers.
             const XK_KP_0 = 0xFFB0;
-            const XK_KP_9 = 0xFFB9;
-            const XK_KP_Multiply = 0xFFAA;
-            const XK_KP_Add = 0xFFAB;
-            const XK_KP_Separator = 0xFFAC;
-            const XK_KP_Subtract = 0xFFAD;
-            const XK_KP_Decimal = 0xFFAE;
-            const XK_KP_Divide = 0xFFAF;
-
             var char: u8 = 0;
-            if (keysym >= XK_KP_0 and keysym <= XK_KP_9) {
+            if (keysym >= XK_KP_0 and keysym <= 0xFFB9) {
                 char = '0' + @as(u8, @intCast(keysym - XK_KP_0));
-            } else if (keysym == XK_KP_Multiply) {
+            } else if (keysym == 0xFFAA) {
                 char = '*';
-            } else if (keysym == XK_KP_Add) {
+            } else if (keysym == 0xFFAB) {
                 char = '+';
-            } else if (keysym == XK_KP_Separator) {
+            } else if (keysym == 0xFFAC) {
                 char = ',';
-            } else if (keysym == XK_KP_Subtract) {
+            } else if (keysym == 0xFFAD) {
                 char = '-';
-            } else if (keysym == XK_KP_Decimal) {
+            } else if (keysym == 0xFFAE) {
                 char = '.';
-            } else if (keysym == XK_KP_Divide) {
+            } else if (keysym == 0xFFAF) {
                 char = '/';
             } else {
                 return false;
@@ -278,185 +238,150 @@ pub const Input = struct {
         }
     }
 
-    /// 处理鼠标事件
-    pub fn handleMouse(self: *Input, event: *const x11.C.XButtonEvent) !void {
-        _ = self;
-        _ = event;
-    }
-
-    /// 发送鼠标报告
-    /// x, y: 终端坐标 (0-indexed)
-    /// button: 按钮编号 (1-11)
-    /// state: 修饰符状态
-    /// release: 是否是释放事件
-    pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, release: bool) !void {
-        // 检查是否启用了鼠标报告
+    pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, event_type: u8) !void {
         if (!self.term.mode.mouse) return;
-
         var code: u32 = 0;
-
-        // 按钮编码
-        if (release) {
-            // MODE_MOUSEX10: 不发送按钮释放 (st does this via mouse_x10 check)
-            // Note: self.term.mode doesn't have mouse_x10, it usually maps to certain bits
-            // In stz TermMode, we have mouse, mouse_btn, mouse_motion, etc.
-
-            // 不发送滚轮的释放事件
+        if (event_type == 2) {
+            if (!self.term.mode.mouse_many and !self.term.mode.mouse_btn) return;
+            code = 32;
+            if (button >= 1 and button <= 3) {
+                code += button - 1;
+            } else {
+                code += 3;
+            }
+        } else if (event_type == 1) {
             if (button == 4 or button == 5) return;
-
-            code += 3; // 按钮释放时加 3
+            code = 3;
         } else {
-            // ...
+            if (button >= 4) {
+                code = 64 + (button - 4);
+            } else {
+                code = button - 1;
+            }
         }
-
-        // 添加修饰符
-        if (self.term.mode.mouse_sgr or !self.term.mode.mouse) { // Simplified check
+        if (self.term.mode.mouse_sgr or (x < 223 and y < 223)) {
             if ((state & x11.C.ShiftMask) != 0) code += 4;
-            if ((state & x11.C.Mod1Mask) != 0) code += 8; // Alt
+            if ((state & x11.C.Mod1Mask) != 0) code += 8;
             if ((state & x11.C.ControlMask) != 0) code += 16;
         }
-
-        // 生成报告
         if (self.term.mode.mouse_sgr) {
-            // SGR 格式: ESC[<code;x+1;y+1M/m
-            const ch: u8 = if (release) 'm' else 'M';
-            const s = std.fmt.allocPrint(
-                std.heap.page_allocator,
-                "\x1b[<{d};{d};{d}{c}",
-                .{ code, x + 1, y + 1, ch },
-            ) catch return;
-            defer std.heap.page_allocator.free(s);
+            const ch: u8 = if (event_type == 1) 'm' else 'M';
+            var buf: [64]u8 = undefined;
+            const s = try std.fmt.bufPrint(&buf, "\x1b[<{d};{d};{d}{c}", .{ code, x + 1, y + 1, ch });
             _ = try self.pty.write(s);
         } else if (x < 223 and y < 223) {
-            // URXVT 格式: ESC[M<code+32><x+1+32><y+1+32>
-            const s = std.fmt.allocPrint(
-                std.heap.page_allocator,
-                "\x1b[M{c}{c}{c}",
-                .{
-                    @as(u8, @intCast(32 + code)),
-                    @as(u8, @intCast(32 + x + 1)),
-                    @as(u8, @intCast(32 + y + 1)),
-                },
-            ) catch return;
-            defer std.heap.page_allocator.free(s);
-            _ = try self.pty.write(s);
-        } else {
-            return; // 坐标超出范围
+            var buf: [6]u8 = undefined;
+            buf[0] = 0x1b;
+            buf[1] = '[';
+            buf[2] = 'M';
+            buf[3] = @as(u8, @intCast(32 + code));
+            buf[4] = @as(u8, @intCast(32 + x + 1));
+            buf[5] = @as(u8, @intCast(32 + y + 1));
+            _ = try self.pty.write(&buf);
         }
     }
 
-    /// 写入 ESC 字符
     fn writeEsc(self: *Input) !void {
-        const seq = "\x1B";
-        _ = try self.pty.write(seq);
+        _ = try self.pty.write("\x1B");
     }
 
-    /// 写入回车
     fn writeReturn(self: *Input, alt: bool) !void {
         const seq = if (alt) "\x1BO\r" else "\r";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入制表符
     fn writeTab(self: *Input, alt: bool) !void {
         const seq = if (alt) "\x1BO[Z" else "\t";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入退格
-    fn writeBackspace(self: *Input, alt: bool, ctrl: bool) !void {
-        if (ctrl and !alt) {
-            _ = try self.pty.write("\x08"); // Ctrl+H
+    fn writeBackspace(self: *Input, alt: bool, ctrl: bool, shift: bool) !void {
+        if (shift) {
+            _ = try self.pty.write("\x08"); // Shift+BS 常用作回退一个字符并删除
+        } else if (alt) {
+            _ = try self.pty.write("\x1B\x7F"); // Alt+BS 删除单词
+        } else if (ctrl) {
+            _ = try self.pty.write("\x1B[3;5~"); // Ctrl+BS 发送特定的删除序列，避免与 Ctrl-H (\x08) 冲突
         } else {
-            _ = try self.pty.write("\x7F"); // DEL
+            _ = try self.pty.write("\x7F"); // 默认 Backspace 发送 DEL
         }
     }
 
-    /// 写入删除
     fn writeDelete(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[3~" else if (ctrl) "\x1B[3;5~" else "\x1B[3~";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入箭头键
     fn writeArrow(self: *Input, alt: bool, direction: u8, ctrl: bool, shift: bool) !void {
         var seq: []const u8 = "";
-
         if (ctrl) {
             seq = switch (direction) {
-                'A' => "\x1B[1;5A", // Ctrl+Up
-                'B' => "\x1B[1;5B", // Ctrl+Down
-                'C' => "\x1B[1;5C", // Ctrl+Right
-                'D' => "\x1B[1;5D", // Ctrl+Left
+                'A' => "\x1B[1;5A",
+                'B' => "\x1B[1;5B",
+                'C' => "\x1B[1;5C",
+                'D' => "\x1B[1;5D",
                 else => return,
             };
         } else if (shift) {
             seq = switch (direction) {
-                'A' => "\x1B[1;2A", // Shift+Up
-                'B' => "\x1B[1;2B", // Shift+Down
-                'C' => "\x1B[1;2C", // Shift+Right
-                'D' => "\x1B[1;2D", // Shift+Left
+                'A' => "\x1B[1;2A",
+                'B' => "\x1B[1;2B",
+                'C' => "\x1B[1;2C",
+                'D' => "\x1B[1;2D",
                 else => return,
             };
         } else if (alt) {
             seq = switch (direction) {
-                'A' => "\x1B[1;3A", // Alt+Up
-                'B' => "\x1B[1;3B", // Alt+Down
-                'C' => "\x1B[1;3C", // Alt+Right
-                'D' => "\x1B[1;3D", // Alt+Left
+                'A' => "\x1B[1;3A",
+                'B' => "\x1B[1;3B",
+                'C' => "\x1B[1;3C",
+                'D' => "\x1B[1;3D",
                 else => return,
             };
         } else {
             if (self.term.mode.app_cursor) {
                 seq = switch (direction) {
-                    'A' => "\x1BOA", // Up
-                    'B' => "\x1BOB", // Down
-                    'C' => "\x1BOC", // Right
-                    'D' => "\x1BOD", // Left
+                    'A' => "\x1BOA",
+                    'B' => "\x1BOB",
+                    'C' => "\x1BOC",
+                    'D' => "\x1BOD",
                     else => return,
                 };
             } else {
                 seq = switch (direction) {
-                    'A' => "\x1B[A", // Up
-                    'B' => "\x1B[B", // Down
-                    'C' => "\x1B[C", // Right
-                    'D' => "\x1B[D", // Left
+                    'A' => "\x1B[A",
+                    'B' => "\x1B[B",
+                    'C' => "\x1B[C",
+                    'D' => "\x1B[D",
                     else => return,
                 };
             }
         }
-
         _ = try self.pty.write(seq);
     }
 
-    /// 写入 Home 键
     fn writeHome(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[1;3H" else if (ctrl) "\x1B[1;5H" else "\x1B[H";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入 End 键
     fn writeEnd(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[1;3F" else if (ctrl) "\x1B[1;5F" else "\x1B[F";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入 PageUp 键
     fn writePageUp(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[5;3~" else if (ctrl) "\x1B[5;5~" else "\x1B[5~";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入 PageDown 键
     fn writePageDown(self: *Input, alt: bool, ctrl: bool) !void {
         const seq = if (alt) "\x1B[6;3~" else if (ctrl) "\x1B[6;5~" else "\x1B[6~";
         _ = try self.pty.write(seq);
     }
 
-    /// 写入功能键
     fn writeFunction(self: *Input, fn_num: u32, shift: bool, ctrl: bool, alt: bool) !void {
         if (fn_num < 1 or fn_num > 12) return;
-
         const base_seq = switch (fn_num) {
             1 => "OP",
             2 => "OQ",
@@ -472,33 +397,25 @@ pub const Input = struct {
             12 => "[24~",
             else => return,
         };
-
-        // 应用修饰符
         var seq: [32]u8 = undefined;
         const formatted_seq = if (shift or alt or ctrl)
             try std.fmt.bufPrint(&seq, "\x1B[{d}{s}", .{ @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4, base_seq })
         else
             try std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq});
-
         _ = try self.pty.write(formatted_seq);
     }
 
-    /// 写入可打印字符
     fn writePrintable(self: *Input, c: u8, alt: bool, ctrl: bool, shift: bool) !void {
         _ = shift;
-        // std.log.info("writePrintable: char='{c}' ({d}), alt={any}, ctrl={any}", .{ c, c, alt, ctrl });
+        var char = c;
         if (ctrl) {
-            // Ctrl + 字符
-            const ctrl_char = c & 0x1F; // 只使用低5位
-            const seq = [_]u8{ctrl_char};
-            _ = try self.pty.write(&seq);
-        } else if (alt) {
-            // Alt + 字符
-            const seq = [_]u8{ 0x1B, c };
+            char &= 0x1F;
+        }
+        if (alt) {
+            const seq = [_]u8{ 0x1B, char };
             _ = try self.pty.write(&seq);
         } else {
-            // 普通字符
-            const seq = [_]u8{c};
+            const seq = [_]u8{char};
             _ = try self.pty.write(&seq);
         }
     }

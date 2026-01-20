@@ -130,14 +130,21 @@ pub fn runeWidth(codepoint: u21) u8 {
     if (codepoint >= 0x2580 and codepoint <= 0x259F) return 1;
     // Geometric Shapes (Triangles, Squares, etc.)
     if (codepoint >= 0x25A0 and codepoint <= 0x25FF) return 1;
-    // Powerline Private Use Area (E0A0-E0D6 are usually 1 cell wide, but some icons are 2)
-    // Usually nerd font icons are 1 or 2 depending on the font.
-    // Assuming 1 for standard Powerline separators.
-    if (codepoint >= 0xE0A0 and codepoint <= 0xE0D4) return 1;
+    // Miscellaneous Technical
+    if (codepoint >= 0x2300 and codepoint <= 0x23FF) return 1;
+    // Miscellaneous Symbols and Arrows
+    if (codepoint >= 0x2B00 and codepoint <= 0x2BFF) return 1;
+
+    // Powerline and Nerd Fonts (Private Use Area)
+    // Most icons are 1-cell wide in mono fonts, some are 2.
+    // We default to 1 for PUA unless specified.
+    if (codepoint >= 0xE000 and codepoint <= 0xF8FF) return 1;
+    if (codepoint >= 0xF0000 and codepoint <= 0xFFFFD) return 1;
+    if (codepoint >= 0x100000 and codepoint <= 0x10FFFD) return 1;
 
     // Emoji/Symbols usually 2?
-    if (codepoint >= 0x1F300 and codepoint <= 0x1F64F) return 2;
-    if (codepoint >= 0x1F900 and codepoint <= 0x1F9FF) return 2;
+    if (codepoint >= 0x1F000 and codepoint <= 0x1F9FF) return 2;
+    if (codepoint >= 0x1FA00 and codepoint <= 0x1FAFF) return 2;
 
     return 1;
 }

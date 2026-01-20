@@ -144,6 +144,10 @@ pub const Selector = struct {
 
     /// 获取选中的文本
     pub fn getText(self: *Selector, term: *const types.Term) ![]u8 {
+        // 如果没有选择（mode == idle 或 empty），返回空
+        if (self.selection.mode == .idle or self.selection.mode == .empty) {
+            return &[_]u8{};
+        }
         if (self.selection.ob.x == std.math.maxInt(usize)) {
             return &[_]u8{};
         }

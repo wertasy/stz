@@ -44,14 +44,9 @@ pub const Parser = struct {
     /// 写入数据到 PTY
     fn ptyWrite(self: *Parser, data: []const u8) void {
         if (self.pty) |pty_ptr| {
-            // std.log.info("Sending PTY response: {s}", .{std.fmt.fmtSliceEscapeLower(data)});
             const PTYType = @import("pty.zig").PTY;
             const pty = @as(*PTYType, @ptrCast(@alignCast(@constCast(pty_ptr))));
-            _ = pty.write(data) catch |err| {
-                std.log.err("PTY write failed: {any}\n", .{err});
-            };
-        } else {
-            std.log.err("PTY pointer is null, cannot send response\n", .{});
+            _ = pty.write(data) catch {};
         }
     }
 
@@ -494,15 +489,9 @@ pub const Parser = struct {
                     self.term.c.attr.ustyle = -1;
                     for (0..3) |j| self.term.c.attr.ucolor[j] = -1;
                 },
-                1 => {
-                    self.term.c.attr.attr.bold = true;
-                },
-                2 => {
-                    self.term.c.attr.attr.faint = true;
-                },
-                3 => {
-                    self.term.c.attr.attr.italic = true;
-                },
+                1 => self.term.c.attr.attr.bold = true,
+                2 => self.term.c.attr.attr.faint = true,
+                3 => self.term.c.attr.attr.italic = true,
                 4 => {
                     self.term.c.attr.attr.underline = true;
                     if (i + 1 < self.csi.narg) {
@@ -513,56 +502,33 @@ pub const Parser = struct {
                         }
                     }
                 },
-                5, 6 => {
-                    self.term.c.attr.attr.blink = true;
-                },
-                7 => {
-                    self.term.c.attr.attr.reverse = true;
-                },
-                8 => {
-                    self.term.c.attr.attr.hidden = true;
-                },
-                9 => {
-                    self.term.c.attr.attr.struck = true;
-                },
+                5, 6 => self.term.c.attr.attr.blink = true,
+                7 => self.term.c.attr.attr.reverse = true,
+                8 => self.term.c.attr.attr.hidden = true,
+                9 => self.term.c.attr.attr.struck = true,
                 22 => {
                     self.term.c.attr.attr.bold = false;
                     self.term.c.attr.attr.faint = false;
                 },
-                23 => {
-                    self.term.c.attr.attr.italic = false;
-                },
+                23 => self.term.c.attr.attr.italic = false,
                 24 => {
                     self.term.c.attr.attr.underline = false;
                     self.term.c.attr.ustyle = -1;
                 },
-                25 => {
-                    self.term.c.attr.attr.blink = false;
-                },
-                27 => {
-                    self.term.c.attr.attr.reverse = false;
-                },
-                28 => {
-                    self.term.c.attr.attr.hidden = false;
-                },
-                29 => {
-                    self.term.c.attr.attr.struck = false;
-                },
-                30...37 => {
-                    self.term.c.attr.fg = @as(u32, @intCast(arg - 30));
-                },
+                25 => self.term.c.attr.attr.blink = false,
+                27 => self.term.c.attr.attr.reverse = false,
+                28 => self.term.c.attr.attr.hidden = false,
+                29 => self.term.c.attr.attr.struck = false,
+                30...37 => self.term.c.attr.fg = @as(u32, @intCast(arg - 30)),
                 38 => {
                     var color_submode: i64 = -1;
                     var r: i64 = -1;
                     var g: i64 = -1;
                     var b: i64 = -1;
                     var index: i64 = -1;
-
                     if (self.csi.carg[i][0] != -1) {
                         color_submode = self.csi.carg[i][0];
-                        if (color_submode == 5) {
-                            index = self.csi.carg[i][1];
-                        } else if (color_submode == 2) {
+                        if (color_submode == 5) index = self.csi.carg[i][1] else if (color_submode == 2) {
                             r = self.csi.carg[i][1];
                             g = self.csi.carg[i][2];
                             b = self.csi.carg[i][3];
@@ -584,34 +550,19 @@ pub const Parser = struct {
                             }
                         }
                     }
-
-                    if (color_submode == 5 and index >= 0 and index <= 255) {
-                        self.term.c.attr.fg = @intCast(index);
-                    } else if (color_submode == 2 and r != -1) {
-                        const rr = @as(u32, @intCast(r));
-                        const gg = @as(u32, @intCast(g));
-                        const bb = @as(u32, @intCast(b));
-                        self.term.c.attr.fg = (0xFF << 24) | (rr << 16) | (gg << 8) | bb;
-                    }
+                    if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.fg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.fg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
-                39 => {
-                    self.term.c.attr.fg = config.Config.colors.default_foreground;
-                },
-                40...47 => {
-                    self.term.c.attr.bg = @as(u32, @intCast(arg - 40));
-                },
+                39 => self.term.c.attr.fg = config.Config.colors.default_foreground,
+                40...47 => self.term.c.attr.bg = @as(u32, @intCast(arg - 40)),
                 48 => {
                     var color_submode: i64 = -1;
                     var r: i64 = -1;
                     var g: i64 = -1;
                     var b: i64 = -1;
                     var index: i64 = -1;
-
                     if (self.csi.carg[i][0] != -1) {
                         color_submode = self.csi.carg[i][0];
-                        if (color_submode == 5) {
-                            index = self.csi.carg[i][1];
-                        } else if (color_submode == 2) {
+                        if (color_submode == 5) index = self.csi.carg[i][1] else if (color_submode == 2) {
                             r = self.csi.carg[i][1];
                             g = self.csi.carg[i][2];
                             b = self.csi.carg[i][3];
@@ -633,55 +584,31 @@ pub const Parser = struct {
                             }
                         }
                     }
-
-                    if (color_submode == 5 and index >= 0 and index <= 255) {
-                        self.term.c.attr.bg = @intCast(index);
-                    } else if (color_submode == 2 and r != -1) {
-                        const rr = @as(u32, @intCast(r));
-                        const gg = @as(u32, @intCast(g));
-                        const bb = @as(u32, @intCast(b));
-                        self.term.c.attr.bg = (0xFF << 24) | (rr << 16) | (gg << 8) | bb;
-                    }
+                    if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.bg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.bg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
-                49 => {
-                    self.term.c.attr.bg = config.Config.colors.default_background;
-                },
-                90...97 => {
-                    self.term.c.attr.fg = @as(u32, @intCast(arg - 90 + 8));
-                },
-                100...107 => {
-                    self.term.c.attr.bg = @as(u32, @intCast(arg - 100 + 8));
-                },
+                49 => self.term.c.attr.bg = config.Config.colors.default_background,
+                90...97 => self.term.c.attr.fg = @as(u32, @intCast(arg - 90 + 8)),
+                100...107 => self.term.c.attr.bg = @as(u32, @intCast(arg - 100 + 8)),
                 else => {},
             }
         }
     }
 
     fn newLine(self: *Parser) !void {
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
-        if (self.term.c.y == self.term.bot) {
-            try self.scrollUp(self.term.top, 1);
-        } else {
-            self.term.c.y += 1;
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
+        if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else self.term.c.y += 1;
         self.term.c.x = 0;
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
     }
 
     fn moveCursor(self: *Parser, dx: i32, dy: i32) !void {
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
         var new_x = @as(isize, @intCast(self.term.c.x)) + dx;
         var new_y = @as(isize, @intCast(self.term.c.y)) + dy;
         new_x = @max(0, @min(new_x, @as(isize, @intCast(self.term.col - 1))));
@@ -689,19 +616,15 @@ pub const Parser = struct {
         self.term.c.x = @as(usize, @intCast(new_x));
         self.term.c.y = @as(usize, @intCast(new_y));
         self.term.c.state = .default;
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
     }
 
     fn moveTo(self: *Parser, x: usize, y: usize) !void {
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
         var new_x = x;
         var new_y = y;
         if (self.term.c.state == .origin) new_y += self.term.top;
@@ -710,28 +633,22 @@ pub const Parser = struct {
         self.term.c.x = new_x;
         self.term.c.y = new_y;
         self.term.c.state = .default;
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
     }
 
     fn putTab(self: *Parser) !void {
         var x = self.term.c.x + 1;
         while (x < self.term.col) {
-            if (self.term.tabs) |tabs| {
-                if (x < tabs.len and tabs[x]) break;
-            }
+            if (self.term.tabs) |tabs| if (x < tabs.len and tabs[x]) break;
             x += 1;
         }
         self.term.c.x = @min(x, self.term.col - 1);
         self.term.c.state = .default;
-        if (self.term.dirty) |dirty| {
-            if (self.term.c.y < dirty.len) {
-                dirty[self.term.c.y] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
+            dirty[self.term.c.y] = true;
+        };
     }
 
     fn decaln(self: *Parser) !void {
@@ -741,7 +658,9 @@ pub const Parser = struct {
             glyph_var.u = 'E';
             for (0..self.term.row) |y| {
                 for (0..self.term.col) |x| {
-                    if (x < lines[y].len) lines[y][x] = glyph_var;
+                    if (x < lines[y].len) {
+                        lines[y][x] = glyph_var;
+                    }
                 }
             }
         }
@@ -766,11 +685,9 @@ pub const Parser = struct {
         for (0..4) |i| self.term.trantbl[i] = .usa;
         self.term.charset = 0;
         self.term.icharset = 0;
-        if (self.term.tabs) |tabs| {
-            for (0..tabs.len) |i| {
-                tabs[i] = (i % 8 == 0);
-            }
-        }
+        if (self.term.tabs) |tabs| for (0..tabs.len) |i| {
+            tabs[i] = (i % 8 == 0);
+        };
         self.term.esc = .{};
         self.resetPalette();
         self.term.default_fg = config.Config.colors.default_foreground;
@@ -779,11 +696,9 @@ pub const Parser = struct {
         self.term.window_title = "stz";
         self.term.window_title_dirty = true;
         for (0..2) |i| self.term.saved_cursor[i] = .{ .attr = self.term.c.attr, .x = 0, .y = 0, .state = .default, .top = 0, .bot = self.term.row - 1 };
-        if (self.term.dirty) |dirty| {
-            for (0..dirty.len) |i| {
-                dirty[i] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
+            dirty[i] = true;
+        };
     }
 
     fn cursorSave(self: *Parser) void {
@@ -816,23 +731,15 @@ pub const Parser = struct {
                 self.csiReset();
                 self.term.esc.start = true;
             },
-            0x84 => {
-                if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else try self.moveCursor(0, 1);
-            },
+            0x84 => if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else try self.moveCursor(0, 1),
             0x85 => {
                 if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else try self.moveCursor(0, 1);
                 self.term.c.x = 0;
             },
-            0x88 => {
-                if (self.term.c.x < self.term.col) {
-                    if (self.term.tabs) |tabs| {
-                        tabs[self.term.c.x] = true;
-                    }
-                }
+            0x88 => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
+                tabs[self.term.c.x] = true;
             },
-            0x8D => {
-                if (self.term.c.y == self.term.top) try self.scrollDown(self.term.top, 1) else try self.moveCursor(0, -1);
-            },
+            0x8D => if (self.term.c.y == self.term.top) try self.scrollDown(self.term.top, 1) else try self.moveCursor(0, -1),
             0x8E => {
                 self.term.esc.alt_charset = true;
                 self.term.icharset = 2;
@@ -901,59 +808,35 @@ pub const Parser = struct {
                 self.term.esc.utf8 = true;
                 self.term.esc.start = false;
             },
-            'G' => {
-                if (self.term.esc.utf8) {
-                    self.term.mode.utf8 = true;
-                    self.term.esc.utf8 = false;
-                }
+            'G' => if (self.term.esc.utf8) {
+                self.term.mode.utf8 = true;
+                self.term.esc.utf8 = false;
             },
-            '@' => {
-                if (self.term.esc.utf8) {
-                    self.term.mode.utf8 = false;
-                    self.term.esc.utf8 = false;
-                }
+            '@' => if (self.term.esc.utf8) {
+                self.term.mode.utf8 = false;
+                self.term.esc.utf8 = false;
             },
             '7' => self.cursorSave(),
-            '8' => {
-                if (self.term.esc.decaln) {
-                    try self.decaln();
-                    self.term.esc.decaln = false;
-                } else try self.cursorRestore();
-            },
-            'n' => {
-                self.term.charset = 2;
-            },
-            'o' => {
-                self.term.charset = 3;
-            },
-            'D' => {
-                if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else try self.moveCursor(0, 1);
-            },
+            '8' => if (self.term.esc.decaln) {
+                try self.decaln();
+                self.term.esc.decaln = false;
+            } else try self.cursorRestore(),
+            'n' => self.term.charset = 2,
+            'o' => self.term.charset = 3,
+            'D' => if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else try self.moveCursor(0, 1),
             'E' => {
                 if (self.term.c.y == self.term.bot) try self.scrollUp(self.term.top, 1) else try self.moveCursor(0, 1);
                 self.term.c.x = 0;
             },
-            'H' => {
-                if (self.term.c.x < self.term.col) {
-                    if (self.term.tabs) |tabs| {
-                        tabs[self.term.c.x] = true;
-                    }
-                }
+            'H' => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
+                tabs[self.term.c.x] = true;
             },
-            'M' => {
-                if (self.term.c.y == self.term.top) try self.scrollDown(self.term.top, 1) else try self.moveCursor(0, -1);
-            },
+            'M' => if (self.term.c.y == self.term.top) try self.scrollDown(self.term.top, 1) else try self.moveCursor(0, -1),
             'Z' => self.ptyWrite("\x1B[?6c"),
             'c' => try self.resetTerminal(),
-            '>' => {
-                self.term.mode.app_keypad = false;
-            },
-            '=' => {
-                self.term.mode.app_keypad = true;
-            },
-            '\\' => {
-                if (self.term.esc.str_end) try self.strHandle();
-            },
+            '>' => self.term.mode.app_keypad = false,
+            '=' => self.term.mode.app_keypad = true,
+            '\\' => if (self.term.esc.str_end) try self.strHandle(),
             else => {},
         }
     }
@@ -964,11 +847,9 @@ pub const Parser = struct {
         self.csi.priv = 0;
         self.csi.mode[0] = 0;
         self.csi.mode[1] = 0;
-        for (&self.csi.carg) |*row| {
-            for (row) |*cell| {
-                cell.* = -1;
-            }
-        }
+        for (&self.csi.carg) |*row| for (row) |*cell| {
+            cell.* = -1;
+        };
         if (self.csi.len == 0) return;
         if (!std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
             self.csi.priv = self.csi.buf[p];
@@ -1018,47 +899,32 @@ pub const Parser = struct {
 
     fn csiHandle(self: *Parser) !void {
         const mode = self.csi.mode[0];
-        // std.log.info("CSI Handle: {c} priv={c} args={any}", .{ mode, self.csi.priv, self.csi.arg[0..self.csi.narg] });
-
-        // 如果没有参数，设置默认值 0
         if (self.csi.narg == 0) {
             self.csi.arg[0] = 0;
             self.csi.narg = 1;
         }
         if (self.csi.mode[1] != 0) {
             switch (self.csi.mode[1]) {
-                ' ' => {
-                    if (mode == 'q') {
-                        const style = self.csi.arg[0];
-                        if (style >= 0 and style <= 8) self.term.cursor_style = @as(u8, @intCast(style));
-                        return;
-                    }
+                ' ' => if (mode == 'q') {
+                    const style = self.csi.arg[0];
+                    if (style >= 0 and style <= 8) self.term.cursor_style = @as(u8, @intCast(style));
+                    return;
                 },
                 else => {},
             }
         }
         switch (mode) {
             '@' => try self.insertBlank(@as(usize, @intCast(@max(1, self.csi.arg[0])))),
-            'b' => {
-                if (self.term.lastc != 0) {
-                    for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| try self.writeChar(self.term.lastc);
-                }
+            'b' => if (self.term.lastc != 0) {
+                for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| try self.writeChar(self.term.lastc);
             },
-            'c' => {
-                if (self.csi.arg[0] == 0) {
-                    if (self.csi.priv == '>') self.ptyWrite("\x1B[>1;100;0c") else self.ptyWrite("\x1B[?6c");
-                }
+            'c' => if (self.csi.arg[0] == 0) {
+                if (self.csi.priv == '>') self.ptyWrite("\x1B[>1;100;0c") else self.ptyWrite("\x1B[?6c");
             },
-            'i' => {
-                switch (self.csi.arg[0]) {
-                    4 => {
-                        self.term.mode.print = false;
-                    },
-                    5 => {
-                        self.term.mode.print = true;
-                    },
-                    else => {},
-                }
+            'i' => switch (self.csi.arg[0]) {
+                4 => self.term.mode.print = false,
+                5 => self.term.mode.print = true,
+                else => {},
             },
             'A' => try self.moveCursor(0, -@as(i32, @intCast(@max(1, self.csi.arg[0])))),
             'B', 'e' => try self.moveCursor(0, @as(i32, @intCast(@max(1, self.csi.arg[0])))),
@@ -1068,51 +934,37 @@ pub const Parser = struct {
             'F' => try self.moveTo(0, @as(usize, @intCast(@max(0, @as(i32, @intCast(self.term.c.y)) - @as(i32, @intCast(@max(1, self.csi.arg[0]))))))),
             'G', '`' => try self.moveTo(@as(usize, @intCast(@max(1, self.csi.arg[0]) - 1)), self.term.c.y),
             'H', 'f' => try self.moveTo(@as(usize, @intCast(@max(1, self.csi.arg[1]) - 1)), @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
-            'I' => {
-                for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| try self.putTab();
-            },
+            'I' => for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| try self.putTab(),
             'J' => try self.eraseDisplay(@truncate(self.csi.arg[0])),
             'K' => try self.eraseLine(@truncate(self.csi.arg[0])),
             'L' => try self.insertBlankLine(@as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'M' => try self.deleteLine(@as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'P' => try self.deleteChar(@as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'X' => try self.eraseChar(@as(usize, @intCast(@max(1, self.csi.arg[0])))),
-            'Z' => {
-                for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| {
-                    var x = self.term.c.x;
-                    if (x > 0) x -= 1;
-                    while (x > 0) : (x -= 1) {
-                        if (self.term.tabs) |tabs| {
-                            if (x < tabs.len and tabs[x]) break;
-                        }
-                    }
-                    self.term.c.x = x;
-                }
+            'Z' => for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| {
+                var x = self.term.c.x;
+                if (x > 0) x -= 1;
+                while (x > 0) : (x -= 1) if (self.term.tabs) |tabs| if (x < tabs.len and tabs[x]) break;
+                self.term.c.x = x;
             },
             'd' => try self.moveTo(self.term.c.x, @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
-            'S' => {
-                if (self.csi.priv == 0) try self.scrollUp(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0]))));
-            },
+            'S' => if (self.csi.priv == 0) try self.scrollUp(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'T' => try self.scrollDown(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'h' => try self.setMode(true),
             'l' => try self.setMode(false),
             'm' => try self.setGraphicsMode(),
-            'n' => {
-                switch (self.csi.arg[0]) {
-                    5 => self.ptyWrite("\x1B[0n"),
-                    6 => {
-                        var buf: [64]u8 = undefined;
-                        const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ self.term.c.y + 1, self.term.c.x + 1 });
-                        self.ptyWrite(s);
-                    },
-                    else => {},
-                }
+            'n' => switch (self.csi.arg[0]) {
+                5 => self.ptyWrite("\x1B[0n"),
+                6 => {
+                    var buf: [64]u8 = undefined;
+                    const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ self.term.c.y + 1, self.term.c.x + 1 });
+                    self.ptyWrite(s);
+                },
+                else => {},
             },
             'r' => try self.setScrollRegion(),
             's' => try self.cursorSaveRestore(.save),
-            'u' => {
-                if (self.csi.priv == 0) try self.cursorSaveRestore(.load);
-            },
+            'u' => if (self.csi.priv == 0) try self.cursorSaveRestore(.load),
             else => {},
         }
     }
@@ -1144,102 +996,64 @@ pub const Parser = struct {
         self.term.line = self.term.alt;
         self.term.alt = tmp;
         self.term.mode.alt_screen = !self.term.mode.alt_screen;
-        if (self.term.dirty) |dirty| {
-            for (0..dirty.len) |i| {
-                dirty[i] = true;
-            }
-        }
+        if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
+            dirty[i] = true;
+        };
     }
 
     fn setMode(self: *Parser, set: bool) !void {
-        if (self.csi.priv == 0) {
-            switch (self.csi.arg[0]) {
-                2 => {
-                    self.term.mode.kbdlock = set;
-                },
-                4 => {
-                    self.term.mode.insert = set;
-                },
-                12 => {
-                    self.term.mode.echo = !set;
-                },
-                20 => {
-                    self.term.mode.crlf = set;
-                },
-                else => {},
-            }
-        } else {
-            switch (self.csi.arg[0]) {
-                1 => {
-                    self.term.mode.app_cursor = set;
-                },
-                5 => {
-                    self.term.mode.reverse = set;
-                    if (self.term.dirty) |dirty| {
-                        for (0..dirty.len) |i| {
-                            dirty[i] = true;
-                        }
-                    }
-                },
-                6 => {
-                    if (set) {
-                        self.term.c.state = .origin;
-                        try self.moveTo(0, 0);
-                    } else {
-                        self.term.c.state = .default;
-                    }
-                },
-                7 => {
-                    self.term.mode.wrap = set;
-                },
-                25 => {
-                    self.term.mode.hide_cursor = !set;
-                },
-                1000 => {
-                    self.term.mode.mouse = set;
-                },
-                1002 => {
-                    self.term.mode.mouse_btn = set;
-                },
-                1003 => {
-                    self.term.mode.mouse_many = set;
-                },
-                1004 => {
-                    self.term.mode.focused_report = set;
-                },
-                1006 => {
-                    self.term.mode.mouse_sgr = set;
-                },
-                2026 => {
-                    self.term.mode.sync_update = set;
-                },
-                47, 1047 => {
-                    if (self.term.alt != null and set != self.term.mode.alt_screen) try self.swapScreen();
-                },
-                1048 => try self.cursorSaveRestore(if (set) .save else .load),
-                1049 => {
-                    try self.cursorSaveRestore(if (set) .save else .load);
-                    if (self.term.alt != null) {
-                        if (set and !self.term.mode.alt_screen) {
-                            if (self.term.alt) |alt| {
-                                var g = self.term.c.attr;
-                                g.u = ' ';
-                                for (alt) |l| {
-                                    for (l) |*cell| {
-                                        cell.* = g;
-                                    }
+        if (self.csi.priv == 0) switch (self.csi.arg[0]) {
+            2 => self.term.mode.kbdlock = set,
+            4 => self.term.mode.insert = set,
+            12 => self.term.mode.echo = !set,
+            20 => self.term.mode.crlf = set,
+            else => {},
+        } else switch (self.csi.arg[0]) {
+            1 => self.term.mode.app_cursor = set,
+            5 => {
+                self.term.mode.reverse = set;
+                if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
+                    dirty[i] = true;
+                };
+            },
+            6 => {
+                if (set) {
+                    self.term.c.state = .origin;
+                    try self.moveTo(0, 0);
+                } else self.term.c.state = .default;
+            },
+            7 => self.term.mode.wrap = set,
+            25 => self.term.mode.hide_cursor = !set,
+            1000 => self.term.mode.mouse = set,
+            1002 => self.term.mode.mouse_btn = set,
+            1003 => self.term.mode.mouse_many = set,
+            1004 => self.term.mode.focused_report = set,
+            1006 => self.term.mode.mouse_sgr = set,
+            2026 => self.term.mode.sync_update = set,
+            47, 1047 => if (self.term.alt != null and set != self.term.mode.alt_screen) try self.swapScreen(),
+            1048 => try self.cursorSaveRestore(if (set) .save else .load),
+            1049 => {
+                try self.cursorSaveRestore(if (set) .save else .load);
+                if (self.term.alt != null) {
+                    if (set and !self.term.mode.alt_screen) {
+                        if (self.term.alt) |alt| {
+                            var g = self.term.c.attr;
+                            g.u = ' ';
+                            for (alt) |l| {
+                                for (l) |*cell| {
+                                    cell.* = g;
                                 }
                             }
-                            try self.swapScreen();
-                            try self.moveTo(0, 0);
-                        } else if (!set and self.term.mode.alt_screen) {
-                            try self.swapScreen();
-                            try self.cursorSaveRestore(.load);
                         }
+                        try self.swapScreen();
+                        try self.moveTo(0, 0);
+                    } else if (!set and self.term.mode.alt_screen) {
+                        try self.swapScreen();
+                        try self.cursorSaveRestore(.load);
                     }
-                },
-                else => {},
-            }
+                }
+            },
+            else => {},
         }
     }
 
@@ -1258,32 +1072,18 @@ pub const Parser = struct {
 
     fn oscHandle(self: *Parser, par: i32) !void {
         switch (par) {
-            0, 1, 2 => {
-                if (self.str.narg > 1 and self.str.args[1].len > 0) {
-                    self.term.window_title = self.str.args[1];
-                    self.term.window_title_dirty = true;
-                }
+            0, 1, 2 => if (self.str.narg > 1 and self.str.args[1].len > 0) {
+                self.term.window_title = self.str.args[1];
+                self.term.window_title_dirty = true;
             },
-            10 => {
-                if (self.str.narg >= 2) {
-                    if (try self.parseOscColor(self.str.args[1])) |c| {
-                        self.term.default_fg = c;
-                    }
-                }
+            10 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
+                self.term.default_fg = c;
             },
-            11 => {
-                if (self.str.narg >= 2) {
-                    if (try self.parseOscColor(self.str.args[1])) |c| {
-                        self.term.default_bg = c;
-                    }
-                }
+            11 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
+                self.term.default_bg = c;
             },
-            12 => {
-                if (self.str.narg >= 2) {
-                    if (try self.parseOscColor(self.str.args[1])) |c| {
-                        self.term.default_cs = c;
-                    }
-                }
+            12 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
+                self.term.default_cs = c;
             },
             else => {},
         }
@@ -1293,14 +1093,18 @@ pub const Parser = struct {
         _ = self;
         var start: usize = 0;
         while (start < color_str.len and color_str[start] == ' ') : (start += 1) {}
+
         if (start >= color_str.len) return null;
         const trimmed = color_str[start..];
+
         if (std.mem.startsWith(u8, trimmed, "rgb:")) {
             var parts = std.mem.splitScalar(u8, trimmed[4..], '/');
             var rgb = [3]u8{ 0, 0, 0 };
             var i: usize = 0;
             while (i < 3) : (i += 1) {
-                if (parts.next()) |p| rgb[i] = std.fmt.parseInt(u8, p, 16) catch 0;
+                if (parts.next()) |p| {
+                    rgb[i] = std.fmt.parseInt(u8, p, 16) catch 0;
+                }
             }
             return (0xFF << 24) | (@as(u32, rgb[0]) << 16) | (@as(u32, rgb[1]) << 8) | @as(u32, rgb[2]);
         }

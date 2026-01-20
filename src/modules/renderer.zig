@@ -204,102 +204,27 @@ pub const Renderer = struct {
             var line_data: []Glyph = undefined;
 
             if (term.scr > 0 and !term.mode.alt_screen) {
-                // Drawing from history
-                if (y < term.row) {
-                    // Calculate index in history ring buffer
-                    // hist_idx points to the *next* write position (oldest line if full, or empty)
-                    // The newest line is at (hist_idx - 1 + hist_max) % hist_max
-
-                    // We want to show lines from history.
-                    // scr=1 means show the last line of history at the bottom of the screen?
-                    // No, usually scr=N means we shifted the view up by N lines.
-                    // So screen[row-1] becomes history[newest], screen[row-2] becomes history[newest-1]...
-
-                    // If term.scr > 0, we are looking at history.
-                    // The screen shows:
-                    //   Lines from history (top to bottom)
-                    //   ...
-                    //   Maybe lines from current screen buffer if scr < term.row?
-
-                    // Simplified logic:
-                    // If scr > 0, the entire screen is shifted down.
-                    // The line at screen y corresponds to logical line (y - scr).
-                    // If (y - scr) < 0, it's in history.
-
-                    // Let's look at how st does it.
-                    // Tline(y) macro:
-                    // ((y) < term.scr ? term.hist[((y) + term.histi - term.scr + term.histlen + 1) % term.histlen] : term.line[(y) - term.scr])
-
-                    // Wait, st's `term.scr` is the scroll offset (how many lines we scrolled up).
-                    // `term.histi` is the index of the latest history line.
-
-                    // In my implementation:
-                    // `term.hist_idx` is the next write position.
-                    // So `term.hist_idx - 1` is the newest line.
-
-                    // Let's assume typical behavior:
-                    // We want to display line `y` (0..row-1) on the window.
-                    // The logical line index is `L = y - term.scr` relative to the current screen top.
-                    // But `term.scr` shifts the view UP, so we see older lines.
-                    // So the line we see at `y` is actually `y - term.scr` relative to the *current* screen top?
-                    // No. If scr=1, the line at y=row-1 (bottom) is the line that was at row-2.
-                    // The line at y=0 is history[newest].
-
-                    // Correct mapping:
-                    // We want to fetch line `L` where `L = y - term.scr`.
-                    // Since `y` is 0..row-1 and `scr` is 0..hist_cnt, `L` can be negative.
-                    // If `L >= 0`, it is `term.line[L]`. (Only if we scrolling "within" the buffer? No)
-
-                    // Actually, `scr` acts as an offset into the "virtual" buffer composed of History + Screen.
-                    // Virtual buffer:
-                    // [ Hist 0 ] <- Oldest
-                    // ...
-                    // [ Hist N ] <- Newest
-                    // [ Line 0 ] <- Top of current screen
-                    // ...
-                    // [ Line R ] <- Bottom of current screen
-
-                    // When scr=0, we see [Line 0] to [Line R].
-                    // When scr=1, we see [Hist N] to [Line R-1].
-                    // When scr=S, row `y` corresponds to:
-                    //   If `y < S`: It comes from History.
-                    //   If `y >= S`: It comes from Screen (index `y - S`).
-
-                    if (y < term.scr) {
-                        // Fetch from history
-                        // Which history line?
-                        // y=0, scr=1 => index 0 from bottom of history?
-                        // We want the lines to be contiguous.
-                        // Screen line `scr` maps to `term.line[0]`.
-                        // Screen line `scr-1` maps to `hist[newest]`.
-                        // Screen line `scr-k` maps to `hist[newest - k + 1]`.
-                        // So `y` maps to `hist[newest - (scr - 1 - y)]` = `hist[newest - scr + 1 + y]`.
-
-                        if (term.hist_cnt > 0) {
-                            const newest_idx = (term.hist_idx + term.hist_max - 1) % term.hist_max;
-                            // Calculate offset backwards from newest
-                            const offset = term.scr - 1 - y;
-                            if (offset < term.hist_cnt) {
-                                const hist_fetch_idx = (newest_idx + term.hist_max - offset) % term.hist_max;
-                                line_data = term.hist.?[hist_fetch_idx];
-                            } else {
-                                // Out of history bounds (should not happen if scr is clamped)
-                                line_data = term.line.?[0]; // Fallback or clear?
-                            }
+                if (y < term.scr) {
+                    if (term.hist_cnt > 0) {
+                        const newest_idx = (term.hist_idx + term.hist_max - 1) % term.hist_max;
+                        const offset = term.scr - 1 - y;
+                        if (offset < term.hist_cnt) {
+                            const hist_fetch_idx = (newest_idx + term.hist_max - offset) % term.hist_max;
+                            line_data = term.hist.?[hist_fetch_idx];
                         } else {
                             line_data = term.line.?[0];
                         }
                     } else {
-                        // Fetch from screen
-                        line_data = term.line.?[y - term.scr];
+                        line_data = term.line.?[0];
                     }
+                } else {
+                    line_data = term.line.?[y - term.scr];
                 }
             } else {
                 line_data = screen.?[y];
             }
 
             // Check dirty flag
-            // If scrolling or there is an active selection, we should redraw everything or handle dirty logic carefully.
             if (term.scr == 0 and selector.selection.mode == .idle) {
                 if (term.dirty) |dirty| {
                     if (!dirty[y]) continue;
@@ -315,26 +240,20 @@ pub const Renderer = struct {
                 const glyph = line_data[x];
                 const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
 
-                // Determine colors based on attributes
                 var fg_idx = glyph.fg;
                 var bg_idx = glyph.bg;
 
-                // Handle Bold (bright colors)
                 if (glyph.attr.bold) {
                     if (fg_idx < 8) {
                         fg_idx += 8;
                     } else if (fg_idx == config.Config.colors.default_foreground) {
-                        fg_idx = 15; // Map bold default to bright white
+                        fg_idx = 15;
                     }
                 }
 
-                // Handle Global and character Reverse
                 var reverse = glyph.attr.reverse != term.mode.reverse;
-
-                // Handle selection highlight
                 if (selector.isSelected(x, y)) {
                     reverse = !reverse;
-                    // std.log.info("Cell ({d}, {d}) selected\n", .{ x, y });
                 }
 
                 if (reverse) {
@@ -343,46 +262,31 @@ pub const Renderer = struct {
                     bg_idx = tmp;
                 }
 
-                // Handle text blinking (ATTR_BLINK)
-                // If blink is enabled and glyph has blink attribute, toggle visibility
                 if (glyph.attr.blink and config.Config.cursor.blink_interval_ms > 0) {
-                    // Check blink state based on time
                     const blink_state = @mod(@divFloor(std.time.milliTimestamp(), config.Config.cursor.blink_interval_ms), 2) == 0;
-                    if (!blink_state) {
-                        // Skip drawing this character (it's in the "off" phase)
-                        continue;
-                    }
+                    if (!blink_state) continue;
                 }
 
-                // Draw background if not default (optimization)
-                // Note: The row was already cleared with default_bg.
                 if (bg_idx != config.Config.colors.default_background) {
                     var bg_col = try self.getColor(term, bg_idx);
                     x11.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 }
 
-                // Draw Box Drawing Characters manually
                 if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
                     var fg = try self.getColor(term, fg_idx);
                     var bg = try self.getColor(term, bg_idx);
                     try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &fg, &bg, glyph.attr.bold);
-                }
-                // Draw character
-                else if (glyph.u != ' ' and glyph.u != 0) {
+                } else if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, fg_idx);
                     const char = @as(u32, glyph.u);
                     x11.XftDrawString32(self.draw, &fg, self.font, x_pos, y_pos + self.ascent, &char, 1);
                 }
 
-                // Draw Underline
                 if (glyph.attr.underline) {
-                    // Determine underline color (use ustyle color if specified, else fg)
                     const underline_fg_idx = if (glyph.ucolor[0] >= 0) custom: {
-                        // Custom RGB color for underline
                         const r = @as(u8, @intCast(@max(0, glyph.ucolor[0])));
                         const g = @as(u8, @intCast(@max(0, glyph.ucolor[1])));
                         const b = @as(u8, @intCast(@max(0, glyph.ucolor[2])));
-                        // Create a temporary color index (0xFFRRGGBB format)
                         break :custom 0xFF000000 | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
                     } else fg_idx;
 
@@ -390,29 +294,21 @@ pub const Renderer = struct {
                     const thickness = config.Config.cursor.thickness;
                     const underline_y = y_pos + self.ascent + 1;
 
-                    // Draw based on underline style
-                    if (glyph.ustyle == 0 or glyph.ustyle < 0) {
-                        // Solid underline (default)
+                    if (glyph.ustyle <= 0) {
                         x11.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y, @intCast(self.char_width), thickness);
                     } else if (glyph.ustyle == 1) {
-                        // Double underline
                         x11.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y, @intCast(self.char_width), thickness);
                         x11.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y + thickness * 2, @intCast(self.char_width), thickness);
                     } else if (glyph.ustyle == 2) {
-                        // Curly underline (simplified wave)
-                        // Draw small arcs to simulate wave pattern
                         const wave_width_u = @divTrunc(self.char_width, 4);
                         const wave_height = thickness * 2;
                         const wave_y = underline_y + wave_height;
-
                         for (0..4) |i| {
                             const arc_x = x_pos + @as(i32, @intCast(i * wave_width_u)) + @as(i32, @intCast(wave_width_u / 2));
                             const arc_start_y = if (i % 2 == 0) underline_y else wave_y;
-                            // Draw simple vertical line segments to simulate wave
                             x11.XftDrawRect(self.draw, &underline_fg, arc_x, arc_start_y, 1, wave_height);
                         }
                     } else if (glyph.ustyle == 3) {
-                        // Dotted/Dashed underline
                         const dash_width_u = @divTrunc(self.char_width, 4);
                         for (0..4) |i| {
                             const dash_x = x_pos + @as(i32, @intCast(i * dash_width_u * 2));
@@ -421,14 +317,12 @@ pub const Renderer = struct {
                     }
                 }
 
-                // Draw Strikethrough (optional, if attribute exists)
                 if (glyph.attr.struck) {
                     var fg = try self.getColor(term, fg_idx);
                     x11.XftDrawRect(self.draw, &fg, x_pos, y_pos + @divTrunc(self.ascent * 2, 3), @intCast(self.char_width), 1);
                 }
             }
 
-            // Clear dirty flag for this row
             if (term.dirty) |dirty| {
                 dirty[y] = false;
             }
@@ -441,10 +335,18 @@ pub const Renderer = struct {
         const cx = term.c.x;
         const cy = term.c.y;
 
-        // Ensure cursor is within bounds
         if (cx >= term.col or cy >= term.row) return;
 
-        // Handle cursor blinking
+        if (term.scr > 0 and !term.mode.alt_screen) {
+            if (cy < term.scr) return;
+        }
+
+        const border = @as(i32, @intCast(config.Config.window.border_pixels));
+        const x_pos = @as(i32, @intCast(cx * self.char_width)) + border;
+        const screen_y = if (term.scr > 0 and !term.mode.alt_screen) cy - term.scr else cy;
+        if (screen_y >= term.row) return;
+        const y_pos = @as(i32, @intCast(screen_y * self.char_height)) + border;
+
         const now = std.time.milliTimestamp();
         if (config.Config.cursor.blink_interval_ms > 0) {
             if (now - self.last_blink_time >= config.Config.cursor.blink_interval_ms) {
@@ -455,29 +357,13 @@ pub const Renderer = struct {
             self.cursor_blink_state = true;
         }
 
-        // Cursor styles (matching st):
-        // 0: blinking block
-        // 1: blinking block (default)
-        // 2: steady block
-        // 3: blinking underline
-        // 4: steady underline
-        // 5: blinking bar
-        // 6: steady bar
-        // 7: blinking st cursor
-        // 8: steady st cursor
         const style = config.Config.cursor.style;
         const is_blinking_style = (style == 0 or style == 1 or style == 3 or style == 5 or style == 7);
 
-        // Check if blinking is enabled (MODE_BLINK)
         if (is_blinking_style and term.mode.blink and !self.cursor_blink_state) {
             return;
         }
 
-        const border = @as(i32, @intCast(config.Config.window.border_pixels));
-        const x_pos = @as(i32, @intCast(cx * self.char_width)) + border;
-        const y_pos = @as(i32, @intCast(cy * self.char_height)) + border;
-
-        // Get glyph under cursor
         const screen = term.line;
         var glyph = Glyph{};
         if (screen) |scr| {
@@ -486,32 +372,23 @@ pub const Renderer = struct {
             }
         }
 
-        // Determine cursor colors based on st's logic
-        var cursor_fg_idx: u32 = undefined;
-        var cursor_bg_idx: u32 = undefined;
+        const cursor_fg_idx: u32 = 259;
+        var cursor_bg_idx: u32 = 256;
 
         if (term.mode.reverse) {
-            // In reverse mode
             if (self.cursor_blink_state and is_blinking_style) {
-                cursor_bg_idx = 258; // default_fg
+                cursor_bg_idx = 258;
             } else {
-                cursor_bg_idx = 259; // default_bg
+                cursor_bg_idx = 259;
             }
-        } else {
-            // Normal mode
-            cursor_bg_idx = 256; // cursor color
-            cursor_fg_idx = 259; // default background
         }
 
-        // Render based on cursor style
         var draw_col = try self.getColor(term, cursor_bg_idx);
 
         switch (style) {
             0, 1 => { // blinking block
                 if (!term.mode.blink or self.cursor_blink_state) {
-                    // Draw full block
                     x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
-                    // Draw character
                     if (glyph.u != ' ' and glyph.u != 0) {
                         var fg = try self.getColor(term, cursor_fg_idx);
                         const char = @as(u32, glyph.u);
@@ -551,47 +428,37 @@ pub const Renderer = struct {
             },
             7, 8 => { // st cursor (hollow box)
                 const thickness = config.Config.cursor.thickness;
-                // Draw outline
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), thickness); // top
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + self.char_height - thickness, @intCast(self.char_width), thickness); // bottom
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height)); // left
-                x11.XftDrawRect(self.draw, &draw_col, x_pos + self.char_width - thickness, y_pos, thickness, @intCast(self.char_height)); // right
-                // Draw character
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), thickness);
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + self.char_height - thickness, @intCast(self.char_width), thickness);
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
+                x11.XftDrawRect(self.draw, &draw_col, x_pos + self.char_width - thickness, y_pos, thickness, @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
-                    var fg = try self.getColor(term, 258); // default fg
+                    var fg = try self.getColor(term, 258);
                     const char = @as(u32, glyph.u);
                     x11.XftDrawString32(self.draw, &fg, self.font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
-            else => {}, // unknown style, don't draw
+            else => {},
         }
     }
 
-    /// 绘制 Box Drawing 字符
     fn drawBoxChar(self: *Renderer, u: u21, x: i32, y: i32, w: i32, h: i32, color: *x11.XftColor, bg_color: *x11.XftColor, bold: bool) !void {
         const data = boxdraw.BoxDraw.getDrawData(u);
         if (data == 0) return;
-
         const mwh = @min(w, h);
-        const base_s = @max(1, @divTrunc(mwh + 4, 8)); // DIV(mwh, 8) rounding
+        const base_s = @max(1, @divTrunc(mwh + 4, 8));
         const is_bold = (bold and config.Config.draw.boxdraw_bold) and mwh >= 6;
         const s: i32 = if (is_bold) @max(base_s + 1, @divTrunc(3 * base_s + 1, 2)) else base_s;
-
         const w2_line = @divTrunc(w - s + 1, 2);
         const h2_line = @divTrunc(h - s + 1, 2);
-
         const midx = x + w2_line;
         const midy = y + h2_line;
-
         const cat = data & ~@as(u16, boxdraw_data.BDB | 0xff);
-
-        // 0. 处理盲文 (Braille Patterns)
         if (data & boxdraw_data.BRL != 0) {
             const bw1 = @divTrunc(w + 1, 2);
             const bh1 = @divTrunc(h + 2, 4);
             const bh2 = @divTrunc(h + 1, 2);
             const bh3 = @divTrunc(3 * h + 2, 4);
-
             if (data & 1 != 0) x11.XftDrawRect(self.draw, color, x, y, @intCast(bw1), @intCast(bh1));
             if (data & 2 != 0) x11.XftDrawRect(self.draw, color, x, y + bh1, @intCast(bw1), @intCast(bh2 - bh1));
             if (data & 4 != 0) x11.XftDrawRect(self.draw, color, x, y + bh2, @intCast(bw1), @intCast(bh3 - bh2));
@@ -602,8 +469,6 @@ pub const Renderer = struct {
             if (data & 128 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh3, @intCast(w - bw1), @intCast(h - bh3));
             return;
         }
-
-        // 1. 处理块元素 (Block Elements)
         if (cat == boxdraw_data.BBD) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
             x11.XftDrawRect(self.draw, color, x, y + d, @intCast(w), @intCast(h - d));
@@ -621,8 +486,6 @@ pub const Renderer = struct {
             x11.XftDrawRect(self.draw, color, x + d, y, @intCast(w - d), @intCast(h));
             return;
         }
-
-        // 2. 处理象限 (Quadrants)
         if (cat == boxdraw_data.BBQ) {
             const qw = @divTrunc(w + 1, 2);
             const qh = @divTrunc(h + 1, 2);
@@ -632,8 +495,6 @@ pub const Renderer = struct {
             if (data & boxdraw_data.BR != 0) x11.XftDrawRect(self.draw, color, x + qw, y + qh, @intCast(w - qw), @intCast(h - qh));
             return;
         }
-
-        // 3. 处理阴影 (Shades)
         if (data & boxdraw_data.BBS != 0) {
             const d = @as(u16, @intCast(data & 0xFF));
             var xrc = x11.XRenderColor{
@@ -649,30 +510,24 @@ pub const Renderer = struct {
             }
             return;
         }
-
-        // 4. 处理线条 (Lines)
         if (data & (boxdraw_data.BDL | boxdraw_data.BDA) != 0) {
             const light = data & (boxdraw_data.LL | boxdraw_data.LU | boxdraw_data.LR | boxdraw_data.LD);
             const double_ = data & (boxdraw_data.DL | boxdraw_data.DU | boxdraw_data.DR | boxdraw_data.DD);
-
             if (light != 0) {
                 const arc = data & boxdraw_data.BDA != 0;
                 const multi_light = light & (light -% 1) != 0;
                 const multi_double = double_ & (double_ -% 1) != 0;
                 const d_len: i32 = if (arc or (multi_double and !multi_light)) -s else 0;
-
                 if (data & boxdraw_data.LL != 0) x11.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
                 if (data & boxdraw_data.LU != 0) x11.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
                 if (data & boxdraw_data.LR != 0) x11.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
                 if (data & boxdraw_data.LD != 0) x11.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
             }
-
             if (double_ != 0) {
                 const dl = data & boxdraw_data.DL != 0;
                 const du = data & boxdraw_data.DU != 0;
                 const dr = data & boxdraw_data.DR != 0;
                 const dd = data & boxdraw_data.DD != 0;
-
                 if (dl) {
                     const p: i32 = if (dd) -s else 0;
                     const n: i32 = if (du) -s else if (dd) s else 0;
@@ -701,12 +556,10 @@ pub const Renderer = struct {
         }
     }
 
-    /// 更新绘制目标（在窗口大小调整后调用）
     pub fn resize(self: *Renderer) void {
         x11.XftDrawChange(self.draw, self.window.buf);
     }
 
-    /// 重置光标闪烁计时器
     pub fn resetCursorBlink(self: *Renderer) void {
         self.cursor_blink_state = true;
         self.last_blink_time = std.time.milliTimestamp();

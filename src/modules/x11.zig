@@ -62,6 +62,8 @@ pub const Button5 = c.Button5;
 pub const CWBackPixel = c.CWBackPixel;
 pub const CWBorderPixel = c.CWBorderPixel;
 pub const CWBitGravity = c.CWBitGravity;
+pub const CWCursor = c.CWCursor;
+pub const NorthWestGravity = c.NorthWestGravity;
 pub const CWEventMask = c.CWEventMask;
 pub const CWColormap = c.CWColormap;
 
@@ -149,6 +151,29 @@ pub const XLookupString = c.XLookupString;
 pub const XSendEvent = c.XSendEvent;
 pub const XDefaultRootWindow = c.XDefaultRootWindow;
 pub const XInternAtom = c.XInternAtom;
+pub const XCreateFontCursor = c.XCreateFontCursor;
+pub const XDefineCursor = c.XDefineCursor;
+pub const XFreeCursor = c.XFreeCursor;
+pub const XC_xterm = c.XC_xterm;
+pub const XC_left_ptr = c.XC_left_ptr;
+
+pub const XOpenIM = c.XOpenIM;
+pub const XCloseIM = c.XCloseIM;
+pub const XCreateIC = c.XCreateIC;
+pub const XDestroyIC = c.XDestroyIC;
+pub const XFilterEvent = c.XFilterEvent;
+pub const XSetICFocus = c.XSetICFocus;
+pub const XUnsetICFocus = c.XUnsetICFocus;
+pub const XSetLocaleModifiers = c.XSetLocaleModifiers;
+pub const Xutf8LookupString = c.Xutf8LookupString;
+
+pub const XIM = c.XIM;
+pub const XIC = c.XIC;
+pub const XNInputStyle = c.XNInputStyle;
+pub const XNClientWindow = c.XNClientWindow;
+pub const XNFocusWindow = c.XNFocusWindow;
+pub const XIMPreeditNothing = c.XIMPreeditNothing;
+pub const XIMStatusNothing = c.XIMStatusNothing;
 
 pub fn XConnectionNumber(dpy: *Display) c_int {
     return c.XConnectionNumber(dpy);

@@ -18,6 +18,9 @@ pub const Window = struct {
     vis: *x11.Visual,
     cmap: x11.Colormap,
     gc: x11.GC,
+    im: ?x11.XIM = null,
+    ic: ?x11.XIC = null,
+    cursor: x11.C.Cursor = 0,
 
     // Double buffering
     buf: x11.Pixmap = 0,
@@ -57,17 +60,26 @@ pub const Window = struct {
         const win_w = cols * cell_w + border * 2;
         const win_h = rows * cell_h + border * 2;
 
+        // Set default mouse cursor (I-beam)
+        const mouse_cursor = x11.XCreateFontCursor(dpy, x11.XC_xterm);
+
         var attrs: x11.XSetWindowAttributes = undefined;
         attrs.background_pixel = 0; // Black
         attrs.border_pixel = 0;
+        attrs.bit_gravity = x11.NorthWestGravity;
         attrs.colormap = cmap;
         attrs.event_mask = x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask |
             x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask |
             x11.ExposureMask | x11.FocusChangeMask;
 
-        const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWEventMask | x11.CWColormap, &attrs);
+        const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWBitGravity | x11.CWEventMask | x11.CWColormap, &attrs);
 
         if (win == 0) return error.CreateWindowFailed;
+
+        // Apply cursor
+        if (mouse_cursor != 0) {
+            _ = x11.XDefineCursor(dpy, win, mouse_cursor);
+        }
 
         // Set title
         _ = x11.XStoreName(dpy, win, title);
@@ -75,6 +87,16 @@ pub const Window = struct {
         // Create GC
         const gc = x11.XCreateGC(dpy, win, 0, null);
         if (gc == null) return error.CreateGCFailed;
+
+        // Initialize IME
+        _ = x11.XSetLocaleModifiers("");
+        const im = x11.XOpenIM(dpy, null, null, null);
+        var ic: ?x11.XIC = null;
+        if (im) |im_ptr| {
+            ic = x11.XCreateIC(im_ptr, x11.XNInputStyle, x11.XIMPreeditNothing | x11.XIMStatusNothing, x11.XNClientWindow, win, x11.XNFocusWindow, win, @as(?*anyopaque, null));
+        } else {
+            std.log.warn("Failed to open X Input Method\n", .{});
+        }
 
         return Window{
             .dpy = dpy,
@@ -84,6 +106,9 @@ pub const Window = struct {
             .vis = vis,
             .cmap = cmap,
             .gc = gc,
+            .im = im,
+            .ic = ic,
+            .cursor = mouse_cursor,
             .width = @intCast(win_w),
             .height = @intCast(win_h),
             .cell_width = @intCast(cell_w),
@@ -95,6 +120,15 @@ pub const Window = struct {
     }
 
     pub fn deinit(self: *Window) void {
+        if (self.cursor != 0) {
+            _ = x11.C.XFreeCursor(self.dpy, self.cursor);
+        }
+        if (self.ic) |ic| {
+            _ = x11.XDestroyIC(ic);
+        }
+        if (self.im) |im| {
+            _ = x11.XCloseIM(im);
+        }
         if (self.buf != 0) {
             _ = x11.XFreePixmap(self.dpy, self.buf);
         }
@@ -105,6 +139,9 @@ pub const Window = struct {
 
     pub fn show(self: *Window) void {
         _ = x11.XMapWindow(self.dpy, self.win);
+        if (self.cursor != 0) {
+            _ = x11.XDefineCursor(self.dpy, self.win, self.cursor);
+        }
         _ = x11.XSync(self.dpy, x11.False);
     }
 

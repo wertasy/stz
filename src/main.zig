@@ -19,6 +19,9 @@ const UrlDetector = @import("modules/url.zig").UrlDetector;
 const Printer = @import("modules/printer.zig").Printer;
 const config = @import("modules/config.zig");
 const screen = @import("modules/screen.zig");
+const c_locale = @cImport({
+    @cInclude("locale.h");
+});
 
 // 配置重载标志（volatile 用于信号处理）
 var reload_config: bool = false;
@@ -42,6 +45,9 @@ pub fn main() !u8 {
         }
     }
     const allocator = gpa.allocator();
+
+    // Set locale for IME
+    _ = c_locale.setlocale(c_locale.LC_CTYPE, "");
 
     // 设置信号处理器（SIGHUP - 重新加载配置）
     _ = c.signal(c.SIGHUP, signalHandler);
@@ -140,18 +146,21 @@ pub fn main() !u8 {
 
         // 1. 处理所有挂起的 X11 事件
         while (window.pollEvent()) |event| {
-            switch (event.type) {
+            var ev = event;
+            if (x11.XFilterEvent(&ev, x11.None) != 0) continue;
+
+            switch (ev.type) {
                 x11.ClientMessage => {
                     // TODO: Handle WM_DELETE_WINDOW
-                    // if (event.xclient.data.l[0] == wm_delete_window) ...
+                    // if (ev.xclient.data.l[0] == wm_delete_window) ...
                 },
                 x11.KeyPress => {
                     renderer.resetCursorBlink(); // Reset blink on input
 
                     // Check for scroll shortcuts (Shift + PageUp/PageDown)
-                    const state = event.xkey.state;
+                    const state = ev.xkey.state;
                     const shift = (state & x11.ShiftMask) != 0;
-                    const keycode = event.xkey.keycode;
+                    const keycode = ev.xkey.keycode;
                     const keysym = x11.XkbKeycodeToKeysym(window.dpy, @intCast(keycode), 0, if (shift) 1 else 0);
 
                     const XK_Prior = 0xFF55; // PageUp
@@ -192,13 +201,26 @@ pub fn main() !u8 {
                             selector.clear();
                             screen.setFullDirty(&terminal.term);
                         }
-                        try input.handleKey(&event.xkey);
+                        if (window.ic) |ic| {
+                            var status: x11.C.Status = undefined;
+                            var buf: [128]u8 = undefined;
+                            const len = x11.Xutf8LookupString(ic, &ev.xkey, &buf, buf.len, null, &status);
+                            if (len > 0) {
+                                _ = try pty.write(buf[0..@intCast(len)]);
+                            } else {
+                                // If Xutf8LookupString returns nothing, fallback to handleKey
+                                // This ensures control keys like Ctrl+C still work
+                                try input.handleKey(&ev.xkey);
+                            }
+                        } else {
+                            try input.handleKey(&ev.xkey);
+                        }
                     }
                 },
                 x11.ConfigureNotify => {
-                    const ev = event.xconfigure;
-                    const new_w = ev.width;
-                    const new_h = ev.height;
+                    const e = ev.xconfigure;
+                    const new_w = e.width;
+                    const new_h = e.height;
 
                     if (new_w != window.width or new_h != window.height) {
                         window.width = @intCast(new_w);
@@ -238,20 +260,20 @@ pub fn main() !u8 {
                     window.present();
                 },
                 x11.ButtonPress => {
-                    const ev = event.xbutton;
-                    const shift = (ev.state & x11.ShiftMask) != 0;
+                    const e = ev.xbutton;
+                    const shift = (e.state & x11.ShiftMask) != 0;
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(ev.y, cell_h)));
+                    const x = @as(usize, @intCast(@divTrunc(e.x, cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(e.y, cell_h)));
 
                     // Limit to screen bounds
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
 
                     // Ctrl + Left Click: 打开 URL
-                    if (ev.button == x11.Button1 and
-                        (ev.state & x11.C.ControlMask) != 0)
+                    if (e.button == x11.Button1 and
+                        (e.state & x11.C.ControlMask) != 0)
                     {
                         if (url_detector.isUrlAt(cx, cy)) {
                             url_detector.openUrlAt(cx, cy) catch |err| {
@@ -261,7 +283,7 @@ pub fn main() !u8 {
                         continue; // 跳到下一个事件，不处理选择
                     }
 
-                    if (ev.button == x11.Button1) {
+                    if (e.button == x11.Button1) {
                         // Left click: start selection
                         mouse_pressed = true;
                         mouse_x = cx;
@@ -270,18 +292,18 @@ pub fn main() !u8 {
                         selector.clear();
                         selector.start(cx, cy, .none);
                         screen.setFullDirty(&terminal.term);
-                    } else if (ev.button == x11.Button2) {
+                    } else if (e.button == x11.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {
                             std.log.err("Paste request failed: {}\n", .{err});
                         };
-                    } else if (ev.button == x11.Button3) {
+                    } else if (e.button == x11.Button3) {
                         // Right click: extend selection or copy
                         mouse_pressed = true;
                         selector.start(cx, cy, .none);
-                    } else if (ev.button == x11.Button4) { // Scroll Up
+                    } else if (e.button == x11.Button4) { // Scroll Up
                         if (terminal.term.mode.mouse and !shift) {
-                            try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
+                            try input.sendMouseReport(cx, cy, e.button, e.state, false);
                         } else {
                             selector.clear();
                             terminal.kscrollUp(3);
@@ -289,9 +311,9 @@ pub fn main() !u8 {
                             try renderer.renderCursor(term);
                             window.present();
                         }
-                    } else if (ev.button == x11.Button5) { // Scroll Down
+                    } else if (e.button == x11.Button5) { // Scroll Down
                         if (terminal.term.mode.mouse and !shift) {
-                            try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
+                            try input.sendMouseReport(cx, cy, e.button, e.state, false);
                         } else {
                             selector.clear();
                             terminal.kscrollDown(3);
@@ -302,22 +324,22 @@ pub fn main() !u8 {
                     } else {
                         // Check if mouse reporting is enabled
                         if (terminal.term.mode.mouse) {
-                            try input.sendMouseReport(cx, cy, ev.button, ev.state, false);
+                            try input.sendMouseReport(cx, cy, e.button, e.state, false);
                         }
                     }
                 },
                 x11.ButtonRelease => {
-                    const ev = event.xbutton;
+                    const e = ev.xbutton;
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
                     const border = @as(i32, @intCast(config.Config.window.border_pixels));
-                    const x = @as(usize, @intCast(@divTrunc(@max(0, ev.x - border), cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(@max(0, ev.y - border), cell_h)));
+                    const x = @as(usize, @intCast(@divTrunc(@max(0, e.x - border), cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
 
                     if (terminal.term.mode.mouse) {
-                        try input.sendMouseReport(cx, cy, ev.button, ev.state, true);
+                        try input.sendMouseReport(cx, cy, e.button, e.state, true);
                     }
 
                     if (mouse_pressed) {
@@ -341,12 +363,12 @@ pub fn main() !u8 {
                 },
                 x11.MotionNotify => {
                     if (mouse_pressed) {
-                        const ev = event.xmotion;
+                        const e = ev.xmotion;
                         const cell_w = @as(c_int, @intCast(window.cell_width));
                         const cell_h = @as(c_int, @intCast(window.cell_height));
                         const border = @as(i32, @intCast(config.Config.window.border_pixels));
-                        const x = @as(usize, @intCast(@divTrunc(@max(0, ev.x - border), cell_w)));
-                        const y = @as(usize, @intCast(@divTrunc(@max(0, ev.y - border), cell_h)));
+                        const x = @as(usize, @intCast(@divTrunc(@max(0, e.x - border), cell_w)));
+                        const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
                         const cx = @min(x, terminal.term.col - 1);
                         const cy = @min(y, terminal.term.row - 1);
 
@@ -360,47 +382,47 @@ pub fn main() !u8 {
                     }
                 },
                 x11.SelectionRequest => {
-                    const ev = event.xselectionrequest;
-                    std.log.info("SelectionRequest received (target={d})\n", .{ev.target});
+                    const e = ev.xselectionrequest;
+                    std.log.info("SelectionRequest received (target={d})\n", .{e.target});
 
                     var notify: x11.XEvent = undefined;
                     notify.type = x11.SelectionNotify;
-                    notify.xselection.display = ev.display;
-                    notify.xselection.requestor = ev.requestor;
-                    notify.xselection.selection = ev.selection;
-                    notify.xselection.target = ev.target;
-                    notify.xselection.time = ev.time;
-                    notify.xselection.property = ev.property;
+                    notify.xselection.display = e.display;
+                    notify.xselection.requestor = e.requestor;
+                    notify.xselection.selection = e.selection;
+                    notify.xselection.target = e.target;
+                    notify.xselection.time = e.time;
+                    notify.xselection.property = e.property;
 
-                    if (notify.xselection.property == 0) notify.xselection.property = ev.target;
+                    if (notify.xselection.property == 0) notify.xselection.property = e.target;
 
                     const utf8 = x11.getUtf8Atom(window.dpy);
                     const targets = x11.XInternAtom(window.dpy, "TARGETS", 0);
 
                     var success = false;
-                    if (ev.target == targets) {
+                    if (e.target == targets) {
                         const supported = [_]x11.C.Atom{ targets, utf8, x11.XA_STRING };
-                        _ = x11.XChangeProperty(window.dpy, ev.requestor, notify.xselection.property, x11.C.XA_ATOM, 32, x11.C.PropModeReplace, @ptrCast(&supported), supported.len);
+                        _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.C.XA_ATOM, 32, x11.C.PropModeReplace, @ptrCast(&supported), supported.len);
                         success = true;
-                    } else if (ev.target == utf8 or ev.target == x11.C.XA_STRING) {
+                    } else if (e.target == utf8 or e.target == x11.C.XA_STRING) {
                         if (selector.selected_text) |text| {
-                            _ = x11.XChangeProperty(window.dpy, ev.requestor, notify.xselection.property, ev.target, 8, x11.C.PropModeReplace, text.ptr, @intCast(text.len));
+                            _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.C.PropModeReplace, text.ptr, @intCast(text.len));
                             success = true;
                         }
                     }
 
                     if (!success) notify.xselection.property = 0;
 
-                    _ = x11.XSendEvent(window.dpy, ev.requestor, 1, 0, &notify);
+                    _ = x11.XSendEvent(window.dpy, e.requestor, 1, 0, &notify);
                 },
                 x11.SelectionNotify => {
-                    const ev = event.xselection;
+                    const e = ev.xselection;
                     std.log.info("SelectionNotify received\n", .{});
 
-                    if (ev.property != 0) {
+                    if (e.property != 0) {
                         var text_prop: x11.XTextProperty = undefined;
                         // Use ev.property (which should be PRIMARY)
-                        if (x11.XGetTextProperty(window.dpy, ev.requestor, &text_prop, ev.property) > 0) {
+                        if (x11.XGetTextProperty(window.dpy, e.requestor, &text_prop, e.property) > 0) {
                             defer {
                                 _ = x11.XFree(@ptrCast(text_prop.value));
                             }
@@ -435,9 +457,9 @@ pub fn main() !u8 {
                     window.present();
                 },
                 x11.SelectionClear => {
-                    const ev = event.xselectionclear;
+                    const e = ev.xselectionclear;
                     std.log.info("SelectionClear received\n", .{});
-                    selector.handleSelectionClear(&ev);
+                    selector.handleSelectionClear(&e);
                     // Redraw to clear highlight
                     try renderer.render(&terminal.term, &selector);
                     window.present();
@@ -445,6 +467,7 @@ pub fn main() !u8 {
                 x11.FocusIn => {
                     std.log.info("FocusIn\n", .{});
                     terminal.term.mode.focused = true;
+                    if (window.ic) |ic| x11.XSetICFocus(ic);
                     try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();
@@ -452,6 +475,7 @@ pub fn main() !u8 {
                 x11.FocusOut => {
                     std.log.info("FocusOut\n", .{});
                     terminal.term.mode.focused = false;
+                    if (window.ic) |ic| x11.XUnsetICFocus(ic);
                     try renderer.render(&terminal.term, &selector);
                     try renderer.renderCursor(&terminal.term);
                     window.present();

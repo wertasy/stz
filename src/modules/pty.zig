@@ -11,6 +11,8 @@ const c = @cImport({
     @cInclude("unistd.h");
     @cInclude("termios.h");
     @cInclude("signal.h");
+    @cInclude("fcntl.h");
+    @cInclude("pwd.h");
 });
 
 pub const PtyError = error{
@@ -72,10 +74,18 @@ pub const PTY = struct {
     /// 运行子进程
     fn runChild(self: *PTY, shell: ?[:0]const u8) !void {
         // 设置会话 ID
-        _ = c.setsid();
+        const sid = c.setsid();
+        if (sid < 0) return error.ForkFailed;
 
         // 重定向 stdio 到 PTY
         if (self.slave == -1) return;
+
+        // 获取控制终端
+        if (c.ioctl(self.slave, c.TIOCSCTTY, @as(c_int, 0)) < 0) {
+            // 这通常不致命，但值得注意
+            // std.log.warn("ioctl TIOCSCTTY failed\n", .{});
+        }
+
         _ = c.dup2(self.slave, c.STDIN_FILENO);
         _ = c.dup2(self.slave, c.STDOUT_FILENO);
         _ = c.dup2(self.slave, c.STDERR_FILENO);
@@ -84,43 +94,56 @@ pub const PTY = struct {
         _ = c.close(self.slave);
         _ = c.close(self.master);
 
-        // 设置终端类型
-        if (std.posix.getenv("TERM")) |term| {
-            _ = c.setenv("TERM", term, 1);
+        // 重置信号处理
+        _ = c.signal(c.SIGCHLD, c.SIG_DFL);
+        _ = c.signal(c.SIGHUP, c.SIG_DFL);
+        _ = c.signal(c.SIGINT, c.SIG_DFL);
+        _ = c.signal(c.SIGQUIT, c.SIG_DFL);
+        _ = c.signal(c.SIGTERM, c.SIG_DFL);
+        _ = c.signal(c.SIGALRM, c.SIG_DFL);
+
+        // 设置环境变量
+        const pw = c.getpwuid(c.getuid());
+        if (pw != null) {
+            _ = c.setenv("LOGNAME", pw.*.pw_name, 1);
+            _ = c.setenv("USER", pw.*.pw_name, 1);
+            _ = c.setenv("HOME", pw.*.pw_dir, 1);
+            if (shell == null) {
+                // 如果未指定 shell，使用 passwd 中的 shell
+                _ = c.setenv("SHELL", pw.*.pw_shell, 1);
+            }
         }
 
+        // 设置 TERM (如果还没设置)
+        _ = c.setenv("TERM", "xterm-256color", 0);
+
         // 执行 shell
-        const shell_path = shell orelse "/bin/sh";
+        var shell_path: [:0]const u8 = "/bin/sh";
+        if (shell) |s| {
+            shell_path = s;
+        } else if (pw != null and pw.*.pw_shell != null) {
+            shell_path = std.mem.span(pw.*.pw_shell);
+        }
+
+        // 准备参数
         const argv = [_]?[*:0]const u8{ shell_path, null };
 
         _ = c.execvp(shell_path, @ptrCast(&argv));
+
+        // 如果 execvp 失败
+        std.log.err("execvp failed for {s}: {d}\n", .{ shell_path, std.posix.errno(0) });
         c.exit(1);
     }
 
     /// 读取数据
     pub fn read(self: *PTY, buffer: []u8) !usize {
-        const n = c.read(self.master, buffer.ptr, buffer.len);
-        if (n < 0) {
-            return error.ReadFailed;
-        }
-        return @intCast(n);
+        return std.posix.read(self.master, buffer);
     }
 
     /// 写入数据
     pub fn write(self: *PTY, data: []const u8) !usize {
         std.log.info("PTY write: {d} bytes: {any}", .{ data.len, data });
-        var written: usize = 0;
-        while (written < data.len) {
-            const n = c.write(self.master, data[written..].ptr, data.len - written);
-            if (n < 0) {
-                return error.WriteFailed;
-            }
-            if (n == 0) {
-                return error.WriteFailed;
-            }
-            written += @intCast(n);
-        }
-        return written;
+        return std.posix.write(self.master, data);
     }
 
     /// 调整大小
@@ -138,6 +161,15 @@ pub const PTY = struct {
 
         self.cols = cols;
         self.rows = rows;
+    }
+
+    /// 设置为非阻塞模式
+    pub fn setNonBlocking(self: *PTY) !void {
+        const flags = c.fcntl(self.master, c.F_GETFL, @as(c_int, 0));
+        if (flags < 0) return error.OpenFailed;
+        if (c.fcntl(self.master, c.F_SETFL, flags | c.O_NONBLOCK) < 0) {
+            return error.OpenFailed;
+        }
     }
 
     /// 关闭

@@ -67,7 +67,9 @@ pub fn main() !u8 {
     var input = Input.init(&pty);
 
     // 初始化选择器
-    // var selector = Selector.init(allocator);
+    var selector = Selector.init(allocator);
+    selector.setX11Context(window.dpy, window.win);
+    defer selector.deinit();
 
     // 初始化 URL 检测器
     var url_detector = UrlDetector.init(&terminal.term, allocator);
@@ -77,35 +79,18 @@ pub fn main() !u8 {
     defer allocator.free(read_buffer);
 
     var quit: bool = false;
-    // var mouse_pressed: bool = false;
-    // var mouse_x: usize = 0;
-    // var mouse_y: usize = 0;
+    var mouse_pressed: bool = false;
+    var mouse_x: usize = 0;
+    var mouse_y: usize = 0;
+
+    // Paste buffer (for receiving X11 selection)
+    var paste_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096);
+
+    // 设置 PTY 为非阻塞模式
+    try pty.setNonBlocking();
 
     while (!quit) {
-        // 读取 PTY 数据
-        const n = pty.read(read_buffer) catch |err| {
-            if (err == error.ReadFailed) {
-                // PTY 关闭
-                quit = true;
-                break;
-            }
-            return err;
-        };
-
-        if (n > 0) {
-            // 处理终端数据
-            try terminal.processBytes(read_buffer[0..n]);
-
-            // 检测并高亮 URL
-            try url_detector.highlightUrls();
-
-            // 渲染
-            try renderer.render(&terminal.term);
-            try renderer.renderCursor(&terminal.term);
-            window.present();
-        }
-
-        // 处理 X11 事件
+        // 1. 处理所有挂起的 X11 事件
         while (window.pollEvent()) |event| {
             switch (event.type) {
                 x11.ClientMessage => {
@@ -124,6 +109,7 @@ pub fn main() !u8 {
                         window.width = @intCast(new_w);
                         window.height = @intCast(new_h);
                         window.resizeBuffer(@intCast(new_w), @intCast(new_h));
+                        renderer.resize();
 
                         // Resize terminal
                         // ... calculation logic ...
@@ -136,8 +122,182 @@ pub fn main() !u8 {
                     try renderer.renderCursor(&terminal.term);
                     window.present();
                 },
+                x11.ButtonPress => {
+                    const ev = event.xbutton;
+                    const cell_w = @as(c_int, @intCast(window.cell_width));
+                    const cell_h = @as(c_int, @intCast(window.cell_height));
+                    const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(ev.y, cell_h)));
+
+                    // Limit to screen bounds
+                    const cx = @min(x, terminal.term.col - 1);
+                    const cy = @min(y, terminal.term.row - 1);
+
+                    if (ev.button == x11.Button1) {
+                        // Left click: start selection
+                        mouse_pressed = true;
+                        mouse_x = cx;
+                        mouse_y = cy;
+                        selector.start(cx, cy, .word);
+                        // Clear previous selection
+                        selector.clear();
+                    } else if (ev.button == x11.Button2) {
+                        // Middle click: paste from PRIMARY selection
+                        selector.requestPaste() catch |err| {
+                            std.log.err("Paste request failed: {}\n", .{err});
+                        };
+                    } else if (ev.button == x11.Button3) {
+                        // Right click: extend selection or copy
+                        mouse_pressed = true;
+                        selector.start(cx, cy, .word);
+                    }
+                },
+                x11.ButtonRelease => {
+                    if (mouse_pressed) {
+                        mouse_pressed = false;
+
+                        // On release, copy to clipboard
+                        _ = selector.getText(&terminal.term) catch {};
+                        selector.copyToClipboard() catch {};
+
+                        // Redraw to clear selection highlight
+                        try renderer.render(&terminal.term);
+                        try renderer.renderCursor(&terminal.term);
+                        window.present();
+                    }
+                },
+                x11.MotionNotify => {
+                    if (mouse_pressed) {
+                        const ev = event.xmotion;
+                        const cell_w = @as(c_int, @intCast(window.cell_width));
+                        const cell_h = @as(c_int, @intCast(window.cell_height));
+                        const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
+                        const y = @as(usize, @intCast(@divTrunc(ev.y, cell_h)));
+                        const cx = @min(x, terminal.term.col - 1);
+                        const cy = @min(y, terminal.term.row - 1);
+
+                        selector.extend(cx, cy, .regular, false);
+
+                        // Redraw with selection
+                        try renderer.render(&terminal.term);
+                        // Draw selection highlight (simplified: just redraw)
+                        window.present();
+                    }
+                },
+                x11.SelectionRequest => {
+                    const ev = event.xselectionrequest;
+                    std.log.info("SelectionRequest received\n", .{});
+
+                    // Send SelectionNotify with no property (failure) for now
+                    var notify: x11.XEvent = undefined;
+                    notify.type = x11.SelectionNotify;
+                    notify.xselection.selection = ev.selection;
+                    notify.xselection.target = ev.target;
+                    notify.xselection.property = 0; // Failure
+                    notify.xselection.time = ev.time;
+                    notify.xselection.requestor = ev.requestor;
+
+                    _ = x11.XSendEvent(window.dpy, ev.requestor, x11.False, 0, &notify);
+                },
+                x11.SelectionNotify => {
+                    const ev = event.xselection;
+                    std.log.info("SelectionNotify received\n", .{});
+
+                    if (ev.property != 0) {
+                        var text_prop: x11.XTextProperty = undefined;
+                        if (x11.XGetTextProperty(window.dpy, ev.requestor, &text_prop, ev.property) > 0) {
+                            defer {
+                                _ = x11.XFree(@ptrCast(text_prop.value));
+                            }
+
+                            if (text_prop.value) |value| {
+                                const len = @as(usize, @intCast(text_prop.nitems));
+                                const paste_text = value[0..len];
+
+                                // Send to PTY
+                                _ = try pty.write(paste_text);
+
+                                // Also add to paste buffer
+                                try paste_buffer.appendSlice(allocator, paste_text);
+
+                                std.log.info("粘贴: {s}\n", .{paste_text});
+                            }
+                        }
+                    }
+                },
                 else => {},
             }
+        }
+
+        if (quit) break;
+
+        // Check for cursor blink update
+        const now = std.time.milliTimestamp();
+        var timeout_ms: i32 = -1;
+
+        if (config.Config.cursor.blink_interval_ms > 0) {
+            const next_blink = renderer.last_blink_time + config.Config.cursor.blink_interval_ms;
+            if (now >= next_blink) {
+                // Time to toggle blink, force redraw
+                // We don't change state here, renderCursor handles state toggling based on time.
+                // We just ensure we wake up to draw it.
+                try renderer.render(&terminal.term);
+                try renderer.renderCursor(&terminal.term);
+                window.present();
+                timeout_ms = @intCast(config.Config.cursor.blink_interval_ms);
+            } else {
+                timeout_ms = @intCast(next_blink - now);
+            }
+        }
+
+        // 2. Poll 等待新数据
+        var fds = [_]std.posix.pollfd{
+            .{ .fd = pty.master, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = x11.XConnectionNumber(window.dpy), .events = std.posix.POLL.IN, .revents = 0 },
+        };
+
+        _ = std.posix.poll(&fds, timeout_ms) catch |err| {
+            std.log.err("Poll failed: {}\n", .{err});
+            continue;
+        };
+
+        // 3. 处理 PTY 数据
+
+        if ((fds[0].revents & std.posix.POLL.IN) != 0) {
+            const n = pty.read(read_buffer) catch |err| {
+                if (err == error.WouldBlock) {
+                    continue;
+                }
+                if (err == error.InputOutput) {
+                    // PTY 关闭 (EIO)
+                    quit = true;
+                    break;
+                }
+                return err;
+            };
+
+            if (n == 0) {
+                // EOF
+                std.log.info("PTY EOF\n", .{});
+                quit = true;
+                break;
+            }
+
+            // std.log.info("Read {d} bytes from PTY\n", .{n});
+            if (n > 0) {
+                std.log.debug("PTY Read: {d} bytes: {s}\n", .{ n, read_buffer[0..n] });
+            }
+
+            // 处理终端数据
+            try terminal.processBytes(read_buffer[0..n]);
+
+            // 检测并高亮 URL
+            try url_detector.highlightUrls();
+
+            // 渲染
+            try renderer.render(&terminal.term);
+            try renderer.renderCursor(&terminal.term);
+            window.present();
         }
     }
 

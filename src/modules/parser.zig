@@ -74,17 +74,15 @@ pub const Parser = struct {
 
         // 处理 CSI 序列
         if (self.term.esc.csi) {
-            if (self.csi.len >= self.csi.buf.len - 1) {
-                self.csiReset();
-                self.term.esc = .{};
-                return;
+            // 累积字符到 buffer
+            if (self.csi.len < self.csi.buf.len - 1) {
+                self.csi.buf[self.csi.len] = @truncate(c);
+                self.csi.len += 1;
             }
-            self.csi.buf[self.csi.len] = @truncate(c);
-            self.csi.len += 1;
 
-            // 检查序列是否完成
-            if ((c >= 0x40 and c <= 0x7E) or self.csi.len >= 512 - 1) {
-                self.term.esc = .{};
+            // 检查序列是否结束 (0x40 - 0x7E)
+            if (c >= 0x40 and c <= 0x7E) {
+                self.term.esc.csi = false; // 退出 CSI 模式
                 try self.csiParse();
                 try self.csiHandle();
                 self.csiReset();
@@ -191,23 +189,105 @@ pub const Parser = struct {
         }
     }
 
+    /// 移动光标
+    fn moveCursor(self: *Parser, dx: i32, dy: i32) !void {
+        var new_x = @as(isize, @intCast(self.term.c.x)) + dx;
+        var new_y = @as(isize, @intCast(self.term.c.y)) + dy;
+
+        // 限制在范围内
+        new_x = @max(0, @min(new_x, @as(isize, @intCast(self.term.col - 1))));
+        new_y = @max(0, @min(new_y, @as(isize, @intCast(self.term.row - 1))));
+
+        self.term.c.x = @as(usize, @intCast(new_x));
+        self.term.c.y = @as(usize, @intCast(new_y));
+        self.term.c.state = .default; // Reset wrap state
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
+    /// 移动光标到绝对位置
+    fn moveTo(self: *Parser, x: usize, y: usize) !void {
+        var new_x = x;
+        var new_y = y;
+
+        // 处理原点模式
+        if (self.term.c.state == .origin) {
+            new_y += self.term.top;
+        }
+
+        // 限制在范围内
+        if (self.term.c.state == .origin) {
+            new_x = @min(new_x, self.term.col - 1);
+            new_y = @min(new_y, self.term.bot);
+        } else {
+            new_x = @min(new_x, self.term.col - 1);
+            new_y = @min(new_y, self.term.row - 1);
+        }
+
+        self.term.c.x = new_x;
+        self.term.c.y = new_y;
+        self.term.c.state = .default;
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
+    /// 制表符
+    fn putTab(self: *Parser) !void {
+        var x = self.term.c.x + 1;
+
+        // 查找下一个制表位
+        while (x < self.term.col) {
+            if (self.term.tabs) |tabs| {
+                if (x < tabs.len and tabs[x]) break;
+            }
+            x += 1;
+        }
+
+        self.term.c.x = @min(x, self.term.col - 1);
+        self.term.c.state = .default;
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
     /// 处理控制字符
     fn controlCode(self: *Parser, c: u8) !void {
         switch (c) {
             '\x08' => { // BS - 退格
-                // 由 terminal 处理
+                try self.moveCursor(-1, 0);
             },
             '\x09' => { // HT - 水平制表符
-                // 由 terminal 处理
+                try self.putTab();
             },
             '\x0A', '\x0B', '\x0C' => { // LF, VT, FF - 换行
-                // 由 terminal 处理
+                try self.newLine();
+                if (self.term.mode.crlf) {
+                    self.term.c.x = 0;
+                }
             },
             '\x0D' => { // CR - 回车
-                // 由 terminal 处理
+                try self.moveTo(0, self.term.c.y);
             },
             '\x07' => { // BEL - 响铃
                 // 由 window 处理
+            },
+            0x1B => { // ESC
+                self.csiReset();
+                self.term.esc.start = true;
+                self.term.esc.csi = false;
+                self.term.esc.str = false;
+                self.term.esc.alt_charset = false;
+                self.term.esc.tstate = false;
+                self.term.esc.utf8 = false;
+                self.term.esc.str_end = false;
             },
             0x84 => { // IND - 向下滚动一行
                 // 滚动
@@ -306,36 +386,53 @@ pub const Parser = struct {
     /// 解析 CSI 参数
     fn csiParse(self: *Parser) !void {
         var p: usize = 0;
-        var np: [*]const u8 = &self.csi.buf;
 
         self.csi.narg = 0;
-        if (self.csi.buf[0] == '?') {
+        self.csi.priv = 0; // 重置 private 标志
+
+        // 检查私有标志 '?'
+        if (p < self.csi.len and self.csi.buf[p] == '?') {
             self.csi.priv = 1;
             p += 1;
-            np += 1;
         }
 
         self.csi.buf[self.csi.len] = 0;
 
         while (p < self.csi.len and self.csi.narg < 32) {
-            const np_slice = np[0..p];
-            const v = std.fmt.parseInt(i64, np_slice, 10) catch 0;
-            self.csi.arg[self.csi.narg] = v;
-            self.csi.narg += 1;
-
-            while (p < self.csi.len and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
+            // 跳过非数字
+            while (p < self.csi.len and !std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
+                // 如果遇到终止字符，停止解析
+                if (self.csi.buf[p] >= 0x40 and self.csi.buf[p] <= 0x7E) break;
                 p += 1;
             }
 
-            if (p < self.csi.len) {
+            if (p >= self.csi.len) break;
+
+            // 解析数字
+            var val_end = p;
+            while (val_end < self.csi.len and std.ascii.isDigit(self.csi.buf[val_end])) {
+                val_end += 1;
+            }
+
+            if (val_end > p) {
+                const v = std.fmt.parseInt(i64, self.csi.buf[p..val_end], 10) catch 0;
+                self.csi.arg[self.csi.narg] = v;
+                p = val_end;
+            } else {
+                // 默认值 0
+                self.csi.arg[self.csi.narg] = 0;
+            }
+            self.csi.narg += 1;
+
+            // 处理分隔符
+            if (p < self.csi.len and (self.csi.buf[p] == ';' or self.csi.buf[p] == ':')) {
                 p += 1;
-                np += 1;
             }
         }
 
-        if (self.csi.narg < 2) {
-            self.csi.mode[0] = if (p < self.csi.len) self.csi.buf[p] else 0;
-            self.csi.mode[1] = if (p + 1 < self.csi.len) self.csi.buf[p + 1] else 0;
+        // 获取模式字符 (最后一个字符)
+        if (self.csi.len > 0) {
+            self.csi.mode[0] = self.csi.buf[self.csi.len - 1];
         }
     }
 
@@ -343,7 +440,7 @@ pub const Parser = struct {
     fn csiHandle(self: *Parser) !void {
         const mode = self.csi.mode[0];
 
-        // 设置默认参数
+        // 如果没有参数，设置默认值 0
         if (self.csi.narg == 0) {
             self.csi.arg[0] = 0;
             self.csi.narg = 1;

@@ -90,9 +90,36 @@ pub fn runeWidth(codepoint: u21) u8 {
         return 0;
     }
 
-    // 使用 Zig 标准库的 unicode 宽度计算
-    const width = utf8.utf8CodepointSequenceLength(codepoint) catch 1;
-    return @intCast(width);
+    // 简单范围判断 (Basic implementation of wcwidth)
+    // CJK Unified Ideographs
+    if (codepoint >= 0x4E00 and codepoint <= 0x9FFF) return 2;
+    // CJK Unified Ideographs Extension A
+    if (codepoint >= 0x3400 and codepoint <= 0x4DBF) return 2;
+    // CJK Compatibility Ideographs
+    if (codepoint >= 0xF900 and codepoint <= 0xFAFF) return 2;
+    // Fullwidth Forms
+    if (codepoint >= 0xFF01 and codepoint <= 0xFF60) return 2;
+    if (codepoint >= 0xFFE0 and codepoint <= 0xFFE6) return 2;
+    // CJK Radicals Supplement .. Bopomofo Extended
+    if (codepoint >= 0x2E80 and codepoint <= 0x312F) return 2;
+    // CJK Strokes .. Enclosed CJK Letters and Months
+    if (codepoint >= 0x3190 and codepoint <= 0x32FF) return 2;
+    // CJK Compatibility .. CJK Unified Ideographs Extension B
+    if (codepoint >= 0x3300 and codepoint <= 0x2A6DF) return 2;
+    // Box Drawing
+    if (codepoint >= 0x2500 and codepoint <= 0x257F) return 1;
+    // Block Elements
+    if (codepoint >= 0x2580 and codepoint <= 0x259F) return 1;
+    // Powerline Private Use Area (E0A0-E0D6 are usually 1 cell wide, but some icons are 2)
+    // Usually nerd font icons are 1 or 2 depending on the font.
+    // Assuming 1 for standard Powerline separators.
+    if (codepoint >= 0xE0A0 and codepoint <= 0xE0D4) return 1;
+
+    // Emoji/Symbols usually 2?
+    if (codepoint >= 0x1F300 and codepoint <= 0x1F64F) return 2;
+    if (codepoint >= 0x1F900 and codepoint <= 0x1F9FF) return 2;
+
+    return 1;
 }
 
 /// 获取 UTF-8 字符的字节长度

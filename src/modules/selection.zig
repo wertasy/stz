@@ -4,6 +4,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
+const x11 = @import("x11.zig");
 
 const Selection = types.Selection;
 const SelectionMode = types.SelectionMode;
@@ -20,12 +21,21 @@ pub const Selector = struct {
     selection: Selection = .{},
     allocator: std.mem.Allocator,
     selected_text: ?[]u8 = null,
+    // X11 context (set externally)
+    dpy: ?*x11.Display = null,
+    win: x11.Window = 0,
 
     /// 初始化选择器
     pub fn init(allocator: std.mem.Allocator) Selector {
         return Selector{
             .allocator = allocator,
         };
+    }
+
+    /// 设置 X11 上下文
+    pub fn setX11Context(self: *Selector, dpy: *x11.Display, win: x11.Window) void {
+        self.dpy = dpy;
+        self.win = win;
     }
 
     /// 清理选择器
@@ -129,15 +139,16 @@ pub const Selector = struct {
 
     /// 获取选中的文本
     pub fn getText(self: *Selector, term: *const types.Term) ![]u8 {
-        if (self.selection.ob.x == usize.max) {
+        if (self.selection.ob.x == std.math.maxInt(usize)) {
             return &[_]u8{};
         }
 
-        var buffer = std.ArrayList(u8).init(self.allocator);
-        defer buffer.deinit();
+        var buffer = std.ArrayList(u8).initCapacity(self.allocator, 4096) catch return &[_]u8{};
+        defer buffer.deinit(self.allocator);
 
-        const screen = if (term.mode.alt_screen) term.alt else term.line;
-        if (screen == null) return &[_]u8{};
+        const screen_opt = if (term.mode.alt_screen) term.alt else term.line;
+        if (screen_opt == null) return &[_]u8{};
+        const screen = screen_opt.?;
 
         const y_start = self.selection.nb.y;
         const y_end = self.selection.ne.y;
@@ -167,12 +178,17 @@ pub const Selector = struct {
             for (x_start..x_end) |x| {
                 if (x >= screen[y].len) break;
                 const glyph = screen[y][x];
-                try buffer.append(glyph.u);
+                // Convert Unicode code point to UTF-8 bytes
+                var buf: [4]u8 = undefined;
+                const len = std.unicode.utf8Encode(glyph.u, &buf) catch 1;
+                for (buf[0..len]) |byte| {
+                    try buffer.append(self.allocator, byte);
+                }
             }
 
             // 添加换行
             if (y < y_end or (self.selection.type == .rectangular)) {
-                try buffer.append('\n');
+                try buffer.append(self.allocator, '\n');
             }
         }
 
@@ -180,7 +196,7 @@ pub const Selector = struct {
         if (self.selected_text) |text| {
             self.allocator.free(text);
         }
-        self.selected_text = try buffer.toOwnedSlice();
+        self.selected_text = try buffer.toOwnedSlice(self.allocator);
         return self.selected_text.?;
     }
 
@@ -200,8 +216,26 @@ pub const Selector = struct {
     /// 复制到系统剪贴板
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {
-            // TODO: 使用 SDL 设置剪贴板
-            std.log.info("已复制 {d} 字符到剪贴板\n", .{text.len});
+            if (self.dpy) |dpy| {
+                // Use XStoreBytes for simple clipboard storage (PRIMARY selection)
+                _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
+
+                std.log.info("已复制 {d} 字符到剪贴板\n", .{text.len});
+            } else {
+                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{text.len});
+            }
+        }
+    }
+
+    /// 请求粘贴 (Convert Selection)
+    pub fn requestPaste(self: *Selector) !void {
+        if (self.dpy) |dpy| {
+            // Request UTF8_STRING atom
+            const utf8_atom = x11.getUtf8Atom(dpy);
+            const target = utf8_atom;
+
+            _ = x11.XConvertSelection(dpy, x11.getClipboardAtom(dpy), target, x11.C.XA_PRIMARY, self.win, x11.C.CurrentTime);
+            std.log.info("请求粘贴...\n", .{});
         }
     }
 };

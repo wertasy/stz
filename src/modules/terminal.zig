@@ -173,6 +173,11 @@ pub const Terminal = struct {
 
     /// 移动光标
     pub fn moveCursor(self: *Terminal, dx: i32, dy: i32) !void {
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
         var new_x = @as(isize, @intCast(self.term.c.x)) + dx;
         var new_y = @as(isize, @intCast(self.term.c.y)) + dy;
 
@@ -183,10 +188,20 @@ pub const Terminal = struct {
         self.term.c.x = @as(usize, new_x);
         self.term.c.y = @as(usize, new_y);
         self.term.c.state.wrap_next = false;
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
     }
 
     /// 移动光标到绝对位置
     pub fn moveTo(self: *Terminal, x: usize, y: usize) !void {
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
         var new_x = x;
         var new_y = y;
 
@@ -207,10 +222,20 @@ pub const Terminal = struct {
         self.term.c.x = new_x;
         self.term.c.y = new_y;
         self.term.c.state.wrap_next = false;
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
     }
 
     /// 换行
     fn newLine(self: *Terminal, first_col: bool) !void {
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
         if (self.term.c.y == self.term.bot) {
             try screen.scrollUp(&self.term, self.term.top, 1);
         } else {
@@ -219,10 +244,20 @@ pub const Terminal = struct {
 
         self.term.c.x = if (first_col) 0 else self.term.c.x;
         self.term.c.state.wrap_next = false;
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
     }
 
     /// 制表符
     fn putTab(self: *Terminal) !void {
+        // Mark old cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+
         var x = self.term.c.x + 1;
 
         // 查找下一个制表位
@@ -235,6 +270,11 @@ pub const Terminal = struct {
 
         self.term.c.x = @min(x, self.term.col - 1);
         self.term.c.state.wrap_next = false;
+
+        // Mark new cursor line as dirty
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
     }
 
     /// 清除屏幕
@@ -421,5 +461,36 @@ pub const Terminal = struct {
     /// 调整终端大小
     pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
         try screen.resize(&self.term, new_row, new_col);
+    }
+
+    /// 向上滚动历史 (PageUp)
+    pub fn kscrollUp(self: *Terminal, n: usize) void {
+        const hist_len = self.term.hist_cnt;
+        if (hist_len == 0) return;
+
+        var next_scr = self.term.scr + n;
+        if (next_scr > hist_len) {
+            next_scr = hist_len;
+        }
+
+        if (next_scr != self.term.scr) {
+            self.term.scr = next_scr;
+            screen.setFullDirty(&self.term);
+        }
+    }
+
+    /// 向下滚动历史 (PageDown)
+    pub fn kscrollDown(self: *Terminal, n: usize) void {
+        var next_scr = self.term.scr;
+        if (n >= next_scr) {
+            next_scr = 0;
+        } else {
+            next_scr -= n;
+        }
+
+        if (next_scr != self.term.scr) {
+            self.term.scr = next_scr;
+            screen.setFullDirty(&self.term);
+        }
     }
 };

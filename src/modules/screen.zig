@@ -31,6 +31,16 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
     errdefer allocator.free(alt_buf);
     term.alt = alt_buf;
 
+    // 分配历史缓冲区
+    const hist_rows = @import("config.zig").Config.scroll.history_lines;
+    const hist_buf = try allocator.alloc([]Glyph, hist_rows);
+    errdefer allocator.free(hist_buf);
+    term.hist = hist_buf;
+    term.hist_max = hist_rows;
+    term.hist_idx = 0;
+    term.hist_cnt = 0;
+    term.scr = 0;
+
     // 分配脏标记
     const dirty_buf = try allocator.alloc(bool, row);
     errdefer allocator.free(dirty_buf);
@@ -51,6 +61,14 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
         for (0..col) |x| {
             term.line.?[y][x] = Glyph{};
             term.alt.?[y][x] = Glyph{};
+        }
+    }
+
+    // 初始化历史缓冲区
+    for (0..term.hist_max) |y| {
+        term.hist.?[y] = try allocator.alloc(Glyph, col);
+        for (0..col) |x| {
+            term.hist.?[y][x] = Glyph{};
         }
     }
 
@@ -88,6 +106,13 @@ pub fn deinit(term: *Term) void {
         allocator.free(lines);
     }
 
+    if (term.hist) |lines| {
+        for (lines) |line| {
+            allocator.free(line);
+        }
+        allocator.free(lines);
+    }
+
     if (term.dirty) |d| {
         allocator.free(d);
     }
@@ -98,6 +123,7 @@ pub fn deinit(term: *Term) void {
 
     term.line = null;
     term.alt = null;
+    term.hist = null;
     term.dirty = null;
     term.tabs = null;
 }
@@ -125,6 +151,30 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     // 分配新大小的行
     term.line = try allocator.alloc([]Glyph, new_row);
     term.alt = try allocator.alloc([]Glyph, new_row);
+    // Note: History resize is complicated (ring buffer), skip for now or clear it.
+    // Ideally we should resize history lines too. For simplicity, let's keep history as is but resize lines.
+    // If width changes, we need to resize history lines.
+
+    // Resize history buffer lines if width changed
+    if (new_col != term.col) {
+        if (term.hist) |hist| {
+            for (hist) |line| {
+                allocator.free(line);
+            }
+            allocator.free(hist);
+        }
+        const hist_rows = term.hist_max; // Keep same history size
+        term.hist = try allocator.alloc([]Glyph, hist_rows);
+        for (0..hist_rows) |y| {
+            term.hist.?[y] = try allocator.alloc(Glyph, new_col);
+            for (0..new_col) |x| {
+                term.hist.?[y][x] = Glyph{};
+            }
+        }
+        term.hist_idx = 0;
+        term.hist_cnt = 0;
+        term.scr = 0;
+    }
 
     // 分配每一行的字符
     for (0..new_row) |y| {
@@ -210,21 +260,36 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
     const limit_n = @min(n, term.bot - orig + 1);
     const screen = if (term.mode.alt_screen) term.alt else term.line;
 
+    if (orig == 0 and limit_n > 0 and !term.mode.alt_screen) {
+        // Save lines to history
+        for (0..limit_n) |i| {
+            const line_idx = orig + i;
+            const src_line = screen.?[line_idx];
+            const dest_line = term.hist.?[term.hist_idx];
+
+            @memcpy(dest_line, src_line);
+
+            term.hist_idx = (term.hist_idx + 1) % term.hist_max;
+            if (term.hist_cnt < term.hist_max) {
+                term.hist_cnt += 1;
+            }
+        }
+    }
+
     // 移动行
     var i: usize = orig;
     while (i + limit_n <= term.bot) : (i += 1) {
         const temp = screen.?[i];
         screen.?[i] = screen.?[i + limit_n];
         screen.?[i + limit_n] = temp;
-        i += 1;
     }
 
+    // Mark affected region as dirty
+    setDirty(term, orig, term.bot);
+
     // 清除底部行
-    for (0..limit_n) |_| {
-        const idx = term.bot - limit_n + 1;
-        if (term.dirty) |dirty| {
-            dirty[idx] = true;
-        }
+    for (0..limit_n) |k| {
+        const idx = term.bot - limit_n + 1 + k;
         if (screen) |scr| {
             for (scr[idx]) |*glyph| {
                 glyph.* = .{
@@ -249,16 +314,16 @@ pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
         const temp = screen.?[i];
         screen.?[i] = screen.?[i - limit_n];
         screen.?[i - limit_n] = temp;
-        i -= 1;
     }
 
+    // Mark affected region as dirty
+    setDirty(term, orig, term.bot);
+
     // 清除顶部行
-    for (0..limit_n) |_| {
-        if (term.dirty) |dirty| {
-            dirty[orig] = true;
-        }
+    for (0..limit_n) |k| {
+        const idx = orig + k;
         if (screen) |scr| {
-            for (scr[orig]) |*glyph| {
+            for (scr[idx]) |*glyph| {
                 glyph.* = .{
                     .u = ' ',
                     .fg = term.c.attr.fg,

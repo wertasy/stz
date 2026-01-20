@@ -165,6 +165,13 @@ pub const Term = struct {
     line: ?[][]Glyph = null,
     alt: ?[][]Glyph = null, // 备用屏幕
 
+    // 历史记录
+    hist: ?[][]Glyph = null, // 历史缓冲区
+    hist_idx: usize = 0, // 历史缓冲区当前写入索引
+    hist_cnt: usize = 0, // 历史缓冲区当前行数
+    hist_max: usize = 0, // 历史缓冲区最大行数
+    scr: usize = 0, // 滚动偏移 (0 = 底部)
+
     // 脏标记
     dirty: ?[]bool = null,
 

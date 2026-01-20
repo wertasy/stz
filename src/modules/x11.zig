@@ -26,6 +26,7 @@ pub const Colormap = c.Colormap;
 pub const Pixmap = c.Pixmap;
 pub const XSetWindowAttributes = c.XSetWindowAttributes;
 pub const XRenderColor = c.XRenderColor;
+pub const XTextProperty = c.XTextProperty;
 
 // Re-export common constants
 pub const True = 1;
@@ -47,6 +48,13 @@ pub const SelectionRequest = c.SelectionRequest;
 pub const PropertyNotify = c.PropertyNotify;
 pub const FocusIn = c.FocusIn;
 pub const FocusOut = c.FocusOut;
+
+// Mouse button constants
+pub const Button1 = c.Button1;
+pub const Button2 = c.Button2;
+pub const Button3 = c.Button3;
+pub const Button4 = c.Button4;
+pub const Button5 = c.Button5;
 
 pub const CWBackPixel = c.CWBackPixel;
 pub const CWBorderPixel = c.CWBorderPixel;
@@ -91,3 +99,49 @@ pub const XftFontClose = c.XftFontClose;
 pub const XftColorAllocValue = c.XftColorAllocValue;
 pub const XftDrawRect = c.XftDrawRect;
 pub const XftDrawString32 = c.XftDrawString32;
+pub const XftTextExtents32 = c.XftTextExtents32;
+pub const XftDrawChange = c.XftDrawChange;
+
+// X11 Selection/Clipboard Atoms
+pub const XA_PRIMARY = c.XA_PRIMARY;
+// XA_CLIPBOARD might not be directly available in all C compilers via @cImport
+// Define it manually if not available, using XInternAtom at runtime in code
+const XA_CLIPBOARD_NAME = "CLIPBOARD";
+const XA_PRIMARY_NAME = "PRIMARY";
+const XA_STRING_NAME = "STRING";
+const UTF8_STRING_NAME = "UTF8_STRING";
+
+// Helper function to get clipboard atom
+pub fn getClipboardAtom(dpy: *Display) c.Atom {
+    return XInternAtom(dpy, XA_CLIPBOARD_NAME, False);
+}
+
+pub fn getPrimaryAtom(dpy: *Display) c.Atom {
+    return XInternAtom(dpy, XA_PRIMARY_NAME, False);
+}
+
+pub fn getStringAtom(dpy: *Display) c.Atom {
+    return XInternAtom(dpy, XA_STRING_NAME, False);
+}
+
+pub fn getUtf8Atom(dpy: *Display) c.Atom {
+    return XInternAtom(dpy, UTF8_STRING_NAME, False);
+}
+
+// Selection functions
+pub const XSetSelectionOwner = c.XSetSelectionOwner;
+pub const XGetSelectionOwner = c.XGetSelectionOwner;
+pub const XConvertSelection = c.XConvertSelection;
+pub const XGetTextProperty = c.XGetTextProperty;
+pub const XSetTextProperty = c.XSetTextProperty;
+pub const XStoreBytes = c.XStoreBytes;
+pub const XChangeProperty = c.XChangeProperty;
+pub const XFree = c.XFree;
+pub const XLookupString = c.XLookupString;
+pub const XSendEvent = c.XSendEvent;
+pub const XDefaultRootWindow = c.XDefaultRootWindow;
+pub const XInternAtom = c.XInternAtom;
+
+pub fn XConnectionNumber(dpy: *Display) c_int {
+    return c.XConnectionNumber(dpy);
+}

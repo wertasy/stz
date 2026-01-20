@@ -450,7 +450,7 @@ pub const Renderer = struct {
         const midx = x + w2_line;
         const midy = y + h2_line;
         const cat = data & ~@as(u16, boxdraw_data.BDB | 0xff);
-        if (data & boxdraw_data.BRL != 0) {
+        if (cat == boxdraw_data.BRL) {
             const bw1 = @divTrunc(w + 1, 2);
             const bh1 = @divTrunc(h + 2, 4);
             const bh2 = @divTrunc(h + 1, 2);

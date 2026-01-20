@@ -15,7 +15,11 @@ pub const BoxDrawError = error{
 pub const BoxDraw = struct {
     /// 检查是否是框线字符
     pub fn isBoxDraw(u: u21) bool {
-        return (u >= 0x2500 and u <= 0x259F) or (u >= 0x2800 and u <= 0x28FF);
+        if (u >= 0x2800 and u <= 0x28FF) return true;
+        if (u >= 0x2500 and u <= 0x259F) {
+            return boxdraw_data.boxdata[u - 0x2500] != 0;
+        }
+        return false;
     }
 
     /// 获取绘制数据

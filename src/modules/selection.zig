@@ -47,14 +47,14 @@ pub const Selector = struct {
 
     /// 开始选择
     pub fn start(self: *Selector, col: usize, row: usize, snap_mode: SelectionSnap) void {
-        self.selection.mode = .empty;
+        self.selection.mode = .idle; // 初始设为 idle（无选择），等待拖动
         self.selection.type = .regular;
         self.selection.snap = snap_mode;
         self.selection.oe.x = col;
         self.selection.oe.y = row;
         self.selection.ob.x = col;
         self.selection.ob.y = row;
-        self.normalize();
+        // 不调用 normalize()，避免创建单字符选择
     }
 
     /// 扩展选择

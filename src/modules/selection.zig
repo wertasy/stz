@@ -128,7 +128,7 @@ pub const Selector = struct {
 
     /// 检查是否选中
     pub fn isSelected(self: *Selector, x: usize, y: usize) bool {
-        if (self.selection.nb.x == std.math.maxInt(usize)) {
+        if (self.selection.mode == .idle or self.selection.nb.x == std.math.maxInt(usize)) {
             return false;
         }
 

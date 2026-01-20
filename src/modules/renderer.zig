@@ -298,22 +298,21 @@ pub const Renderer = struct {
             }
 
             // Check dirty flag
-            // If scrolling, we should redraw everything or handle dirty logic carefully.
-            // Simplified: If scr > 0, always redraw or assume dirty.
-            // Or better: setFullDirty when scrolling.
-            if (term.scr == 0) {
+            // If scrolling or there is an active selection, we should redraw everything or handle dirty logic carefully.
+            if (term.scr == 0 and selector.selection.mode == .idle) {
                 if (term.dirty) |dirty| {
                     if (!dirty[y]) continue;
                 }
             }
 
             // Clear the dirty row with default background
-            const y_pos = @as(i32, @intCast(y * self.char_height));
+            const border = @as(i32, @intCast(config.Config.window.border_pixels));
+            const y_pos = @as(i32, @intCast(y * self.char_height)) + border;
             x11.XftDrawRect(self.draw, &default_bg, 0, y_pos, @intCast(self.window.width), @intCast(self.char_height));
 
             for (0..@min(term.col, line_data.len)) |x| {
                 const glyph = line_data[x];
-                const x_pos = @as(i32, @intCast(x * self.char_width));
+                const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
 
                 // Determine colors based on attributes
                 var fg_idx = glyph.fg;
@@ -334,6 +333,7 @@ pub const Renderer = struct {
                 // Handle selection highlight
                 if (selector.isSelected(x, y)) {
                     reverse = !reverse;
+                    // std.log.info("Cell ({d}, {d}) selected\n", .{ x, y });
                 }
 
                 if (reverse) {
@@ -471,8 +471,9 @@ pub const Renderer = struct {
             return;
         }
 
-        const x_pos = @as(i32, @intCast(cx * self.char_width));
-        const y_pos = @as(i32, @intCast(cy * self.char_height));
+        const border = @as(i32, @intCast(config.Config.window.border_pixels));
+        const x_pos = @as(i32, @intCast(cx * self.char_width)) + border;
+        const y_pos = @as(i32, @intCast(cy * self.char_height)) + border;
 
         // Get glyph under cursor
         const screen = if (term.mode.alt_screen) term.alt else term.line;

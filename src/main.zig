@@ -257,6 +257,7 @@ pub fn main() !u8 {
                         // Clear previous selection
                         selector.clear();
                         selector.start(cx, cy, .none);
+                        screen.setFullDirty(&terminal.term);
                     } else if (ev.button == x11.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {
@@ -291,8 +292,9 @@ pub fn main() !u8 {
                     const ev = event.xbutton;
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(ev.y, cell_h)));
+                    const border = @as(i32, @intCast(config.Config.window.border_pixels));
+                    const x = @as(usize, @intCast(@divTrunc(@max(0, ev.x - border), cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(@max(0, ev.y - border), cell_h)));
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
 
@@ -318,12 +320,14 @@ pub fn main() !u8 {
                         const ev = event.xmotion;
                         const cell_w = @as(c_int, @intCast(window.cell_width));
                         const cell_h = @as(c_int, @intCast(window.cell_height));
-                        const x = @as(usize, @intCast(@divTrunc(ev.x, cell_w)));
-                        const y = @as(usize, @intCast(@divTrunc(ev.y, cell_h)));
+                        const border = @as(i32, @intCast(config.Config.window.border_pixels));
+                        const x = @as(usize, @intCast(@divTrunc(@max(0, ev.x - border), cell_w)));
+                        const y = @as(usize, @intCast(@divTrunc(@max(0, ev.y - border), cell_h)));
                         const cx = @min(x, terminal.term.col - 1);
                         const cy = @min(y, terminal.term.row - 1);
 
                         selector.extend(cx, cy, .regular, false);
+                        screen.setFullDirty(&terminal.term);
 
                         // Redraw with selection
                         try renderer.render(&terminal.term, &selector);
@@ -333,18 +337,37 @@ pub fn main() !u8 {
                 },
                 x11.SelectionRequest => {
                     const ev = event.xselectionrequest;
-                    std.log.info("SelectionRequest received\n", .{});
+                    std.log.info("SelectionRequest received (target={d})\n", .{ev.target});
 
-                    // Send SelectionNotify with no property (failure) for now
                     var notify: x11.XEvent = undefined;
                     notify.type = x11.SelectionNotify;
+                    notify.xselection.display = ev.display;
+                    notify.xselection.requestor = ev.requestor;
                     notify.xselection.selection = ev.selection;
                     notify.xselection.target = ev.target;
-                    notify.xselection.property = 0; // Failure
                     notify.xselection.time = ev.time;
-                    notify.xselection.requestor = ev.requestor;
+                    notify.xselection.property = ev.property;
 
-                    _ = x11.XSendEvent(window.dpy, ev.requestor, x11.False, 0, &notify);
+                    if (notify.xselection.property == 0) notify.xselection.property = ev.target;
+
+                    const utf8 = x11.getUtf8Atom(window.dpy);
+                    const targets = x11.XInternAtom(window.dpy, "TARGETS", 0);
+
+                    var success = false;
+                    if (ev.target == targets) {
+                        const supported = [_]x11.C.Atom{ targets, utf8, x11.XA_STRING };
+                        _ = x11.XChangeProperty(window.dpy, ev.requestor, notify.xselection.property, x11.C.XA_ATOM, 32, x11.C.PropModeReplace, @ptrCast(&supported), supported.len);
+                        success = true;
+                    } else if (ev.target == utf8 or ev.target == x11.C.XA_STRING) {
+                        if (selector.selected_text) |text| {
+                            _ = x11.XChangeProperty(window.dpy, ev.requestor, notify.xselection.property, ev.target, 8, x11.C.PropModeReplace, text.ptr, @intCast(text.len));
+                            success = true;
+                        }
+                    }
+
+                    if (!success) notify.xselection.property = 0;
+
+                    _ = x11.XSendEvent(window.dpy, ev.requestor, 1, 0, &notify);
                 },
                 x11.SelectionNotify => {
                     const ev = event.xselection;
@@ -360,10 +383,17 @@ pub fn main() !u8 {
 
                             if (text_prop.value) |value| {
                                 const len = @as(usize, @intCast(text_prop.nitems));
-                                const paste_text = value[0..len];
+                                const paste_text = try allocator.dupe(u8, value[0..len]);
+                                defer allocator.free(paste_text);
+
+                                // 将 \n 转换为 \r 以适应终端
+                                for (paste_text) |*char| {
+                                    if (char.* == '\n') char.* = '\r';
+                                }
 
                                 // Send to PTY
-                                _ = try pty.write(paste_text);
+                                const written = try pty.write(paste_text);
+                                std.log.info("已将 {d} 字节写入 PTY: {s}\n", .{ written, paste_text });
 
                                 // Also add to paste buffer
                                 try paste_buffer.appendSlice(allocator, paste_text);

@@ -109,7 +109,9 @@ pub const XftTextExtents32 = c.XftTextExtents32;
 pub const XftDrawChange = c.XftDrawChange;
 
 // X11 Selection/Clipboard Atoms
-pub const XA_PRIMARY = c.XA_PRIMARY;
+pub const XA_STRING = c.XA_STRING;
+pub const XA_ATOM = c.XA_ATOM;
+pub const PropModeReplace = c.PropModeReplace;
 // XA_CLIPBOARD might not be directly available in all C compilers via @cImport
 // Define it manually if not available, using XInternAtom at runtime in code
 const XA_CLIPBOARD_NAME = "CLIPBOARD";

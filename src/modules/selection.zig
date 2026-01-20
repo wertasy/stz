@@ -115,6 +115,10 @@ pub const Selector = struct {
     /// 检查是否选中
     pub fn isSelected(self: *Selector, x: usize, y: usize) bool {
         if (self.selection.mode == .empty or self.selection.ob.x == std.math.maxInt(usize)) {
+            // 如果是起始点，也可以认为是选中（类似于 st 的视觉反馈）
+            if (self.selection.mode == .empty and x == self.selection.ob.x and y == self.selection.ob.y) {
+                return true;
+            }
             return false;
         }
 
@@ -214,6 +218,9 @@ pub const Selector = struct {
     /// 复制到系统剪贴板
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {
+            // 不要复制空文本
+            if (text.len == 0) return;
+
             if (self.dpy) |dpy| {
                 // Use XSetSelectionOwner to claim PRIMARY selection
                 const primary_atom = x11.getPrimaryAtom(dpy);

@@ -130,8 +130,10 @@ pub fn deinit(term: *Term) void {
 
 /// 获取当前可见的行数据（考虑滚动偏移）
 pub fn getVisibleLine(term: *const Term, y: usize) []Glyph {
+    // 如果处于备用屏幕模式，直接返回当前行（因为 line/alt 已经交换过了）
+    // 此时 term.line 指向的是备用屏幕缓冲区
     if (term.mode.alt_screen) {
-        return term.alt.?[y];
+        return term.line.?[y];
     }
 
     if (term.scr > 0) {

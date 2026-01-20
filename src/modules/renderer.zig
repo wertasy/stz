@@ -6,6 +6,7 @@ const config = @import("config.zig");
 const selection = @import("selection.zig");
 const boxdraw = @import("boxdraw.zig");
 const boxdraw_data = @import("boxdraw_data.zig");
+const screen_mod = @import("screen.zig");
 const Window = @import("window.zig").Window;
 
 const Glyph = types.Glyph;
@@ -232,37 +233,15 @@ pub const Renderer = struct {
     }
 
     pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !void {
-        const screen = term.line;
-        if (screen == null) return;
+        if (term.line == null) return;
 
         // Default background color
         var default_bg = try self.getColor(term, 259);
 
         // Iterate over rows
-        for (0..@min(term.row, screen.?.len)) |y| {
+        for (0..term.row) |y| {
             // Determine which line to draw
-            var line_data: []Glyph = undefined;
-
-            if (term.scr > 0 and !term.mode.alt_screen) {
-                if (y < term.scr) {
-                    if (term.hist_cnt > 0) {
-                        const newest_idx = (term.hist_idx + term.hist_max - 1) % term.hist_max;
-                        const offset = term.scr - 1 - y;
-                        if (offset < term.hist_cnt) {
-                            const hist_fetch_idx = (newest_idx + term.hist_max - offset) % term.hist_max;
-                            line_data = term.hist.?[hist_fetch_idx];
-                        } else {
-                            line_data = term.line.?[0];
-                        }
-                    } else {
-                        line_data = term.line.?[0];
-                    }
-                } else {
-                    line_data = term.line.?[y - term.scr];
-                }
-            } else {
-                line_data = screen.?[y];
-            }
+            const line_data = screen_mod.getVisibleLine(term, y);
 
             // Check dirty flag
             if (term.scr == 0 and selector.selection.mode == .idle) {

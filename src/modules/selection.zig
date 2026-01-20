@@ -5,6 +5,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
 const x11 = @import("x11.zig");
+const scr_mod = @import("screen.zig");
 
 const Selection = types.Selection;
 const SelectionMode = types.SelectionMode;
@@ -119,18 +120,13 @@ pub const Selector = struct {
 
     /// 吸附到单词或行
     pub fn snap(self: *Selector, term: *const types.Term, point: *Point, direction: i8) void {
-        const screen_opt = if (term.mode.alt_screen) term.alt else term.line;
-        if (screen_opt == null) return;
-        const screen = screen_opt.?;
-
         switch (self.selection.snap) {
             .none => {},
             .word => {
                 const delimiters = config.Config.selection.word_delimiters;
                 var x = point.x;
                 const y = point.y;
-                if (y >= screen.len) return;
-                const line = screen[y];
+                const line = scr_mod.getVisibleLine(term, y);
                 if (x >= line.len) return;
 
                 const initial_c = line[x].u;
@@ -201,18 +197,16 @@ pub const Selector = struct {
         var buffer = std.ArrayList(u8).initCapacity(self.allocator, 4096) catch return &[_]u8{};
         defer buffer.deinit(self.allocator);
 
-        const screen_opt = if (term.mode.alt_screen) term.alt else term.line;
-        if (screen_opt == null) return &[_]u8{};
-        const screen = screen_opt.?;
-
         const y_start = self.selection.nb.y;
         const y_end = self.selection.ne.y;
 
         for (y_start..y_end + 1) |y| {
-            if (y >= screen.len) break;
+            if (y >= term.row) break;
 
             var x_start: usize = 0;
             var x_end: usize = 0;
+
+            const line = scr_mod.getVisibleLine(term, y);
 
             if (self.selection.type == .rectangular) {
                 x_start = self.selection.nb.x;
@@ -223,13 +217,13 @@ pub const Selector = struct {
             }
 
             // 修剪尾部空格，并确保 x_end 不小于 x_start
-            while (x_end > x_start and x_end <= screen[y].len and screen[y][x_end - 1].u == ' ') {
+            while (x_end > x_start and x_end <= line.len and line[x_end - 1].u == ' ') {
                 x_end -= 1;
             }
 
             for (x_start..x_end) |x| {
-                if (x >= screen[y].len) break;
-                const glyph = screen[y][x];
+                if (x >= line.len) break;
+                const glyph = line[x];
                 // Convert Unicode code point to UTF-8 bytes
                 var buf: [4]u8 = undefined;
                 const len = std.unicode.utf8Encode(glyph.u, &buf) catch 1;

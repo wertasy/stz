@@ -128,6 +128,34 @@ pub fn deinit(term: *Term) void {
     term.tabs = null;
 }
 
+/// 获取当前可见的行数据（考虑滚动偏移）
+pub fn getVisibleLine(term: *const Term, y: usize) []Glyph {
+    if (term.mode.alt_screen) {
+        return term.alt.?[y];
+    }
+
+    if (term.scr > 0) {
+        if (y < term.scr) {
+            // 在历史记录中
+            const newest_idx = (term.hist_idx + term.hist_max - 1) % term.hist_max;
+            const offset = term.scr - y - 1;
+            if (term.hist_cnt > 0) {
+                if (offset < term.hist_cnt) {
+                    const hist_fetch_idx = (newest_idx + term.hist_max - offset) % term.hist_max;
+                    return term.hist.?[hist_fetch_idx];
+                }
+            }
+            // 超出历史记录，返回第一行
+            return term.line.?[0];
+        } else {
+            // 在当前屏幕
+            return term.line.?[y - term.scr];
+        }
+    }
+
+    return term.line.?[y];
+}
+
 /// 调整终端大小
 /// 参考 st 的 tresize 实现，滑动屏幕以保持光标位置
 pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {

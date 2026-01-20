@@ -285,7 +285,7 @@ pub const Parser = struct {
         }
     }
 
-    /// 插入空白字符
+    /// 插入空白字符 (ICH)
     fn insertBlank(self: *Parser, n: usize) !void {
         const max_chars = self.term.col - self.term.c.x;
         const insert_count = @min(n, max_chars);
@@ -293,16 +293,23 @@ pub const Parser = struct {
         if (self.term.line) |lines| {
             if (self.term.c.y < lines.len) {
                 const line = lines[self.term.c.y];
-                var i: usize = self.term.col - 1;
-                while (i >= self.term.c.x + insert_count) : (i -= 1) {
-                    if (i + insert_count < line.len) {
-                        line[i + insert_count] = line[i];
+                // 从右向左移动字符，腾出空间
+                // 源范围: [c.x, col - 1 - insert_count]
+                // 目标范围: [c.x + insert_count, col - 1]
+                const src_end = self.term.col - 1 - insert_count;
+                var src = src_end;
+                while (src >= self.term.c.x) : (src -= 1) {
+                    const dest = src + insert_count;
+                    if (dest < line.len) {
+                        line[dest] = line[src];
                     }
+                    if (src == 0) break; // 防止下溢
                 }
+
+                // 填充空白
                 var j: usize = self.term.c.x;
                 while (j < self.term.c.x + insert_count) : (j += 1) {
-                    var glyph = self.term.c.attr;
-                    glyph.u = ' ';
+                    const glyph = Glyph{ .u = ' ', .fg = self.term.c.attr.fg, .bg = self.term.c.attr.bg };
                     if (j < line.len) {
                         line[j] = glyph;
                     }
@@ -417,6 +424,7 @@ pub const Parser = struct {
         try self.scrollUp(self.term.c.y, n);
     }
 
+    /// 删除字符 (DCH)
     fn deleteChar(self: *Parser, n: usize) !void {
         const max_chars = self.term.col - self.term.c.x;
         const delete_count = @min(n, max_chars);
@@ -425,10 +433,17 @@ pub const Parser = struct {
         if (self.term.line) |lines| {
             if (self.term.c.y < lines.len) {
                 const line = lines[self.term.c.y];
-                var i = self.term.c.x;
-                while (i + delete_count < self.term.col) : (i += 1) {
-                    if (i + delete_count < line.len) line[i] = line[i + delete_count];
+                // 向左移动字符
+                // 源范围: [c.x + delete_count, col - 1]
+                // 目标范围: [c.x, col - 1 - delete_count]
+                var dest = self.term.c.x;
+                while (dest < self.term.col - delete_count) : (dest += 1) {
+                    const src = dest + delete_count;
+                    if (src < line.len) {
+                        line[dest] = line[src];
+                    }
                 }
+                // 清除末尾字符
                 var j: usize = @max(0, self.term.col - delete_count);
                 while (j < self.term.col) : (j += 1) {
                     if (j < line.len) line[j] = Glyph{ .u = ' ', .fg = self.term.c.attr.fg, .bg = self.term.c.attr.bg };

@@ -433,43 +433,7 @@ pub const Terminal = struct {
 
     /// 重置终端
     pub fn reset(self: *Terminal) !void {
-        // 重置光标
-        self.term.c = TCursor{
-            .attr = Glyph{
-                .fg = config.Config.colors.default_foreground,
-                .bg = config.Config.colors.default_background,
-            },
-            .x = 0,
-            .y = 0,
-            .state = .default,
-        };
-
-        // 重置制表符
-        if (self.term.tabs) |tabs| {
-            for (tabs) |*tab| {
-                tab.* = false;
-            }
-            // 设置默认制表符
-            for (0..self.term.col) |x| {
-                if (x % config.Config.tab_spaces == 0) {
-                    tabs[x] = true;
-                }
-            }
-        }
-
-        // 重置滚动区域
-        self.term.top = 0;
-        self.term.bot = self.term.row - 1;
-
-        // 重置模式
-        self.term.mode = .{
-            .utf8 = true,
-            .wrap = true,
-        };
-
-        // 清除屏幕
-        try self.clearScreen(2);
-        try self.clearLine(2);
+        try self.parser.resetTerminal();
     }
 
     /// 调整终端大小

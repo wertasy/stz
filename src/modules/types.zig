@@ -33,10 +33,12 @@ pub const Glyph = struct {
 };
 
 /// 光标状态
-pub const CursorState = enum(u8) {
-    default = 0,
-    wrap_next = 1,
-    origin = 2,
+pub const CursorState = packed struct(u8) {
+    wrap_next: bool = false,
+    origin: bool = false,
+    _padding: u6 = 0,
+
+    pub const default = @This(){};
 };
 
 /// 光标移动模式
@@ -115,6 +117,8 @@ pub const SavedCursor = struct {
     state: CursorState = .default,
     top: usize = 0,
     bot: usize = 0,
+    trantbl: [4]Charset = [_]Charset{.usa} ** 4,
+    charset: u8 = 0,
 };
 
 /// 选择模式
@@ -238,4 +242,8 @@ pub const Term = struct {
 
     // 保存的光标状态（主屏幕和备用屏幕各一个）
     saved_cursor: [2]SavedCursor = [_]SavedCursor{.{}} ** 2,
+
+    // 剪贴板请求 (OSC 52)
+    clipboard_data: ?[]u8 = null,
+    clipboard_mask: u8 = 0, // Bit 0: CLIPBOARD, Bit 1: PRIMARY
 };

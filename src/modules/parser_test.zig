@@ -85,3 +85,30 @@ test "Wide character wrapping" {
     try expectEqual(wide_char, term.term.line.?[1][0].u);
     try expect(term.term.line.?[1][1].attr.wide_dummy);
 }
+
+test "LF behavior (LNM)" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+    term.parser.term = &term.term;
+
+    // 1. 默认 LNM 关闭
+    term.term.mode.crlf = false;
+    term.term.c.x = 5;
+    term.term.c.y = 5;
+
+    // 发送 LF -> 光标应该在 (5, 6)
+    try term.parser.putc('\x0A');
+    try expectEqual(@as(usize, 6), term.term.c.y);
+    try expectEqual(@as(usize, 5), term.term.c.x);
+
+    // 2. 开启 LNM
+    term.term.mode.crlf = true;
+    term.term.c.x = 5;
+    term.term.c.y = 5;
+
+    // 发送 LF -> 光标应该在 (0, 6)
+    try term.parser.putc('\x0A');
+    try expectEqual(@as(usize, 6), term.term.c.y);
+    try expectEqual(@as(usize, 0), term.term.c.x);
+}

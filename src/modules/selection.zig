@@ -271,6 +271,35 @@ pub const Selector = struct {
         // TODO: 清除脏标记或重绘选择区域
     }
 
+    /// 复制指定文本到系统剪贴板
+    pub fn copyTextToClipboard(self: *Selector, text: []const u8, mask: u8) !void {
+        if (text.len == 0) return;
+
+        if (self.dpy) |dpy| {
+            if ((mask & 2) != 0) {
+                // PRIMARY
+                const primary_atom = x11.getPrimaryAtom(dpy);
+                _ = x11.XSetSelectionOwner(dpy, primary_atom, self.win, x11.C.CurrentTime);
+            }
+            if ((mask & 1) != 0) {
+                // CLIPBOARD
+                const clipboard_atom = x11.XInternAtom(dpy, "CLIPBOARD", 0);
+                _ = x11.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.C.CurrentTime);
+            }
+
+            // 更新 selected_text 以便 SelectionRequest 处理
+            if (self.selected_text) |old| {
+                self.allocator.free(old);
+            }
+            self.selected_text = try self.allocator.dupe(u8, text);
+
+            // XStoreBytes for legacy
+            _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
+
+            std.log.info("已通过 OSC 52 复制 {d} 字符到剪贴板\n", .{text.len});
+        }
+    }
+
     /// 复制到系统剪贴板 (PRIMARY)
     pub fn copyToClipboard(self: *Selector) !void {
         if (self.selected_text) |text| {

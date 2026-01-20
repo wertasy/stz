@@ -252,9 +252,10 @@ pub const Renderer = struct {
                 }
             }
 
-            // Clear the dirty row with default background
             const border = @as(i32, @intCast(config.Config.window.border_pixels));
             const y_pos = @as(i32, @intCast(y * self.char_height)) + border;
+
+            // Clear the dirty row with default background
             x11.XftDrawRect(self.draw, &default_bg, 0, y_pos, @intCast(self.window.width), @intCast(self.char_height));
 
             // 第一阶段：绘制所有非默认背景

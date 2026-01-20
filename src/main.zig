@@ -631,6 +631,13 @@ pub fn main() !u8 {
             // 处理终端数据
             try terminal.processBytes(read_buffer[0..n]);
 
+            // 检查是否有剪贴板请求 (OSC 52)
+            if (term.clipboard_data) |data| {
+                try selector.copyTextToClipboard(data, term.clipboard_mask);
+                allocator.free(data);
+                term.clipboard_data = null;
+            }
+
             // 如果有新输出且当前在查看历史，回到实时屏幕
             if (n > 0 and terminal.term.scr > 0) {
                 terminal.term.scr = 0;

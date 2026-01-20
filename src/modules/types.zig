@@ -56,6 +56,8 @@ pub const TermMode = packed struct(u32) {
     app_cursor: bool = false,
     app_keypad: bool = false,
     hide_cursor: bool = false,
+    reverse: bool = false, // DECSCNM - 反色模式
+    kbdlock: bool = false, // 键盘锁定
     mouse: bool = false,
     mouse_btn: bool = false,
     mouse_motion: bool = false,
@@ -64,7 +66,7 @@ pub const TermMode = packed struct(u32) {
     mouse_focus: bool = false,
     brckt_paste: bool = false,
     num_lock: bool = false,
-    _padding: u14 = 0,
+    _padding: u12 = 0,
 };
 
 /// 字符集
@@ -79,7 +81,7 @@ pub const Charset = enum(u8) {
 };
 
 /// 转义序列状态
-pub const EscapeState = packed struct(u8) {
+pub const EscapeState = packed struct(u16) {
     start: bool = false,
     csi: bool = false,
     str: bool = false, // DCS, OSC, PM, APC
@@ -87,7 +89,9 @@ pub const EscapeState = packed struct(u8) {
     tstate: bool = false,
     utf8: bool = false,
     str_end: bool = false,
-    _padding: u1 = 0,
+    decaln: bool = false, // DECALN - ESC # 8
+    test_mode: bool = false, // ESC # 测试模式
+    _padding: u7 = 0,
 };
 
 /// 光标结构
@@ -213,6 +217,15 @@ pub const Term = struct {
     // 窗口标题
     window_title: []const u8 = "stz",
     window_title_dirty: bool = false,
+
+    // 颜色调色板
+    palette: [256]u32 = undefined,
+    default_fg: u32 = 7, // 默认前景色 (白色)
+    default_bg: u32 = 0, // 默认背景色 (黑色)
+    default_cs: u32 = 7, // 默认光标颜色
+
+    // 光标样式 (0-8, 参考配置文件)
+    cursor_style: u8 = 1,
 
     // 保存的光标状态（主屏幕和备用屏幕各一个）
     saved_cursor: [2]SavedCursor = [_]SavedCursor{.{}} ** 2,

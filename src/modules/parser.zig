@@ -84,6 +84,7 @@ pub const Parser = struct {
             self.term.esc.tstate = false;
             self.term.esc.utf8 = false;
             self.term.esc.str_end = false;
+            self.term.esc.decaln = false;
             return;
         }
 
@@ -109,10 +110,32 @@ pub const Parser = struct {
         if (self.term.esc.start) {
             try self.escapeHandle(c);
             if (!self.term.esc.csi and !self.term.esc.str and !self.term.esc.alt_charset and
-                !self.term.esc.utf8 and !self.term.esc.tstate)
+                !self.term.esc.utf8 and !self.term.esc.tstate and !self.term.esc.decaln)
             {
                 self.term.esc = .{};
             }
+            return;
+        }
+
+        // 处理字符集选择 (G0-G3)
+        if (self.term.esc.alt_charset) {
+            const cc: u8 = @truncate(c);
+            self.term.trantbl[self.term.icharset] = switch (cc) {
+                'B' => .usa, // US ASCII
+                '0' => .graphic0, // VT100 line drawing
+                'U' => .multi, // null
+                'K' => .ger, // user preferred
+                'A' => .uk, // UK
+                else => self.term.trantbl[self.term.icharset], // 保持不变
+            };
+            self.term.esc.alt_charset = false;
+            return;
+        }
+
+        // 处理临时字符集切换 (SS2, SS3)
+        if (self.term.esc.tstate) {
+            self.term.charset = self.term.icharset;
+            self.term.esc.tstate = false;
             return;
         }
 
@@ -789,6 +812,124 @@ pub const Parser = struct {
         }
     }
 
+    /// DECALN - 屏幕对齐测试 (填充屏幕为 'E')
+    fn decaln(self: *Parser) !void {
+        if (self.term.line) |lines| {
+            const glyph = self.term.c.attr;
+            var glyph_var = glyph;
+            glyph_var.u = 'E'; // 使用大写字母 E
+
+            for (0..self.term.row) |y| {
+                if (y < lines.len) {
+                    for (0..self.term.col) |x| {
+                        if (x < lines[y].len) {
+                            lines[y][x] = glyph_var;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 标记所有行为脏
+        if (self.term.dirty) |dirty| {
+            for (0..dirty.len) |i| {
+                dirty[i] = true;
+            }
+        }
+
+        // 重置光标位置
+        try self.moveTo(0, 0);
+    }
+
+    /// RIS - Reset to Initial State: 重置终端到初始状态
+    fn resetTerminal(self: *Parser) !void {
+        // 清除屏幕
+        try self.eraseDisplay(2);
+
+        // 重置光标到原点
+        try self.moveTo(0, 0);
+
+        // 重置光标状态
+        self.term.c.state = .default;
+
+        // 重置文本属性
+        self.term.c.attr = .{};
+        self.term.c.attr.fg = 7; // 默认白色
+        self.term.c.attr.bg = 0; // 默认黑色
+
+        // 重置滚动区域
+        self.term.top = 0;
+        self.term.bot = self.term.row - 1;
+
+        // 重置模式（保留一些模式）
+        const preserve_insert = self.term.mode.insert;
+        const preserve_wrap = self.term.mode.wrap;
+        self.term.mode = .{};
+        self.term.mode.insert = preserve_insert;
+        self.term.mode.wrap = preserve_wrap;
+
+        // 重置字符集
+        for (0..4) |i| {
+            self.term.trantbl[i] = .usa;
+        }
+        self.term.charset = 0;
+        self.term.icharset = 0;
+
+        // 重置制表符
+        if (self.term.tabs) |tabs| {
+            for (0..tabs.len) |i| {
+                tabs[i] = (i % 8 == 0); // 每 8 列一个制表符
+            }
+        }
+
+        // 重置转义序列状态
+        self.term.esc = .{};
+
+        // 重置调色板
+        self.resetPalette();
+        self.term.default_fg = 7;
+        self.term.default_bg = 0;
+        self.term.default_cs = 7;
+
+        // 重置窗口标题
+        self.term.window_title = "stz";
+        self.term.window_title_dirty = true;
+
+        // 标记所有行为脏
+        if (self.term.dirty) |dirty| {
+            for (0..dirty.len) |i| {
+                dirty[i] = true;
+            }
+        }
+    }
+
+    /// DECSC - 保存光标
+    fn cursorSave(self: *Parser) void {
+        const alt = if (self.term.mode.alt_screen) @as(usize, 1) else 0;
+        self.term.saved_cursor[alt].attr = self.term.c.attr;
+        self.term.saved_cursor[alt].x = self.term.c.x;
+        self.term.saved_cursor[alt].y = self.term.c.y;
+        self.term.saved_cursor[alt].state = self.term.c.state;
+        // 标记行为脏
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
+    /// DECRC - 恢复光标
+    fn cursorRestore(self: *Parser) !void {
+        const alt = if (self.term.mode.alt_screen) @as(usize, 1) else 0;
+        const saved = &self.term.saved_cursor[alt];
+        // 恢复光标位置和状态
+        self.term.c.attr = saved.attr;
+        try self.moveTo(saved.x, saved.y);
+        self.term.c.state = saved.state;
+        // 标记行为脏
+        if (self.term.dirty) |dirty| {
+            if (self.term.c.y < dirty.len) dirty[self.term.c.y] = true;
+        }
+    }
+
     /// 处理控制字符
     fn controlCode(self: *Parser, c: u8) !void {
         switch (c) {
@@ -810,6 +951,12 @@ pub const Parser = struct {
             '\x07' => { // BEL - 响铃
                 // 由 window 处理
             },
+            0x0E => { // SO - Shift Out (切换到 G1)
+                self.term.charset = 1;
+            },
+            0x0F => { // SI - Shift In (切换到 G0)
+                self.term.charset = 0;
+            },
             0x1B => { // ESC
                 self.csiReset();
                 self.term.esc.start = true;
@@ -817,42 +964,70 @@ pub const Parser = struct {
                 self.term.esc.str = false;
                 self.term.esc.alt_charset = false;
                 self.term.esc.tstate = false;
-                self.term.esc.utf8 = false;
                 self.term.esc.str_end = false;
             },
-            0x84 => { // IND - 向下滚动一行
-                // 滚动
+            0x84 => { // IND - Index: 光标下移一行，如需要则滚动
+                if (self.term.c.y == self.term.bot) {
+                    try self.scrollUp(self.term.top, 1);
+                } else {
+                    try self.moveCursor(0, 1);
+                }
             },
-            0x88 => { // HTS - 设置水平制表符
+            0x85 => { // NEL - Next Line: 移动到下一行开头
+                if (self.term.c.y == self.term.bot) {
+                    try self.scrollUp(self.term.top, 1);
+                } else {
+                    try self.moveCursor(0, 1);
+                }
+                self.term.c.x = 0;
+            },
+            0x88 => { // HTS - Horizontal Tabulation Set: 在当前位置设置制表符
                 if (self.term.c.x < self.term.col) {
                     if (self.term.tabs) |tabs| {
                         tabs[self.term.c.x] = true;
                     }
                 }
             },
-            0x9B => { // CSI
+            0x8D => { // RI - Reverse Index: 光标上移一行，如需要则反向滚动
+                if (self.term.c.y == self.term.top) {
+                    try self.scrollDown(self.term.top, 1);
+                } else {
+                    try self.moveCursor(0, -1);
+                }
+            },
+            0x8E => { // SS2 - Single Shift 2: 临时使用 G2 字符集
+                self.term.esc.alt_charset = true;
+                self.term.icharset = 2; // G2
+                self.term.esc.tstate = true;
+            },
+            0x8F => { // SS3 - Single Shift 3: 临时使用 G3 字符集
+                self.term.esc.alt_charset = true;
+                self.term.icharset = 3; // G3
+                self.term.esc.tstate = true;
+            },
+            0x9B => { // CSI - Control Sequence Introducer
                 self.term.esc.csi = true;
                 self.term.esc.start = false;
             },
-            0x90 => { // DCS
+            0x90 => { // DCS - Device Control String
                 self.term.esc.str = true;
                 self.term.esc.start = false;
                 self.csiReset();
                 self.str.type = 'P';
             },
-            0x9D => { // OSC
+            0x9D => { // OSC - Operating System Command
                 self.term.esc.str = true;
                 self.term.esc.start = false;
                 self.csiReset();
                 self.str.type = ']';
             },
-            0x9E => { // PM
+            0x9E => { // PM - Privacy Message
                 self.term.esc.str = true;
                 self.term.esc.start = false;
                 self.csiReset();
                 self.str.type = '^';
             },
-            0x9F => { // APC
+            0x9F => { // APC - Application Program Command
                 self.term.esc.str = true;
                 self.term.esc.start = false;
                 self.csiReset();
@@ -881,23 +1056,81 @@ pub const Parser = struct {
                 self.term.icharset = cc - '(';
                 self.term.esc.start = false;
             },
-            'D' => { // IND - 向下滚动
-                // 滚动一行
+            '#' => { // DECALN 前缀
+                self.term.esc.decaln = true;
+                self.term.esc.start = false;
             },
-            'E' => { // NEL - 下一行
-                // 移动到下一行开头
+            '%' => { // UTF-8 模式选择
+                // 下一个字符选择字符集
+                self.term.esc.utf8 = true;
+                self.term.esc.start = false;
             },
-            'H' => { // HTS
-                // 设置制表符
+            'G' => { // 选择 UTF-8 (ESC % G)
+                if (self.term.esc.utf8) {
+                    self.term.mode.utf8 = true;
+                    self.term.esc.utf8 = false;
+                }
             },
-            'M' => { // RI - 向上滚动
-                // 向上滚动一行
+            '@' => { // 选择默认字符集 (ESC % @)
+                if (self.term.esc.utf8) {
+                    self.term.mode.utf8 = false;
+                    self.term.esc.utf8 = false;
+                }
+            },
+            '7' => { // DECSC - 保存光标
+                self.cursorSave();
+            },
+            '8' => {
+                if (self.term.esc.decaln) {
+                    // DECALN - 屏幕对齐测试 (ESC # 8)
+                    try self.decaln();
+                    self.term.esc.decaln = false;
+                } else {
+                    // DECRC - 恢复光标 (ESC 8)
+                    try self.cursorRestore();
+                }
+            },
+            'n' => { // LS2 - Locking Shift 2
+                self.term.charset = 2;
+            },
+            'o' => { // LS3 - Locking Shift 3
+                self.term.charset = 3;
+            },
+            'D' => { // IND - Index (7-bit escape version)
+                if (self.term.c.y == self.term.bot) {
+                    try self.scrollUp(self.term.top, 1);
+                } else {
+                    try self.moveCursor(0, 1);
+                }
+            },
+            'E' => { // NEL - Next Line (7-bit escape version)
+                if (self.term.c.y == self.term.bot) {
+                    try self.scrollUp(self.term.top, 1);
+                } else {
+                    try self.moveCursor(0, 1);
+                }
+                self.term.c.x = 0;
+            },
+            'H' => { // HTS - Horizontal Tabulation Set (7-bit escape version)
+                if (self.term.c.x < self.term.col) {
+                    if (self.term.tabs) |tabs| {
+                        tabs[self.term.c.x] = true;
+                    }
+                }
+            },
+            'M' => { // RI - Reverse Index (7-bit escape version)
+                if (self.term.c.y == self.term.top) {
+                    try self.scrollDown(self.term.top, 1);
+                } else {
+                    try self.moveCursor(0, -1);
+                }
             },
             'Z' => { // DECID - 终端识别
-                // 发送设备属性
+                // 发送设备属性：ESC [ ? 6 c
+                self.ptyWrite("\x1B[?6c");
             },
-            'c' => { // RIS - 重置终端
-                // 重置终端
+            'c' => { // RIS - Reset to Initial State: 重置终端到初始状态
+                try self.resetTerminal();
             },
             '>' => { // DECPNM - 数字小键盘
                 self.term.mode.app_keypad = false;
@@ -920,6 +1153,7 @@ pub const Parser = struct {
 
         self.csi.narg = 0;
         self.csi.priv = 0; // 重置 private 标志
+        self.csi.mode[1] = 0; // 重置第二个模式字符
 
         // 检查私有标志 '?'
         if (p < self.csi.len and self.csi.buf[p] == '?') {
@@ -932,6 +1166,12 @@ pub const Parser = struct {
         while (p < self.csi.len and self.csi.narg < 32) {
             // 跳过非数字
             while (p < self.csi.len and !std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
+                // 检查空格（用于 DECSCUSR 等序列）
+                if (self.csi.buf[p] == ' ' and p + 1 < self.csi.len) {
+                    self.csi.mode[1] = self.csi.buf[p + 1]; // 保存空格后的字符
+                    p += 2;
+                    continue;
+                }
                 // 如果遇到终止字符，停止解析
                 if (self.csi.buf[p] >= 0x40 and self.csi.buf[p] <= 0x7E) break;
                 p += 1;
@@ -977,6 +1217,23 @@ pub const Parser = struct {
             self.csi.narg = 1;
         }
 
+        // 处理带有空格的序列 (如 CSI SP q)
+        if (self.csi.mode[1] != 0) {
+            switch (self.csi.mode[1]) {
+                'q' => { // DECSCUSR -- 设置光标样式
+                    const style = self.csi.arg[0];
+                    // 0: 默认（闪烁块）, 1: 闪烁块, 2: 稳定块
+                    // 3: 闪烁下划线, 4: 稳定下划线
+                    // 5: 闪烁竖条, 6: 稳定竖条
+                    if (style >= 0 and style <= 8) {
+                        self.term.cursor_style = @as(u8, @intCast(@max(0, @min(style, 8))));
+                    }
+                },
+                else => {},
+            }
+            return;
+        }
+
         switch (mode) {
             '@' => { // ICH - 插入空字符
                 const n = @as(usize, @intCast(@max(1, self.csi.arg[0])));
@@ -995,6 +1252,28 @@ pub const Parser = struct {
                 if (self.csi.arg[0] == 0) {
                     // 发送 VT100/VT220 识别字符串
                     self.ptyWrite("\x1B[?6c");
+                }
+            },
+            'i' => { // MC - Media Copy (打印功能)
+                switch (self.csi.arg[0]) {
+                    0 => {
+                        // 打印屏幕（暂不实现）
+                    },
+                    1 => {
+                        // 打印当前行（暂不实现）
+                    },
+                    2 => {
+                        // 打印选择（暂不实现）
+                    },
+                    4 => {
+                        // 禁用打印模式
+                        self.term.mode.print = false;
+                    },
+                    5 => {
+                        // 启用打印模式
+                        self.term.mode.print = true;
+                    },
+                    else => {},
                 }
             },
             'A' => { // CUU - 光标上移
@@ -1265,7 +1544,9 @@ pub const Parser = struct {
         if (self.csi.priv == 0) {
             // 非私有模式
             switch (self.csi.arg[0]) {
+                2 => self.term.mode.kbdlock = set, // MODE_KBDLOCK
                 4 => self.term.mode.insert = set,
+                12 => self.term.mode.echo = !set, // MODE_ECHO (注意：set false 时启用 echo)
                 20 => self.term.mode.crlf = set,
                 else => {},
             }
@@ -1273,7 +1554,15 @@ pub const Parser = struct {
             // DEC 私有模式
             switch (self.csi.arg[0]) {
                 1 => self.term.mode.app_cursor = set,
-                5 => {}, // TODO: reverse mode not implemented
+                5 => {
+                    self.term.mode.reverse = set;
+                    // 标记所有行为脏以便重新渲染
+                    if (self.term.dirty) |dirty| {
+                        for (0..dirty.len) |i| {
+                            dirty[i] = true;
+                        }
+                    }
+                },
                 6 => {
                     if (set) {
                         self.term.c.state = .origin;
@@ -1409,33 +1698,155 @@ pub const Parser = struct {
                     self.term.window_title_dirty = true;
                 }
             },
+            52 => { // 操作剪贴板数据
+                // 格式: OSC 52 ; Pc ; Pdata ST
+                // Pc: p (PRIMARY), s (SECONDARY), c (CLIPBOARD), q (查询)
+                // Pdata: Base64 编码的数据
+                if (self.str.narg >= 3) {
+                    const selector = self.str.args[1];
+                    const data = self.str.args[2];
+
+                    if (selector.len > 0 and data.len > 0) {
+                        switch (selector[0]) {
+                            'p', 's', 'c' => {
+                                // 设置剪贴板（暂时不实现实际复制）
+                                // 需要调用 X11 剪贴板 API
+                            },
+                            'q' => {
+                                // 查询剪贴板（暂时不实现）
+                                // 需要调用 X11 剪贴板 API 并返回数据
+                            },
+                            else => {},
+                        }
+                    }
+                }
+            },
             10 => { // 设置前景颜色
                 if (self.str.narg >= 2) {
-                    // TODO: 解析颜色并设置前景色
+                    if (try self.parseOscColor(self.str.args[1])) |color| {
+                        self.term.default_fg = color;
+                    }
                 }
             },
             11 => { // 设置背景颜色
                 if (self.str.narg >= 2) {
-                    // TODO: 解析颜色并设置背景色
+                    if (try self.parseOscColor(self.str.args[1])) |color| {
+                        self.term.default_bg = color;
+                    }
                 }
             },
             12 => { // 设置光标颜色
                 if (self.str.narg >= 2) {
-                    // TODO: 解析颜色并设置光标颜色
+                    if (try self.parseOscColor(self.str.args[1])) |color| {
+                        self.term.default_cs = color;
+                    }
                 }
             },
             4 => { // 设置调色板颜色
                 if (self.str.narg >= 3) {
-                    // TODO: 设置调色板索引颜色
+                    const index = std.fmt.parseInt(usize, self.str.args[1], 10) catch 0;
+                    if (index < 256) {
+                        const color_opt = try self.parseOscColor(self.str.args[2]);
+                        if (color_opt) |color| {
+                            self.term.palette[index] = color;
+                        }
+                    }
                 }
             },
             104 => { // 重置调色板颜色
-                // TODO: 重置调色板颜色
+                if (self.str.narg > 1) {
+                    // 重置指定索引的调色板颜色
+                    const index_str = self.str.args[1];
+                    if (std.mem.eql(u8, index_str, "*")) {
+                        // 重置所有调色板颜色
+                        self.resetPalette();
+                    } else {
+                        // 重置单个索引
+                        const index = std.fmt.parseInt(usize, index_str, 10) catch 0;
+                        if (index < 256) {
+                            self.term.palette[index] = @as(u32, @intCast(index));
+                        }
+                    }
+                } else {
+                    // 重置所有调色板颜色
+                    self.resetPalette();
+                }
             },
-            110, 111, 112 => { // 重置前景/背景/光标颜色
-                // TODO: 重置到默认值
+            110 => { // 重置前景色
+                self.term.default_fg = 7;
+            },
+            111 => { // 重置背景色
+                self.term.default_bg = 0;
+            },
+            112 => { // 重置光标颜色
+                self.term.default_cs = 7;
             },
             else => {},
+        }
+    }
+
+    /// 解析 OSC 颜色字符串
+    /// 支持: rgb:RR/GG/BB, #RRGGBB, RRGGBB, 索引数字
+    fn parseOscColor(self: *Parser, color_str: []const u8) !?u32 {
+        _ = self;
+
+        // 跳过前导空格
+        var start: usize = 0;
+        while (start < color_str.len and color_str[start] == ' ') : (start += 1) {}
+
+        if (start >= color_str.len) return null;
+
+        const trimmed = color_str[start..];
+
+        // 格式 1: rgb:RR/GG/BB
+        if (std.mem.startsWith(u8, trimmed, "rgb:") or std.mem.startsWith(u8, trimmed, "rgb:")) {
+            var parts = std.mem.splitScalar(u8, trimmed[4..], '/');
+            var rgb = [3]u8{ 0, 0, 0 };
+            var i: usize = 0;
+            while (i < 3) : (i += 1) {
+                const part = parts.next() orelse break;
+                if (part.len > 0) {
+                    const hex = std.fmt.parseInt(u8, part, 16) catch 0;
+                    rgb[i] = hex;
+                }
+            }
+            return (0xFF << 24) | (@as(u32, rgb[0]) << 16) | (@as(u32, rgb[1]) << 8) | @as(u32, rgb[2]);
+        }
+
+        // 格式 2: #RRGGBB
+        if (trimmed[0] == '#') {
+            const hex_str = trimmed[1..];
+            if (hex_str.len >= 6) {
+                const r = std.fmt.parseInt(u8, hex_str[0..2], 16) catch 0;
+                const g = std.fmt.parseInt(u8, hex_str[2..4], 16) catch 0;
+                const b = std.fmt.parseInt(u8, hex_str[4..6], 16) catch 0;
+                return (0xFF << 24) | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+            }
+        }
+
+        // 格式 3: RRGGBB (6位十六进制)
+        if (trimmed.len >= 6) {
+            const r = std.fmt.parseInt(u8, trimmed[0..2], 16) catch null;
+            const g = std.fmt.parseInt(u8, trimmed[2..4], 16) catch null;
+            const b = std.fmt.parseInt(u8, trimmed[4..6], 16) catch null;
+            if (r != null and g != null and b != null) {
+                return (0xFF << 24) | (@as(u32, r.?) << 16) | (@as(u32, g.?) << 8) | @as(u32, b.?);
+            }
+        }
+
+        // 格式 4: 纯数字（颜色索引）
+        if (std.ascii.isDigit(trimmed[0])) {
+            const index = std.fmt.parseInt(usize, trimmed, 10) catch 0;
+            return @as(u32, @intCast(index));
+        }
+
+        return null;
+    }
+
+    /// 重置调色板为默认值
+    fn resetPalette(self: *Parser) void {
+        for (0..256) |i| {
+            self.term.palette[i] = @as(u32, @intCast(i));
         }
     }
 

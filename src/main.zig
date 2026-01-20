@@ -4,6 +4,8 @@
 const std = @import("std");
 const c = @cImport({
     @cInclude("stdlib.h");
+    @cInclude("signal.h");
+    @cInclude("unistd.h");
 });
 const x11 = @import("modules/x11.zig");
 
@@ -14,7 +16,19 @@ const Renderer = @import("modules/renderer.zig").Renderer;
 const Input = @import("modules/input.zig").Input;
 const Selector = @import("modules/selection.zig").Selector;
 const UrlDetector = @import("modules/url.zig").UrlDetector;
+const Printer = @import("modules/printer.zig").Printer;
 const config = @import("modules/config.zig");
+const screen = @import("modules/screen.zig");
+
+// 配置重载标志（volatile 用于信号处理）
+var reload_config: bool = false;
+
+/// 信号处理函数（SIGHUP - 重新加载配置）
+fn signalHandler(sig: c_int) callconv(.c) void {
+    _ = sig;
+    // 标记需要重新加载配置
+    reload_config = true;
+}
 
 pub fn main() !u8 {
     // 获取分配器
@@ -29,6 +43,9 @@ pub fn main() !u8 {
     }
     const allocator = gpa.allocator();
 
+    // 设置信号处理器（SIGHUP - 重新加载配置）
+    _ = c.signal(c.SIGHUP, signalHandler);
+
     // 解析命令行参数
     const cols = config.Config.window.cols;
     const rows = config.Config.window.rows;
@@ -36,6 +53,7 @@ pub fn main() !u8 {
 
     std.log.info("stz - Zig 终端模拟器 v0.1.0\n", .{});
     std.log.info("尺寸: {d}x{d}\n", .{ cols, rows });
+    std.log.info("发送 SIGHUP 信号 (kill -HUP <pid>) 可重新加载配置\n", .{});
 
     // 初始化 PTY
     var pty = try PTY.init(shell_path, cols, rows);
@@ -74,6 +92,10 @@ pub fn main() !u8 {
     // 初始化 URL 检测器
     var url_detector = UrlDetector.init(&terminal.term, allocator);
 
+    // 初始化打印器
+    var printer = Printer.init(allocator);
+    defer printer.deinit();
+
     // 主事件循环
     const read_buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(read_buffer);
@@ -92,6 +114,27 @@ pub fn main() !u8 {
     while (!quit) {
         // Alias term for easy access
         const term = &terminal.term;
+
+        // 0. 检查配置重载
+        if (reload_config) {
+            reload_config = false;
+            std.log.info("正在重新加载配置...\n", .{});
+
+            // 清除颜色缓存
+            for (0..renderer.colors.len) |i| {
+                renderer.loaded_colors[i] = false;
+            }
+
+            // 重绘整个屏幕
+            screen.setFullDirty(term);
+
+            // 强制重绘
+            try renderer.render(term);
+            try renderer.renderCursor(term);
+            window.present();
+
+            std.log.info("配置已重新加载\n", .{});
+        }
 
         // 1. 处理所有挂起的 X11 事件
         while (window.pollEvent()) |event| {
@@ -113,11 +156,26 @@ pub fn main() !u8 {
                     const XK_Next = 0xFF56; // PageDown
                     const XK_KP_Prior = 0xFF9A;
                     const XK_KP_Next = 0xFF9B;
+                    const XK_Print = 0xFF61; // Print/SysRq
+
+                    const ctrl = (state & x11.ControlMask) != 0;
 
                     if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
                         terminal.kscrollUp(term.row); // Scroll one screen up
                     } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
                         terminal.kscrollDown(term.row); // Scroll one screen down
+                    } else if (keysym == XK_Print) {
+                        // Print key handling
+                        if (ctrl) {
+                            // Ctrl+Print: toggle printer mode
+                            try printer.toggle(&terminal.term);
+                        } else if (shift) {
+                            // Shift+Print: print screen
+                            try printer.printScreen(&terminal.term);
+                        } else {
+                            // Print: print selection
+                            try printer.printSelection(&terminal.term, &selector);
+                        }
                     } else {
                         try input.handleKey(&event.xkey);
                     }
@@ -133,10 +191,27 @@ pub fn main() !u8 {
                         window.resizeBuffer(@intCast(new_w), @intCast(new_h));
                         renderer.resize();
 
-                        // Resize terminal
-                        // ... calculation logic ...
-                        // try terminal.resize(new_rows, new_cols);
-                        // try pty.resize(new_cols, new_rows);
+                        // 计算新的行列数
+                        const new_cols = @divFloor(window.width, window.cell_width);
+                        const new_rows = @divFloor(window.height, window.cell_height);
+
+                        // 只有当行列数改变时才调整
+                        if (new_cols != terminal.term.col or new_rows != terminal.term.row) {
+                            // 调整终端大小
+                            try terminal.resize(new_rows, new_cols);
+
+                            // 调整 PTY 大小
+                            try pty.resize(new_cols, new_rows);
+
+                            std.log.info("Resize: {}x{} -> {}x{}\n", .{
+                                terminal.term.col, terminal.term.row, new_cols, new_rows,
+                            });
+
+                            // 重绘
+                            try renderer.render(&terminal.term);
+                            try renderer.renderCursor(&terminal.term);
+                            window.present();
+                        }
                     }
                 },
                 x11.Expose => {
@@ -154,6 +229,18 @@ pub fn main() !u8 {
                     // Limit to screen bounds
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
+
+                    // Ctrl + Left Click: 打开 URL
+                    if (ev.button == x11.Button1 and
+                        (ev.state & x11.C.ControlMask) != 0)
+                    {
+                        if (url_detector.isUrlAt(cx, cy)) {
+                            url_detector.openUrlAt(cx, cy) catch |err| {
+                                std.log.err("打开 URL 失败: {}\n", .{err});
+                            };
+                        }
+                        continue; // 跳到下一个事件，不处理选择
+                    }
 
                     if (ev.button == x11.Button1) {
                         // Left click: start selection

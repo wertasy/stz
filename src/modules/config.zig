@@ -7,7 +7,7 @@ const std = @import("std");
 pub const Config = struct {
     // 字体配置
     pub const font = struct {
-        pub const name = "FantasqueSansMono Nerd Font:pixelsize=20:antialias=true:autohint=true";
+        pub const name = "FantasqueSansM Nerd Font:pixelsize=20:antialias=true:autohint=true";
         pub const size: u32 = 20; // 像素大小
         pub const bold: bool = true;
         pub const italic: bool = false;
@@ -25,7 +25,7 @@ pub const Config = struct {
     };
 
     // 终端类型
-    pub const term_type = "st-256color";
+    pub const term_type = "stz-256color";
     pub const vt_identification = "\x1B[?6c"; // 终端标识序列
 
     // Shell 配置

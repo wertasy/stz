@@ -28,27 +28,32 @@
 - [x] **控制序列修复**:
     - [x] BS/CR/LF/HT 处理 (解决双重回显和光标错位)
     - [x] CSI 参数解析修复 (支持 `?` 私有模式)
+- [x] **滚动缓冲区 (Scrollback)**: 支持历史输出存储和 Shift+PgUp/PgDn 查看历史
+- [x] **Resize 处理**: 
+    - [x] 滑动屏幕以保持光标位置
+    - [x] 优化 resize 时的重绘逻辑
+    - [x] PTY resize 通知
+- [x] **配置重载**: 支持运行时重载配置 (SIGHUP 信号)
+ - [x] **鼠标支持**:
+     - [x] 鼠标点击报告 (X10, URXVT, SGR pixel mode 1006)
+     - [x] 鼠标滚轮滚动
+- [x] **URL 点击打开**:
+     - [x] URL 自动检测（http://, https://, ftp://）
+     - [x] Ctrl+点击打开 URL（通过 xdg-open）
+- [x] **打印/导出功能**:
+     - [x] 打印屏幕内容（Shift+Print - printscreen）
+     - [x] 打印选择内容（Print - printsel）
+     - [x] 切换自动打印模式（Ctrl+Print - toggleprinter）
 
 ## 🚧 进行中 / 待修复
-
-- [ ] **配置重载**: 支持运行时重载配置 (颜色、字体)
 
 ## 📋 待办事项 (Backlog)
 
 ### 核心功能 (对比 st)
-- [ ] **滚动缓冲区 (Scrollback)**: 支持 Shift+PgUp/PgDn 查看历史输出 (st patch 功能)
-- [ ] **Resize 处理**: 
-    - [ ] 完善 SIGWINCH 信号处理
-    - [ ] 优化 resize 时的重绘逻辑
-    - [ ] PTY resize 通知
-- [ ] **鼠标支持**: 
-    - [ ] 鼠标点击报告 (SGR pixel mode 1006)
-    - [ ] 鼠标滚轮滚动
 - [ ] **光标闪烁**: 实现光标闪烁逻辑 (st `x.c` 中的 `xdrawcursor`)
 
 ### 高级特性
 - [ ] **Box Drawing 完整支持**: 目前仅实现了单线字符，需扩展到双线、圆角等
-- [ ] **URL 检测**: 自动检测 URL 并支持点击打开
 - [ ] **TrueColor**: 确认 24 位真彩色支持的完整性
 - [ ] **透明度**: X11 Alpha 通道支持
 

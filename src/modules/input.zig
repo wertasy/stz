@@ -16,13 +16,80 @@ pub const Input = struct {
         app_cursor: bool = false,
         app_keypad: bool = false,
         crlf: bool = false,
+        bracketed_paste: bool = false,
+        mouse: bool = false,
+        mouse_x10: bool = false,
+        mouse_btn: bool = false,
+        mouse_motion: bool = false,
+        mouse_many: bool = false,
+        mouse_sgr: bool = false,
     } = .{},
+    bracketed_paste_buffer: std.ArrayList(u8) = .empty,
+    in_bracketed_paste: bool = false,
 
     /// 初始化输入处理器
     pub fn init(pty: *PTY) Input {
         return Input{
             .pty = pty,
         };
+    }
+
+    /// 清理输入处理器
+    pub fn deinit(self: *Input) void {
+        self.bracketed_paste_buffer.deinit(self.pty.allocator);
+    }
+
+    /// 处理 bracketed paste 模式数据
+    /// 返回: true 表示数据已处理，false 表示数据保留在缓冲区中
+    pub fn handleBracketedPaste(self: *Input, data: []const u8) bool {
+        if (!self.mode.bracketed_paste) {
+            // 不在 bracketed paste 模式下，直接写入 PTY
+            _ = self.pty.write(data) catch {};
+            return true;
+        }
+
+        const start_seq = "\x1b[200~";
+        const end_seq = "\x1b[201~";
+
+        var i: usize = 0;
+        while (i < data.len) {
+            // 检查是否是开始序列
+            if (!self.in_bracketed_paste and i + 6 <= data.len and
+                std.mem.eql(u8, data[i .. i + 6], start_seq))
+            {
+                self.in_bracketed_paste = true;
+                i += 6;
+                continue;
+            }
+
+            // 检查是否是结束序列
+            if (self.in_bracketed_paste and i + 6 <= data.len and
+                std.mem.eql(u8, data[i .. i + 6], end_seq))
+            {
+                self.in_bracketed_paste = false;
+
+                // 写入缓冲的内容到 PTY
+                if (self.bracketed_paste_buffer.items.len > 0) {
+                    _ = self.pty.write(self.bracketed_paste_buffer.items) catch {};
+                    self.bracketed_paste_buffer.clearRetainingCapacity();
+                }
+
+                i += 6;
+                continue;
+            }
+
+            // 如果在 bracketed paste 模式下，缓冲数据
+            if (self.in_bracketed_paste) {
+                self.bracketed_paste_buffer.append(self.pty.allocator, data[i]) catch {};
+            } else {
+                // 不在 bracketed paste 模式下，直接写入 PTY
+                _ = self.pty.write(data[i .. i + 1]) catch {};
+            }
+
+            i += 1;
+        }
+
+        return true;
     }
 
     /// 处理键盘事件
@@ -222,41 +289,75 @@ pub const Input = struct {
     }
 
     /// 处理鼠标事件
-    // Deprecated in favor of sendMouseReport directly from main.zig which has access to cell coords
     pub fn handleMouse(self: *Input, event: *const x11.C.XButtonEvent) !void {
         _ = self;
         _ = event;
     }
 
+    /// 发送鼠标报告
+    /// x, y: 终端坐标 (0-indexed)
+    /// button: 按钮编号 (1-11)
+    /// state: 修饰符状态
+    /// release: 是否是释放事件
     pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, release: bool) !void {
+        // 检查是否启用了鼠标报告
+        if (!self.mode.mouse) return;
 
-        // SGR 1006 mode
-        var cb: i32 = 0;
+        var code: u32 = 0;
 
-        if (button == x11.Button1) {
-            cb = 0;
-        } else if (button == x11.Button2) {
-            cb = 1;
-        } else if (button == x11.Button3) {
-            cb = 2;
-        } else if (button == x11.Button4) {
-            cb = 64;
-        } else if (button == x11.Button5) {
-            cb = 65;
+        // 按钮编码
+        if (release) {
+            // MODE_MOUSEX10: 不发送按钮释放
+            if (self.mode.mouse_x10) return;
+
+            // 不发送滚轮的释放事件
+            if (button == 4 or button == 5) return;
+
+            code += 3; // 按钮释放时加 3
         } else {
-            return;
+            if (button >= 8) {
+                code += 128 + button - 8;
+            } else if (button >= 4) {
+                code += 64 + button - 4;
+            } else {
+                code += button - 1;
+            }
         }
 
-        if ((state & x11.ShiftMask) != 0) cb += 4;
-        if ((state & x11.Mod1Mask) != 0) cb += 8;
-        if ((state & x11.ControlMask) != 0) cb += 16;
+        // 添加修饰符（MODE_MOUSEX10 模式不发送修饰符）
+        if (!self.mode.mouse_x10) {
+            if ((state & x11.C.ShiftMask) != 0) code += 4;
+            if ((state & x11.C.Mod1Mask) != 0) code += 8; // Alt
+            if ((state & x11.C.ControlMask) != 0) code += 16;
+        }
 
-        var buf: [32]u8 = undefined;
-        // CSI < Pb ; Px ; Py [M|m]
-        const suffix: u8 = if (release) 'm' else 'M';
-        const s = try std.fmt.bufPrint(&buf, "\x1B[<{d};{d};{d}{c}", .{ cb, x + 1, y + 1, suffix });
-
-        _ = try self.pty.write(s);
+        // 生成报告
+        if (self.mode.mouse_sgr) {
+            // SGR 格式: ESC[<code;x+1;y+1M/m
+            const ch: u8 = if (release) 'm' else 'M';
+            const s = std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "\x1b[<{d};{d};{d}{c}",
+                .{ code, x + 1, y + 1, ch },
+            ) catch return;
+            defer std.heap.page_allocator.free(s);
+            _ = try self.pty.write(s);
+        } else if (x < 223 and y < 223) {
+            // URXVT 格式: ESC[M<code+32><x+1+32><y+1+32>
+            const s = std.fmt.allocPrint(
+                std.heap.page_allocator,
+                "\x1b[M{c}{c}{c}",
+                .{
+                    @as(u8, @intCast(32 + code)),
+                    @as(u8, @intCast(32 + x + 1)),
+                    @as(u8, @intCast(32 + y + 1)),
+                },
+            ) catch return;
+            defer std.heap.page_allocator.free(s);
+            _ = try self.pty.write(s);
+        } else {
+            return; // 坐标超出范围
+        }
     }
 
     /// 写入 ESC 字符
@@ -361,11 +462,6 @@ pub const Input = struct {
     fn writeFunction(self: *Input, fn_num: u32, shift: bool, ctrl: bool, alt: bool) !void {
         if (fn_num < 1 or fn_num > 12) return;
 
-        var modifiers: u32 = 0;
-        if (shift) modifiers += 1;
-        if (alt) modifiers += 2;
-        if (ctrl) modifiers += 4;
-
         const base_seq = switch (fn_num) {
             1 => "OP",
             2 => "OQ",
@@ -384,8 +480,8 @@ pub const Input = struct {
 
         // 应用修饰符
         var seq: [32]u8 = undefined;
-        const formatted_seq = if (modifiers > 0)
-            try std.fmt.bufPrint(&seq, "\x1B[{d}{s}", .{ modifiers, base_seq })
+        const formatted_seq = if (shift or alt or ctrl)
+            try std.fmt.bufPrint(&seq, "\x1B[{d}{s}", .{ @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4, base_seq })
         else
             try std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq});
 

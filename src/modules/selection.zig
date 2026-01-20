@@ -221,7 +221,15 @@ pub const Selector = struct {
     /// 清除选择
     pub fn clear(self: *Selector) void {
         self.selection.mode = .idle;
+        // 重置所有坐标到无效状态
         self.selection.ob.x = std.math.maxInt(usize);
+        self.selection.ob.y = std.math.maxInt(usize);
+        self.selection.oe.x = 0;
+        self.selection.oe.y = 0;
+        self.selection.nb.x = std.math.maxInt(usize);
+        self.selection.nb.y = std.math.maxInt(usize);
+        self.selection.ne.x = 0;
+        self.selection.ne.y = 0;
     }
 
     /// 清除高亮标记

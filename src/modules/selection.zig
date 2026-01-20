@@ -45,9 +45,9 @@ pub const Selector = struct {
         }
     }
 
-    /// 开始选择
+/// 开始选择
     pub fn start(self: *Selector, col: usize, row: usize, snap_mode: SelectionSnap) void {
-        self.selection.mode = .idle; // 初始设为 idle（无选择），等待拖动
+        self.selection.mode = .empty;  // 已点击，但还没有拖动
         self.selection.type = .regular;
         self.selection.snap = snap_mode;
         self.selection.oe.x = col;
@@ -59,10 +59,12 @@ pub const Selector = struct {
 
     /// 扩展选择
     pub fn extend(self: *Selector, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
+        // idle 表示没有选择，不能扩展
         if (self.selection.mode == .idle) {
             return;
         }
 
+        // done=true 且还是 empty 模式（点击后立即释放），清除选择
         if (done and self.selection.mode == .empty) {
             self.clear();
             return;
@@ -76,6 +78,9 @@ pub const Selector = struct {
     }
 
     /// 标准化选择
+
+
+
     pub fn normalize(self: *Selector) void {
         if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
             self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)

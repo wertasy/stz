@@ -47,15 +47,14 @@ pub const Selector = struct {
 
     /// 开始选择
     pub fn start(self: *Selector, col: usize, row: usize, snap_mode: SelectionSnap) void {
-        // 完全重置选择范围，避免旧选择残留导致的高亮
-        self.selection.mode = .idle;
+        self.selection.mode = .empty; // 已点击，但还没有拖动扩展
         self.selection.type = .regular;
         self.selection.snap = snap_mode;
         self.selection.oe.x = col;
         self.selection.oe.y = row;
         self.selection.ob.x = col;
         self.selection.ob.y = row;
-        // 重置范围到无效状态，等待拖动
+        // 重置范围到无效状态，等待拖动扩展
         self.selection.nb.x = std.math.maxInt(usize);
         self.selection.nb.y = std.math.maxInt(usize);
         self.selection.ne.x = 0;
@@ -64,7 +63,7 @@ pub const Selector = struct {
 
     /// 扩展选择
     pub fn extend(self: *Selector, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
-        // idle 表示没有选择，不能扩展
+        // idle 表示完全空闲（未开始或已清除），不能扩展
         if (self.selection.mode == .idle) {
             return;
         }

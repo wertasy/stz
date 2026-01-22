@@ -305,6 +305,8 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     if (term.c.y >= new_row) {
         term.c.y = new_row - 1;
     }
+
+    term.c.state.wrap_next = false;
 }
 
 /// 清除区域

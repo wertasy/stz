@@ -270,7 +270,7 @@ pub const Renderer = struct {
             // 脏标记检查逻辑优化：
             // 只有在非滚动查看状态且没有活动的文本选择时，才通过脏标记跳过渲染。
             // 在备用屏幕 (vi/btop) 下，脏标记仍然是有效的，因为 Parser 同样会正确设置 dirty 标志。
-            if (term.scr == 0 and selector.selection.mode == .idle) {
+            if (term.scr == 0 and term.selection.mode == .idle) {
                 if (term.dirty) |dirty| {
                     if (y < dirty.len and !dirty[y]) continue;
                 }
@@ -293,7 +293,7 @@ pub const Renderer = struct {
                 var bg_idx = glyph.bg;
 
                 var reverse = glyph.attr.reverse != term.mode.reverse;
-                if (selector.isSelected(x, y)) {
+                if (selector.isSelected(term, x, y)) {
                     reverse = !reverse;
                 }
 
@@ -324,7 +324,7 @@ pub const Renderer = struct {
                 }
 
                 var reverse = glyph.attr.reverse != term.mode.reverse;
-                if (selector.isSelected(x, y)) {
+                if (selector.isSelected(term, x, y)) {
                     reverse = !reverse;
                 }
 

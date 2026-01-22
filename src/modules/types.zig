@@ -262,6 +262,9 @@ pub const Term = struct {
     // 保存的光标状态（主屏幕和备用屏幕各一个）
     saved_cursor: [2]SavedCursor = [_]SavedCursor{.{}} ** 2,
 
+    // 选择区域状态
+    selection: Selection = .{},
+
     // 剪贴板请求 (OSC 52)
     clipboard_data: ?[]u8 = null,
     clipboard_mask: u8 = 0, // Bit 0: CLIPBOARD, Bit 1: PRIMARY

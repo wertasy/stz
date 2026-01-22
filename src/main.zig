@@ -154,14 +154,14 @@ pub fn main() !u8 {
                     const ctrl = (state & x11.ControlMask) != 0;
 
                     if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
-                        selector.clear();
+                        selector.clear(term);
                         terminal.kscrollUp(term.row); // Scroll one screen up
                         if (try renderer.render(term, &selector)) |rect| {
                             try renderer.renderCursor(term);
                             window.presentPartial(rect);
                         }
                     } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
-                        selector.clear();
+                        selector.clear(term);
                         terminal.kscrollDown(term.row); // Scroll one screen down
                         if (try renderer.render(term, &selector)) |rect| {
                             try renderer.renderCursor(term);
@@ -188,9 +188,9 @@ pub fn main() !u8 {
                         }
                     } else {
                         // 开始输入时清除选择高亮
-                        if (selector.selection.mode != .idle) {
-                            selector.clear();
-                            screen.setFullDirty(&terminal.term);
+                        if (term.selection.mode != .idle) {
+                            selector.clear(term);
+                            screen.setFullDirty(term);
                         }
 
                         // 优先处理特殊按键（Backspace, Delete, 方向键等）
@@ -275,11 +275,11 @@ pub fn main() !u8 {
                     }
 
                     // 鼠标报告优先，除非按下 Shift 键强制进行终端选择
-                    if (terminal.term.mode.mouse and !shift) {
+                    if (term.mode.mouse and !shift) {
                         // 如果当前有本地选择，点击时清除它
-                        if (selector.selection.mode != .idle) {
-                            selector.clear();
-                            screen.setFullDirty(&terminal.term);
+                        if (term.selection.mode != .idle) {
+                            selector.clear(term);
+                            screen.setFullDirty(term);
                         }
                         try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         if (e.button >= 1 and e.button <= 3) {
@@ -312,12 +312,12 @@ pub fn main() !u8 {
                         mouse_x = cx;
                         mouse_y = cy;
                         // Clear previous selection
-                        selector.clear();
-                        selector.start(cx, cy, snap_mode);
+                        selector.clear(term);
+                        selector.start(term, cx, cy, snap_mode);
                         if (snap_mode != .none) {
-                            selector.extend(&terminal.term, cx, cy, .regular, false);
+                            selector.extend(term, cx, cy, .regular, false);
                         }
-                        screen.setFullDirty(&terminal.term);
+                        screen.setFullDirty(term);
                     } else if (e.button == x11.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {
@@ -327,35 +327,35 @@ pub fn main() !u8 {
                         // Right click: extend selection or copy
                         mouse_pressed = true;
                         pressed_button = e.button;
-                        selector.start(cx, cy, .none);
+                        selector.start(term, cx, cy, .none);
                     } else if (e.button == x11.Button4) { // Scroll Up
-                        if (terminal.term.mode.mouse and !shift) {
+                        if (term.mode.mouse and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
-                            if (terminal.term.mode.alt_screen) {
+                            if (term.mode.alt_screen) {
                                 // In alt screen (vi/less), send arrow keys
                                 _ = try pty.write("\x1B[A");
                             } else {
-                                selector.clear();
+                                selector.clear(term);
                                 terminal.kscrollUp(3);
-                                if (try renderer.render(&terminal.term, &selector)) |rect| {
-                                    try renderer.renderCursor(&terminal.term);
+                                if (try renderer.render(term, &selector)) |rect| {
+                                    try renderer.renderCursor(term);
                                     window.presentPartial(rect);
                                 }
                             }
                         }
                     } else if (e.button == x11.Button5) { // Scroll Down
-                        if (terminal.term.mode.mouse and !shift) {
+                        if (term.mode.mouse and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
-                            if (terminal.term.mode.alt_screen) {
+                            if (term.mode.alt_screen) {
                                 // In alt screen (vi/less), send arrow keys
                                 _ = try pty.write("\x1B[B");
                             } else {
-                                selector.clear();
+                                selector.clear(term);
                                 terminal.kscrollDown(3);
-                                if (try renderer.render(&terminal.term, &selector)) |rect| {
-                                    try renderer.renderCursor(&terminal.term);
+                                if (try renderer.render(term, &selector)) |rect| {
+                                    try renderer.renderCursor(term);
                                     window.presentPartial(rect);
                                 }
                             }
@@ -413,9 +413,9 @@ pub fn main() !u8 {
 
                     if (mouse_pressed and pressed_button == x11.Button1) {
                         // Update selection
-                        selector.extend(&terminal.term, cx, cy, .regular, false);
-                        screen.setFullDirty(&terminal.term);
-                        if (try renderer.render(&terminal.term, &selector)) |rect| {
+                        selector.extend(term, cx, cy, .regular, false);
+                        screen.setFullDirty(term);
+                        if (try renderer.render(term, &selector)) |rect| {
                             window.presentPartial(rect);
                         }
                     }
@@ -489,48 +489,48 @@ pub fn main() !u8 {
                     }
 
                     // 粘贴完成后清除选择高亮
-                    selector.clear();
-                    screen.setFullDirty(&terminal.term);
-                    if (try renderer.render(&terminal.term, &selector)) |rect| {
-                        try renderer.renderCursor(&terminal.term);
+                    selector.clear(term);
+                    screen.setFullDirty(term);
+                    if (try renderer.render(term, &selector)) |rect| {
+                        try renderer.renderCursor(term);
                         window.presentPartial(rect);
                     }
                 },
                 x11.SelectionClear => {
                     const e = ev.xselectionclear;
                     std.log.info("SelectionClear received\n", .{});
-                    selector.handleSelectionClear(&e);
+                    selector.handleSelectionClear(term, &e);
                     // Redraw to clear highlight
-                    if (try renderer.render(&terminal.term, &selector)) |rect| {
+                    if (try renderer.render(term, &selector)) |rect| {
                         window.presentPartial(rect);
                     }
                 },
                 x11.FocusIn => {
                     std.log.info("FocusIn\n", .{});
-                    terminal.term.mode.focused = true;
+                    term.mode.focused = true;
                     if (window.ic) |ic| x11.XSetICFocus(ic);
-                    if (terminal.term.mode.focused_report) {
+                    if (term.mode.focused_report) {
                         _ = pty.write("\x1B[I") catch {};
                     }
-                    if (try renderer.render(&terminal.term, &selector)) |rect| {
-                        try renderer.renderCursor(&terminal.term);
+                    if (try renderer.render(term, &selector)) |rect| {
+                        try renderer.renderCursor(term);
                         window.presentPartial(rect);
                     } else {
-                        try renderer.renderCursor(&terminal.term);
+                        try renderer.renderCursor(term);
                     }
                 },
                 x11.FocusOut => {
                     std.log.info("FocusOut\n", .{});
-                    terminal.term.mode.focused = false;
+                    term.mode.focused = false;
                     if (window.ic) |ic| x11.XUnsetICFocus(ic);
-                    if (terminal.term.mode.focused_report) {
+                    if (term.mode.focused_report) {
                         _ = pty.write("\x1B[O") catch {};
                     }
-                    if (try renderer.render(&terminal.term, &selector)) |rect| {
-                        try renderer.renderCursor(&terminal.term);
+                    if (try renderer.render(term, &selector)) |rect| {
+                        try renderer.renderCursor(term);
                         window.presentPartial(rect);
                     } else {
-                        try renderer.renderCursor(&terminal.term);
+                        try renderer.renderCursor(term);
                     }
                 },
                 else => {

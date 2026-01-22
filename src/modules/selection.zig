@@ -19,7 +19,6 @@ pub const SelectionError = error{
 
 /// 选择器
 pub const Selector = struct {
-    selection: Selection = .{},
     allocator: std.mem.Allocator,
     selected_text: ?[]u8 = null,
     // X11 context (set externally)
@@ -47,80 +46,87 @@ pub const Selector = struct {
     }
 
     /// 开始选择
-    pub fn start(self: *Selector, col: usize, row: usize, snap_mode: SelectionSnap) void {
-        self.selection.mode = .empty; // 已点击，但还没有拖动扩展
-        self.selection.type = .regular;
-        self.selection.snap = snap_mode;
-        self.selection.oe.x = col;
-        self.selection.oe.y = row;
-        self.selection.ob.x = col;
-        self.selection.ob.y = row;
+    pub fn start(self: *Selector, term: *types.Term, col: usize, row: usize, snap_mode: SelectionSnap) void {
+        _ = self;
+        const sel = &term.selection;
+        sel.mode = .empty; // 已点击，但还没有拖动扩展
+        sel.type = .regular;
+        sel.snap = snap_mode;
+        sel.oe.x = col;
+        sel.oe.y = row;
+        sel.ob.x = col;
+        sel.ob.y = row;
+        sel.alt = term.mode.alt_screen;
         // 重置范围到无效状态，等待拖动扩展
-        self.selection.nb.x = std.math.maxInt(usize);
-        self.selection.nb.y = std.math.maxInt(usize);
-        self.selection.ne.x = 0;
-        self.selection.ne.y = 0;
+        sel.nb.x = std.math.maxInt(usize);
+        sel.nb.y = std.math.maxInt(usize);
+        sel.ne.x = 0;
+        sel.ne.y = 0;
     }
 
     /// 扩展选择
-    pub fn extend(self: *Selector, term: *const types.Term, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
+    pub fn extend(self: *Selector, term: *types.Term, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
+        const sel = &term.selection;
         // idle 表示完全空闲（未开始或已清除），不能扩展
-        if (self.selection.mode == .idle) {
+        if (sel.mode == .idle) {
             return;
         }
 
         if (done) {
             // 如果释放时还是 empty（点击未拖动），则根据 snap 模式决定是否进入 ready
-            if (self.selection.mode == .empty) {
-                if (self.selection.snap != .none) {
-                    self.selection.mode = .ready;
+            if (sel.mode == .empty) {
+                if (sel.snap != .none) {
+                    sel.mode = .ready;
                 } else {
-                    self.clear();
+                    self.clear(term);
                     return;
                 }
             }
             // 拖动完成后保持状态以显示高亮
         } else {
             // 只要有位移或 MotionNotify，就进入 .ready 模式
-            self.selection.mode = .ready;
+            sel.mode = .ready;
         }
 
-        self.selection.oe.x = col;
-        self.selection.oe.y = row;
-        self.selection.type = sel_type;
+        sel.oe.x = col;
+        sel.oe.y = row;
+        sel.type = sel_type;
         self.normalize(term);
     }
 
     /// 标准化选择
-    pub fn normalize(self: *Selector, term: *const types.Term) void {
+    pub fn normalize(self: *Selector, term: *types.Term) void {
+        const sel = &term.selection;
         // 只有在 ready 模式下才计算有效范围，支持单字符（ob == oe）
-        if (self.selection.mode != .ready and self.selection.mode != .empty) return;
+        if (sel.mode != .ready and sel.mode != .empty) return;
 
-        if (self.selection.type == .regular and self.selection.ob.y != self.selection.oe.y) {
-            self.selection.nb.x = if (self.selection.ob.y < self.selection.oe.y)
-                self.selection.ob.x
+        if (sel.type == .regular and sel.ob.y != sel.oe.y) {
+            sel.nb.x = if (sel.ob.y < sel.oe.y)
+                sel.ob.x
             else
-                self.selection.oe.x;
-            self.selection.ne.x = if (self.selection.ob.y < self.selection.oe.y)
-                self.selection.oe.x
+                sel.oe.x;
+            sel.ne.x = if (sel.ob.y < sel.oe.y)
+                sel.oe.x
             else
-                self.selection.ob.x;
+                sel.ob.x;
         } else {
-            self.selection.nb.x = @min(self.selection.ob.x, self.selection.oe.x);
-            self.selection.ne.x = @max(self.selection.ob.x, self.selection.oe.x);
+            sel.nb.x = @min(sel.ob.x, sel.oe.x);
+            sel.ne.x = @max(sel.ob.x, sel.oe.x);
         }
 
-        self.selection.nb.y = @min(self.selection.ob.y, self.selection.oe.y);
-        self.selection.ne.y = @max(self.selection.ob.y, self.selection.oe.y);
+        sel.nb.y = @min(sel.ob.y, sel.oe.y);
+        sel.ne.y = @max(sel.ob.y, sel.oe.y);
 
         // 吸附处理
-        self.snap(term, &self.selection.nb, -1);
-        self.snap(term, &self.selection.ne, 1);
+        self.snap(term, &sel.nb, -1);
+        self.snap(term, &sel.ne, 1);
     }
 
     /// 吸附到单词或行
     pub fn snap(self: *Selector, term: *const types.Term, point: *Point, direction: i8) void {
-        switch (self.selection.snap) {
+        _ = self;
+        const sel = &term.selection;
+        switch (sel.snap) {
             .none => {},
             .word => {
                 const delimiters = config.Config.selection.word_delimiters;
@@ -162,43 +168,24 @@ pub const Selector = struct {
     }
 
     /// 检查是否选中
-    pub fn isSelected(self: *Selector, x: usize, y: usize) bool {
-        if (self.selection.mode == .idle or self.selection.nb.x == std.math.maxInt(usize)) {
-            return false;
-        }
-
-        if (self.selection.type == .regular) {
-            return self.isSelectedRegular(x, y);
-        } else {
-            return self.isSelectedRectangular(x, y);
-        }
-    }
-
-    /// 检查是否选中（常规模式）
-    fn isSelectedRegular(self: *const Selector, x: usize, y: usize) bool {
-        return (y >= self.selection.nb.y and y <= self.selection.ne.y) and
-            (y != self.selection.nb.y or x >= self.selection.nb.x) and
-            (y != self.selection.ne.y or x <= self.selection.ne.x);
-    }
-
-    /// 检查是否选中（矩形模式）
-    fn isSelectedRectangular(self: *const Selector, x: usize, y: usize) bool {
-        return (x >= self.selection.nb.x and x <= self.selection.ne.x and
-            y >= self.selection.nb.y and y <= self.selection.ne.y);
+    pub fn isSelected(self: *Selector, term: *const types.Term, x: usize, y: usize) bool {
+        _ = self;
+        return scr_mod.isInsideSelection(term, x, y);
     }
 
     /// 获取选中的文本
     pub fn getText(self: *Selector, term: *const types.Term) ![]u8 {
+        const sel = &term.selection;
         // nb.x 为 maxInt 表示没有有效选择范围
-        if (self.selection.nb.x == std.math.maxInt(usize)) {
+        if (sel.nb.x == std.math.maxInt(usize)) {
             return &[_]u8{};
         }
 
         var buffer = std.ArrayList(u8).initCapacity(self.allocator, 4096) catch return &[_]u8{};
         defer buffer.deinit(self.allocator);
 
-        const y_start = self.selection.nb.y;
-        const y_end = self.selection.ne.y;
+        const y_start = sel.nb.y;
+        const y_end = sel.ne.y;
 
         for (y_start..y_end + 1) |y| {
             if (y >= term.row) break;
@@ -208,17 +195,22 @@ pub const Selector = struct {
 
             const line = scr_mod.getVisibleLine(term, y);
 
-            if (self.selection.type == .rectangular) {
-                x_start = self.selection.nb.x;
-                x_end = self.selection.ne.x + 1;
+            if (sel.type == .rectangular) {
+                x_start = sel.nb.x;
+                x_end = sel.ne.x + 1;
             } else {
-                x_start = if (y == y_start) self.selection.nb.x else 0;
-                x_end = if (y == y_end) self.selection.ne.x + 1 else term.col;
+                x_start = if (y == y_start) sel.nb.x else 0;
+                x_end = if (y == y_end) sel.ne.x + 1 else term.col;
             }
 
+            // 检查行尾换行属性 (st 对齐)
+            const is_wrapped = line[line.len - 1].attr.wrap;
+
             // 修剪尾部空格，并确保 x_end 不小于 x_start
-            while (x_end > x_start and x_end <= line.len and line[x_end - 1].u == ' ') {
-                x_end -= 1;
+            if (!is_wrapped) {
+                while (x_end > x_start and x_end <= line.len and line[x_end - 1].u == ' ') {
+                    x_end -= 1;
+                }
             }
 
             for (x_start..x_end) |x| {
@@ -233,8 +225,10 @@ pub const Selector = struct {
             }
 
             // 添加换行
-            if (y < y_end or (self.selection.type == .rectangular)) {
-                try buffer.append(self.allocator, '\n');
+            if (y < y_end or (sel.type == .rectangular)) {
+                if (sel.type == .rectangular or !is_wrapped) {
+                    try buffer.append(self.allocator, '\n');
+                }
             }
         }
 
@@ -257,17 +251,9 @@ pub const Selector = struct {
     }
 
     /// 清除选择
-    pub fn clear(self: *Selector) void {
-        self.selection.mode = .idle;
-        // 重置所有坐标到无效状态
-        self.selection.ob.x = std.math.maxInt(usize);
-        self.selection.ob.y = std.math.maxInt(usize);
-        self.selection.oe.x = 0;
-        self.selection.oe.y = 0;
-        self.selection.nb.x = std.math.maxInt(usize);
-        self.selection.nb.y = std.math.maxInt(usize);
-        self.selection.ne.x = 0;
-        self.selection.ne.y = 0;
+    pub fn clear(self: *Selector, term: *types.Term) void {
+        _ = self;
+        scr_mod.selClear(term);
     }
 
     /// 清除高亮标记
@@ -319,7 +305,6 @@ pub const Selector = struct {
 
                 if (x11.XGetSelectionOwner(dpy, primary_atom) != self.win) {
                     std.log.err("Failed to acquire selection ownership\n", .{});
-                    self.clear();
                     return;
                 }
 
@@ -357,11 +342,9 @@ pub const Selector = struct {
     }
 
     /// 处理 SelectionClear 事件
-    pub fn handleSelectionClear(self: *Selector, event: *const x11.XSelectionClearEvent) void {
+    pub fn handleSelectionClear(self: *Selector, term: *types.Term, event: *const x11.XSelectionClearEvent) void {
         _ = event;
         // 如果我们丢失了 PRIMARY 选区的所有权，清除当前选择
-        // 实际上应该检查 event.selection 是否为 XA_PRIMARY
-        self.clear();
-        // 触发重绘? 需要通知外部
+        self.clear(term);
     }
 };

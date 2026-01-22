@@ -155,6 +155,26 @@ pub const Terminal = struct {
         // 写入字符
         if (self.term.line) |lines| {
             if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
+                // 清理被覆盖的宽字符 (st 对齐: tsetchar)
+                const old_glyph = lines[self.term.c.y][self.term.c.x];
+                if (old_glyph.attr.wide) {
+                    if (self.term.c.x + 1 < self.term.col) {
+                        lines[self.term.c.y][self.term.c.x + 1] = Glyph{
+                            .u = ' ',
+                            .fg = self.term.c.attr.fg,
+                            .bg = self.term.c.attr.bg,
+                        };
+                    }
+                } else if (old_glyph.attr.wide_dummy) {
+                    if (self.term.c.x > 0) {
+                        lines[self.term.c.y][self.term.c.x - 1] = Glyph{
+                            .u = ' ',
+                            .fg = self.term.c.attr.fg,
+                            .bg = self.term.c.attr.bg,
+                        };
+                    }
+                }
+
                 lines[self.term.c.y][self.term.c.x] = Glyph{
                     .u = u,
                     .attr = self.term.c.attr.attr,

@@ -224,43 +224,54 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
         term.line.?[y] = try allocator.realloc(term.line.?[y], new_col);
         term.alt.?[y] = try allocator.realloc(term.alt.?[y], new_col);
 
-        // 清除新扩展的区域（如果有）
+        // 清除新扩展的区域（使用当前光标颜色，st 对齐）
         if (new_col > old_col) {
             for (old_col..new_col) |x| {
-                term.line.?[y][x] = Glyph{};
-                term.alt.?[y][x] = Glyph{};
+                term.line.?[y][x] = Glyph{
+                    .u = ' ',
+                    .fg = term.c.attr.fg,
+                    .bg = term.c.attr.bg,
+                };
+                term.alt.?[y][x] = Glyph{
+                    .u = ' ',
+                    .fg = term.c.attr.fg,
+                    .bg = term.c.attr.bg,
+                };
             }
         }
     }
 
-    // 分配并初始化新行
+    // 分配并初始化新行 (st 对齐)
     for (valid_rows..new_row) |y| {
         term.line.?[y] = try allocator.alloc(Glyph, new_col);
         term.alt.?[y] = try allocator.alloc(Glyph, new_col);
         for (0..new_col) |x| {
-            term.line.?[y][x] = Glyph{};
-            term.alt.?[y][x] = Glyph{};
+            term.line.?[y][x] = Glyph{
+                .u = ' ',
+                .fg = term.c.attr.fg,
+                .bg = term.c.attr.bg,
+            };
+            term.alt.?[y][x] = Glyph{
+                .u = ' ',
+                .fg = term.c.attr.fg,
+                .bg = term.c.attr.bg,
+            };
         }
     }
 
     // 调整历史缓冲区（如果宽度改变）
     if (new_col != old_col) {
         if (term.hist) |hist| {
-            for (hist) |line| {
-                allocator.free(line);
-            }
-            allocator.free(hist);
-        }
-        const hist_rows = term.hist_max;
-        term.hist = try allocator.alloc([]Glyph, hist_rows);
-        for (0..hist_rows) |y| {
-            term.hist.?[y] = try allocator.alloc(Glyph, new_col);
-            for (0..new_col) |x| {
-                term.hist.?[y][x] = Glyph{};
+            for (0..term.hist_max) |y| {
+                hist[y] = try allocator.realloc(hist[y], new_col);
+                // 清除新扩展的区域
+                if (new_col > old_col) {
+                    for (old_col..new_col) |x| {
+                        hist[y][x] = Glyph{};
+                    }
+                }
             }
         }
-        term.hist_idx = 0;
-        term.hist_cnt = 0;
         term.scr = 0;
     }
 
@@ -271,23 +282,26 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     }
 
     // 调整制表符
+    const tab_spaces = @import("config.zig").Config.tab_spaces;
     term.tabs = try allocator.realloc(term.tabs.?, new_col);
     if (new_col > old_col) {
-        for (old_col..new_col) |x| {
-            term.tabs.?[x] = false;
+        // 从旧边界开始，按步进设置新的制表位
+        var x = old_col;
+        // 找到旧区域最后一个制表位（或起始点）
+        while (x > 0 and !term.tabs.?[x - 1]) : (x -= 1) {}
+        if (x == 0) {
+            x = tab_spaces;
+        } else {
+            x += tab_spaces - 1;
         }
-    }
-    // 设置新的默认制表符
-    const tab_spaces = @import("config.zig").Config.tab_spaces;
-    var tab_col: usize = old_col;
-    if (tab_col % tab_spaces != 0) {
-        tab_col += tab_spaces - (tab_col % tab_spaces);
-    }
-    if (new_col > tab_col) {
-        for (tab_col..new_col) |x| {
-            if (x % tab_spaces == 0) {
-                term.tabs.?[x] = true;
-            }
+
+        // 清除新区域并设置新制表位
+        for (old_col..new_col) |i| {
+            term.tabs.?[i] = false;
+        }
+        var i = x;
+        while (i < new_col) : (i += tab_spaces) {
+            term.tabs.?[i] = true;
         }
     }
 
@@ -304,6 +318,16 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
     }
     if (term.c.y >= new_row) {
         term.c.y = new_row - 1;
+    }
+
+    // 限制保存的光标位置 (st 对齐)
+    for (0..2) |i| {
+        if (term.saved_cursor[i].x >= new_col) {
+            term.saved_cursor[i].x = new_col - 1;
+        }
+        if (term.saved_cursor[i].y >= new_row) {
+            term.saved_cursor[i].y = new_row - 1;
+        }
     }
 
     term.c.state.wrap_next = false;
@@ -329,6 +353,13 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
             dirty[y] = true;
         }
         for (sx1..sx2 + 1) |x| {
+            // 如果清除的单元格在选择范围内，清除选择 (st 对齐)
+            if (term.selection.mode != .idle) {
+                if (isInsideSelection(term, x, y)) {
+                    selClear(term);
+                }
+            }
+
             if (screen) |scr| {
                 scr[y][x] = .{
                     .u = ' ',
@@ -371,6 +402,9 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
         screen.?[i + limit_n] = temp;
     }
 
+    // 更新选择区域位置 (st 对齐)
+    selScroll(term, orig, -@as(i32, @intCast(limit_n)));
+
     // Mark affected region as dirty
     setDirty(term, orig, term.bot);
 
@@ -403,6 +437,9 @@ pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
         screen.?[i] = screen.?[i - limit_n];
         screen.?[i - limit_n] = temp;
     }
+
+    // 更新选择区域位置 (st 对齐)
+    selScroll(term, orig, @as(i32, @intCast(limit_n)));
 
     // Mark affected region as dirty
     setDirty(term, orig, term.bot);
@@ -509,4 +546,63 @@ pub fn lineLength(term: *Term, y: usize) usize {
         return len;
     }
     return 0;
+}
+
+/// 清除当前选择 (st 对齐)
+pub fn selClear(term: *Term) void {
+    term.selection.mode = .idle;
+    term.selection.ob.x = std.math.maxInt(usize);
+    term.selection.nb.x = std.math.maxInt(usize);
+}
+
+/// 检查坐标是否在选择区域内 (st 对齐)
+pub fn isInsideSelection(term: *const Term, x: usize, y: usize) bool {
+    const sel = term.selection;
+    if (sel.mode == .idle or sel.nb.x == std.math.maxInt(usize)) return false;
+
+    if (sel.type == .regular) {
+        return (y >= sel.nb.y and y <= sel.ne.y) and
+            (y != sel.nb.y or x >= sel.nb.x) and
+            (y != sel.ne.y or x <= sel.ne.x);
+    } else {
+        return (x >= sel.nb.x and x <= sel.ne.x and
+            y >= sel.nb.y and y <= sel.ne.y);
+    }
+}
+
+/// 处理屏幕滚动导致的选择区域偏移 (st 对齐)
+pub fn selScroll(term: *Term, orig: usize, n: i32) void {
+    const sel = &term.selection;
+    if (sel.mode == .idle) return;
+
+    // 如果选择区域不在当前屏幕模式（主/备），则不处理
+    if (sel.alt != term.mode.alt_screen) return;
+
+    const top = orig;
+    const bot = term.bot;
+
+    const start_in = (sel.nb.y >= top and sel.nb.y <= bot);
+    const end_in = (sel.ne.y >= top and sel.ne.y <= bot);
+
+    if (start_in != end_in) {
+        // 部分在滚动区域内，清除选择
+        selClear(term);
+    } else if (start_in) {
+        // 全部在滚动区域内，移动
+        const new_ob_y = @as(isize, @intCast(sel.ob.y)) + n;
+        const new_oe_y = @as(isize, @intCast(sel.oe.y)) + n;
+        const new_nb_y = @as(isize, @intCast(sel.nb.y)) + n;
+        const new_ne_y = @as(isize, @intCast(sel.ne.y)) + n;
+
+        if (new_nb_y < @as(isize, @intCast(top)) or new_nb_y > @as(isize, @intCast(bot)) or
+            new_ne_y < @as(isize, @intCast(top)) or new_ne_y > @as(isize, @intCast(bot)))
+        {
+            selClear(term);
+        } else {
+            sel.ob.y = @as(usize, @intCast(new_ob_y));
+            sel.oe.y = @as(usize, @intCast(new_oe_y));
+            sel.nb.y = @as(usize, @intCast(new_nb_y));
+            sel.ne.y = @as(usize, @intCast(new_ne_y));
+        }
+    }
 }

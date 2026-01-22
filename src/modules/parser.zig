@@ -58,66 +58,6 @@ pub const Parser = struct {
     pub fn putc(self: *Parser, c: u21) !void {
         const control = c < 32 or c == 0x7F;
 
-        if (control) {
-            try self.controlCode(@intCast(c));
-            self.term.lastc = 0;
-            return;
-        }
-
-        if (self.term.esc.start) {
-            return; // 由解析器处理
-        }
-
-        // 写入字符到屏幕
-        try self.writeChar(c);
-        self.term.lastc = c;
-    }
-
-    /// 处理控制字符
-    fn controlCode(self: *Parser, c: u8) !void {
-        switch (c) {
-            '\x08' => try self.moveCursor(-1, 0),
-            '\x09' => try self.putTab(),
-            '\x0A', '\x0B', '\x0C' => try self.newLine(),
-            '\x0D' => try self.moveTo(0, @as(isize, self.term.c.y)),
-            '\x07' => { // BEL
-            },
-            0x1B => { // ESC
-                self.csiReset();
-                self.term.esc.start = true;
-                self.term.esc.csi = false;
-                self.term.esc.alt_charset = false;
-                self.term.esc.tstate = false;
-                self.term.esc.utf8 = false;
-                self.term.esc.str_end = false;
-            },
-        }
-    }
-
-    /// 处理转义序列
-    pub fn escapeHandle(self: *Parser, c: u21) !void {
-        switch (c) {
-            0x1B => { // ESC
-                self.csiReset();
-                self.term.esc.start = true;
-                self.term.esc.csi = false;
-                self.term.esc.alt_charset = false;
-                self.term.esc.tstate = false;
-                self.term.esc.utf8 = false;
-                self.term.esc.str_end = false;
-            },
-            else => {},
-        }
-    }
-
-    pub fn deinit(self: *Parser) void {
-        self.allocator.free(self.str.buf);
-    }
-
-    /// 处理单个字符
-    pub fn putc(self: *Parser, c: u21) !void {
-        const control = c < 32 or c == 0x7F;
-
         // 处理字符串序列（OSC、DCS 等）
         if (self.term.esc.str) {
             if (c == '\x07' or c == 0x9C or c == 0x1B or

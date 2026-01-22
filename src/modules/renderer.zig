@@ -233,8 +233,8 @@ pub const Renderer = struct {
         return self.font;
     }
 
-    pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !void {
-        if (term.line == null) return;
+    pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !?x11.XRectangle {
+        if (term.line == null) return null;
 
         // Default background color
         var default_bg = try self.getColor(term, 259);
@@ -259,19 +259,26 @@ pub const Renderer = struct {
             x11.XftDrawRect(self.draw, &default_bg, right_x, border, @intCast(@as(i32, @intCast(self.window.width)) - right_x), @intCast(grid_h));
         }
 
+        var min_y: ?usize = null;
+        var max_y: ?usize = null;
+
         // Iterate over rows
         for (0..term.row) |y| {
             // Determine which line to draw
             const line_data = screen_mod.getVisibleLine(term, y);
 
             // 脏标记检查逻辑优化：
-            // 只有在主屏幕且非滚动查看状态下，才通过脏标记跳过渲染。
-            // 在备用屏幕 (vi/btop) 或查看历史时，为了显示正确性，通常需要全量检查。
-            if (term.scr == 0 and !term.mode.alt_screen and selector.selection.mode == .idle) {
+            // 只有在非滚动查看状态且没有活动的文本选择时，才通过脏标记跳过渲染。
+            // 在备用屏幕 (vi/btop) 下，脏标记仍然是有效的，因为 Parser 同样会正确设置 dirty 标志。
+            if (term.scr == 0 and selector.selection.mode == .idle) {
                 if (term.dirty) |dirty| {
                     if (y < dirty.len and !dirty[y]) continue;
                 }
             }
+
+            // Update dirty range
+            if (min_y == null) min_y = y;
+            max_y = y;
 
             const y_pos = @as(i32, @intCast(y * self.char_height)) + border;
 
@@ -388,6 +395,36 @@ pub const Renderer = struct {
                 dirty[y] = false;
             }
         }
+
+        if (min_y) |min| {
+            const max = max_y orelse min;
+
+            var rect = x11.XRectangle{
+                .x = 0,
+                .y = @intCast(@as(i32, @intCast(min * self.char_height)) + border),
+                .width = @intCast(self.window.width),
+                .height = @intCast((max - min + 1) * self.char_height),
+            };
+
+            // Include top border if drawing first line
+            if (min == 0) {
+                rect.y = 0;
+                rect.height += @intCast(border);
+            }
+
+            // Include bottom border if drawing last line
+            if (max == term.row - 1) {
+                const total_h = @as(i32, @intCast(self.window.height));
+                const current_bottom = @as(i32, @intCast(rect.y)) + @as(i32, @intCast(rect.height));
+                if (total_h > current_bottom) {
+                    rect.height += @intCast(total_h - current_bottom);
+                }
+            }
+
+            return rect;
+        }
+
+        return null;
     }
 
     pub fn renderCursor(self: *Renderer, term: *Term) !void {

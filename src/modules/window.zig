@@ -21,6 +21,7 @@ pub const Window = struct {
     im: ?x11.XIM = null,
     ic: ?x11.XIC = null,
     cursor: x11.Cursor = 0,
+    wm_delete_window: x11.Atom = 0,
 
     // Double buffering
     buf: x11.Pixmap = 0,
@@ -99,6 +100,11 @@ pub const Window = struct {
             std.log.warn("Failed to open X Input Method\n", .{});
         }
 
+        // Setup WM_DELETE_WINDOW protocol
+        const wm_delete_window = x11.XInternAtom(dpy, "WM_DELETE_WINDOW", x11.False);
+        var protocols = [_]x11.Atom{wm_delete_window};
+        _ = x11.XSetWMProtocols(dpy, win, &protocols, protocols.len);
+
         return Window{
             .dpy = dpy,
             .win = win,
@@ -110,6 +116,7 @@ pub const Window = struct {
             .im = im,
             .ic = ic,
             .cursor = mouse_cursor,
+            .wm_delete_window = wm_delete_window,
             .width = @intCast(win_w),
             .height = @intCast(win_h),
             .cell_width = @intCast(cell_w),
@@ -178,6 +185,14 @@ pub const Window = struct {
         if (self.buf != 0) {
             _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
             _ = x11.XSync(self.dpy, x11.False); // Or XFlush
+        }
+    }
+
+    // Copy partial buffer to window
+    pub fn presentPartial(self: *Window, rect: x11.XRectangle) void {
+        if (self.buf != 0) {
+            _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
+            _ = x11.XSync(self.dpy, x11.False);
         }
     }
 

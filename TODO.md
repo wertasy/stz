@@ -37,7 +37,6 @@
     - [x] 滑动屏幕以保持光标位置
     - [x] 优化 resize 时的重绘逻辑
     - [x] PTY resize 通知
-- [x] **配置重载**: 支持运行时重载配置 (SIGHUP 信号)
  - [x] **鼠标支持**:
       - [x] 鼠标点击报告 (X10, URXVT, SGR pixel mode 1006)
       - [x] 鼠标滚轮滚动
@@ -48,28 +47,31 @@
       - [x] 打印屏幕内容（Shift+Print - printscreen）
       - [x] 打印选择内容（Print - printsel）
       - [x] 切换自动打印模式（Ctrl+Print - toggleprinter）
+ - [x] **光标特性**:
+      - [x] 完整的光标样式支持 (Block, Underline, Bar, Hollow)
+      - [x] 光标闪烁逻辑 (MODE_BLINK)
+      - [x] 文本闪烁属性 (ATTR_BLINK)
+      - [x] 焦点状态处理 (MODE_FOCUSED)
+ - [x] **TrueColor**: 24 位真彩色支持
 
-## 🚧 进行中 / 待修复
+## 🚧 待完善 / 技术债 (Technical Debt)
 
-## 📋 待办事项 (Backlog)
+本节列出了代码分析中发现的与 st 原生行为不一致或实现不完整的部分。
 
-### 核心功能 (对比 st)
-- [x] **光标样式**: 完整的光标样式支持 (Block, Underline, Bar, Hollow)
-- [x] **光标闪烁**: 实现光标闪烁逻辑 (基于 MODE_BLINK 模式)
-- [x] **文本闪烁**: 实现文本闪烁属性 (ATTR_BLINK)
-- [x] **焦点状态**: 添加焦点状态处理 (MODE_FOCUSED)
+### 核心功能差距
+- [ ] **IME 输入法支持**: 虽然已调用 `XOpenIM`/`XCreateIC`，但主事件循环缺失 `XFilterEvent`，导致无法在终端内输入中文。
+- [ ] **OSC 52 剪贴板**: Parser 已实现 Base64 解码，但缺失将数据传递给 X11 `setSelection` 的管道 (Plumbing)，导致远程复制功能失效。
+- [ ] **OSC 104 颜色重置**: 实现过于粗暴，目前强制重置整个调色板，不支持通过参数重置特定索引的颜色。
 
 ### 高级特性
-- [x] **Box Drawing 完整支持**: 扩展到双线、重线、圆角等字符
-- [x] **TrueColor**: 24 位真彩色支持 (0xFFRRGGBB 格式)
-- [ ] **透明度**: X11 Alpha 通道支持 (待实现)
+- [ ] **透明度 (Alpha Channel)**: X11 Alpha 通道支持待实现。
 
 ### 代码质量
 - [ ] **测试**: 增加单元测试覆盖率 (Parser, Screen)
 - [ ] **文档**: 完善模块文档注释
-- [ ] **错误处理**: 更优雅的错误恢复机制
+- [ ] **错误处理**: 完善 Parser 与底层模块的错误传播机制
 
 ## 已知问题
 
 1. **Resize 闪烁**: 调整窗口大小时可能会有短暂的黑屏或闪烁。
-2. **IME 支持**: 尚未实现 XIM/XIC 输入法支持。
+2. **IME**: 无法激活输入法。

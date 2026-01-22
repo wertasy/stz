@@ -3,6 +3,10 @@
 
 const std = @import("std");
 const utf8 = std.unicode;
+const libc = @cImport({
+    @cDefine("_XOPEN_SOURCE", "700");
+    @cInclude("wchar.h");
+});
 
 pub const Utf8Error = error{
     InvalidUtf8,
@@ -83,70 +87,17 @@ pub fn encode(codepoint: u21, buffer: []u8) Utf8Error!usize {
 }
 
 /// 计算字符显示宽度（列数）
-/// 返回 0（不可见）、1（半角）、2（全角）
+/// 使用系统 libc 的 wcwidth
 pub fn runeWidth(codepoint: u21) u8 {
     // 检查控制字符和不可见字符
     if (codepoint < 32 or (codepoint >= 0x7f and codepoint < 0xa0)) {
         return 0;
     }
 
-    // 简单范围判断 (Basic implementation of wcwidth)
-    // CJK Unified Ideographs
-    if (codepoint >= 0x4E00 and codepoint <= 0x9FFF) return 2;
-    // CJK Unified Ideographs Extension A
-    if (codepoint >= 0x3400 and codepoint <= 0x4DBF) return 2;
-    // CJK Compatibility Ideographs
-    if (codepoint >= 0xF900 and codepoint <= 0xFAFF) return 2;
-    // Fullwidth Forms
-    if (codepoint >= 0xFF01 and codepoint <= 0xFF60) return 2;
-    if (codepoint >= 0xFFE0 and codepoint <= 0xFFE6) return 2;
-    // CJK Radicals Supplement .. Bopomofo Extended
-    if (codepoint >= 0x2E80 and codepoint <= 0x312F) return 2;
-    // CJK Strokes .. Enclosed CJK Letters and Months
-    if (codepoint >= 0x3190 and codepoint <= 0x32FF) return 2;
-    // CJK Compatibility Forms
-    if (codepoint >= 0xFE30 and codepoint <= 0xFE4F) return 2;
-    // CJK Compatibility Ideographs Supplement
-    if (codepoint >= 0x2F800 and codepoint <= 0x2FA1F) return 2;
-    // Yi Syllables and Yi Radicals
-    if (codepoint >= 0xA000 and codepoint <= 0xA4CF) return 2;
-    // Hangul Syllables
-    if (codepoint >= 0xAC00 and codepoint <= 0xD7AF) return 2;
-    // CJK Compatibility Symbols
-    if (codepoint >= 0x3300 and codepoint <= 0x33FF) return 2;
-    // CJK Unified Ideographs Extension B (requires surrogate pairs in UTF-16, but u21 can hold values > 0xFFFF)
-    if (codepoint >= 0x20000 and codepoint <= 0x2A6DF) return 2;
-    // CJK Unified Ideographs Extension C
-    if (codepoint >= 0x2A700 and codepoint <= 0x2B73F) return 2;
-    // CJK Unified Ideographs Extension D
-    if (codepoint >= 0x2B740 and codepoint <= 0x2B81F) return 2;
-    // CJK Unified Ideographs Extension E
-    if (codepoint >= 0x2B820 and codepoint <= 0x2CEAF) return 2;
-    // CJK Unified Ideographs Extension F
-    if (codepoint >= 0x2CEB0 and codepoint <= 0x2EBEF) return 2;
-    // Box Drawing
-    if (codepoint >= 0x2500 and codepoint <= 0x257F) return 1;
-    // Block Elements
-    if (codepoint >= 0x2580 and codepoint <= 0x259F) return 1;
-    // Geometric Shapes (Triangles, Squares, etc.)
-    if (codepoint >= 0x25A0 and codepoint <= 0x25FF) return 1;
-    // Miscellaneous Technical
-    if (codepoint >= 0x2300 and codepoint <= 0x23FF) return 1;
-    // Miscellaneous Symbols and Arrows
-    if (codepoint >= 0x2B00 and codepoint <= 0x2BFF) return 1;
-
-    // Powerline and Nerd Fonts (Private Use Area)
-    // Most icons are 1-cell wide in mono fonts, some are 2.
-    // We default to 1 for PUA unless specified.
-    if (codepoint >= 0xE000 and codepoint <= 0xF8FF) return 1;
-    if (codepoint >= 0xF0000 and codepoint <= 0xFFFFD) return 1;
-    if (codepoint >= 0x100000 and codepoint <= 0x10FFFD) return 1;
-
-    // Emoji/Symbols usually 2?
-    if (codepoint >= 0x1F000 and codepoint <= 0x1F9FF) return 2;
-    if (codepoint >= 0x1FA00 and codepoint <= 0x1FAFF) return 2;
-
-    return 1;
+    // 使用 libc wcwidth
+    const width = libc.wcwidth(@intCast(codepoint));
+    if (width < 0) return 0;
+    return @intCast(width);
 }
 
 /// 获取 UTF-8 字符的字节长度

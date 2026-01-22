@@ -56,7 +56,7 @@ pub const Parser = struct {
 
     /// 处理单个字符
     pub fn putc(self: *Parser, c: u21) !void {
-        const control = c < 32 or c == 0x7F;
+        const control = (c < 32 or c == 0x7F) or (c >= 0x80 and c <= 0x9F);
 
         // 处理字符串序列（OSC、DCS 等）
         if (self.term.esc.str) {
@@ -75,6 +75,11 @@ pub const Parser = struct {
 
         // 处理控制字符
         if (control) {
+            // 在 UTF-8 模式下忽略 C1 控制字符 (0x80-0x9F)
+            // 匹配 st 的行为：IS_SET(MODE_UTF8) && ISCONTROLC1(u)
+            if (self.term.mode.utf8 and c >= 0x80 and c <= 0x9F) {
+                return;
+            }
             try self.controlCode(@intCast(c));
             return;
         }
@@ -209,22 +214,20 @@ pub const Parser = struct {
         }
 
         const width = @import("unicode.zig").runeWidth(codepoint);
+        if (width == 0) return;
 
-        // 检查自动换行
+        // 1. 检查自动换行 (Wrap-around pending)
         if (self.term.mode.wrap and self.term.c.state.wrap_next) {
-            if (width > 0) {
-                // 设置前一个字符的 wrap 标志
-                if (self.term.line) |lines| {
-                    if (self.term.c.y < lines.len) {
-                        lines[self.term.c.y][self.term.col - 1].attr.wrap = true;
-                    }
+            if (self.term.line) |lines| {
+                if (self.term.c.y < lines.len) {
+                    lines[self.term.c.y][self.term.col - 1].attr.wrap = true;
                 }
-                try self.newLine(true);
             }
+            try self.newLine(true);
             self.term.c.state.wrap_next = false;
         }
 
-        // 检查是否需要换行（字符宽度超出边界）
+        // 2. 检查是否需要立即换行（如插入位置超出边界）
         if (self.term.c.x + width > self.term.col) {
             if (self.term.mode.wrap) {
                 if (self.term.line) |lines| {
@@ -234,32 +237,28 @@ pub const Parser = struct {
                 }
                 try self.newLine(true);
             } else {
-                self.term.c.x = @max(self.term.c.x, width) - width;
+                // 非换行模式，则在行尾覆盖
+                self.term.c.x = self.term.col - width;
             }
         }
 
-        // 限制光标位置
-        if (self.term.c.x >= self.term.col) {
-            try self.newLine(true);
-            self.term.c.x = 0;
-        }
-
-        // 写入字符
+        // 3. 写入字符
         if (self.term.line) |lines| {
-            if (self.term.c.y < lines.len and self.term.c.x < lines[self.term.c.y].len) {
-                const cx = self.term.c.x;
-                const cy = self.term.c.y;
+            const cx = self.term.c.x;
+            const cy = self.term.c.y;
+            if (cy < lines.len and cx < lines[cy].len) {
+                const line = lines[cy];
 
                 // 处理宽字符覆盖：如果覆盖了宽字符的一部分，需要清除另一部分
-                if (lines[cy][cx].attr.wide) {
+                if (line[cx].attr.wide) {
                     if (cx + 1 < self.term.col) {
-                        lines[cy][cx + 1].u = ' ';
-                        lines[cy][cx + 1].attr.wide_dummy = false;
+                        line[cx + 1].u = ' ';
+                        line[cx + 1].attr.wide_dummy = false;
                     }
-                } else if (lines[cy][cx].attr.wide_dummy) {
+                } else if (line[cx].attr.wide_dummy) {
                     if (cx > 0) {
-                        lines[cy][cx - 1].u = ' ';
-                        lines[cy][cx - 1].attr.wide = false;
+                        line[cx - 1].u = ' ';
+                        line[cx - 1].attr.wide = false;
                     }
                 }
 
@@ -267,33 +266,37 @@ pub const Parser = struct {
                 glyph.u = codepoint;
                 if (width == 2) {
                     glyph.attr.wide = true;
+                    line[cx] = glyph;
+                    if (cx + 1 < self.term.col) {
+                        // 如果 cx+1 原本是宽字符的左半部分，则需要清除其右半部分
+                        if (line[cx + 1].attr.wide) {
+                            if (cx + 2 < self.term.col) {
+                                line[cx + 2].u = ' ';
+                                line[cx + 2].attr.wide_dummy = false;
+                            }
+                        }
+                        line[cx + 1] = types.Glyph{
+                            .u = 0,
+                            .attr = self.term.c.attr.attr,
+                            .fg = self.term.c.attr.fg,
+                            .bg = self.term.c.attr.bg,
+                        };
+                        line[cx + 1].attr.wide_dummy = true;
+                    }
+                } else {
+                    line[cx] = glyph;
                 }
-                lines[cy][cx] = glyph;
-            }
-
-            // 移动光标 - 处理宽字符
-            if (width == 2 and self.term.c.x + 1 < self.term.col) {
-                const dummy_x = self.term.c.x + 1;
-                if (self.term.c.y < lines.len and dummy_x < lines[self.term.c.y].len) {
-                    lines[self.term.c.y][dummy_x] = Glyph{
-                        .u = 0,
-                        .attr = self.term.c.attr.attr,
-                        .fg = self.term.c.attr.fg,
-                        .bg = self.term.c.attr.bg,
-                    };
-                    lines[self.term.c.y][dummy_x].attr.wide_dummy = true;
-                }
-                self.term.c.x += 2;
-            } else if (width > 0) {
-                self.term.c.x += width;
-            }
-
-            if (self.term.mode.wrap and self.term.c.x >= self.term.col) {
-                self.term.c.state.wrap_next = true;
             }
         }
 
-        // 设置脏标记
+        // 4. 更新光标位置和换行状态
+        if (self.term.c.x + width < self.term.col) {
+            self.term.c.x += width;
+        } else {
+            self.term.c.state.wrap_next = true;
+        }
+
+        // 5. 设置脏标记
         if (self.term.dirty) |dirty| {
             if (self.term.c.y < dirty.len) {
                 dirty[self.term.c.y] = true;
@@ -691,23 +694,15 @@ pub const Parser = struct {
     }
 
     fn newLine(self: *Parser, first_col: bool) !void {
-        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
-            dirty[self.term.c.y] = true;
-        };
-        if (self.term.c.y == self.term.bot) {
+        var y = self.term.c.y;
+
+        if (y == self.term.bot) {
+            // std.log.debug("newLine SCROLL: y={d} bot={d} top={d}", .{ y, self.term.bot, self.term.top });
             try self.scrollUp(self.term.top, 1);
         } else {
-            // Move down with clamping respecting origin mode
-            var next_y = self.term.c.y + 1;
-            const max_y = if (self.term.c.state.origin) self.term.bot else self.term.row - 1;
-            if (next_y > max_y) next_y = max_y;
-            self.term.c.y = next_y;
+            y += 1;
         }
-        if (first_col) self.term.c.x = 0;
-        self.term.c.state.wrap_next = false; // Only reset wrap_next, preserve origin
-        if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
-            dirty[self.term.c.y] = true;
-        };
+        try self.moveTo(if (first_col) 0 else self.term.c.x, y);
     }
 
     fn moveCursor(self: *Parser, dx: i32, dy: i32) !void {
@@ -738,14 +733,27 @@ pub const Parser = struct {
     }
 
     fn moveTo(self: *Parser, x: usize, y: usize) !void {
+        // std.log.debug("moveTo: ({d}, {d}) origin={} top={d} bot={d}", .{ x, y, self.term.c.state.origin, self.term.top, self.term.bot });
+
         if (self.term.dirty) |dirty| if (self.term.c.y < dirty.len) {
             dirty[self.term.c.y] = true;
         };
         var new_x = x;
         var new_y = y;
-        if (self.term.c.state.origin) new_y += self.term.top;
+
+        // Determine boundaries based on origin mode
+        var min_y: usize = 0;
+        var max_y: usize = self.term.row - 1;
+
+        if (self.term.c.state.origin) {
+            min_y = self.term.top;
+            max_y = self.term.bot;
+        }
+
+        // Clamp values
         new_x = @min(new_x, self.term.col - 1);
-        new_y = @min(new_y, if (self.term.c.state.origin) self.term.bot else self.term.row - 1);
+        new_y = @max(min_y, @min(new_y, max_y));
+
         self.term.c.x = new_x;
         self.term.c.y = new_y;
         self.term.c.state.wrap_next = false;
@@ -817,9 +825,6 @@ pub const Parser = struct {
             .x = 0,
             .y = 0,
             .state = .default,
-            .top = 0,
-            .bot = self.term.row - 1,
-            .cursor_style = config.Config.cursor.style,
         };
         if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
             dirty[i] = true;
@@ -833,11 +838,8 @@ pub const Parser = struct {
             .x = self.term.c.x,
             .y = self.term.c.y,
             .state = self.term.c.state,
-            .top = self.term.top,
-            .bot = self.term.bot,
             .trantbl = self.term.trantbl,
             .charset = self.term.charset,
-            .cursor_style = self.term.cursor_style,
         };
     }
 
@@ -845,13 +847,10 @@ pub const Parser = struct {
         const alt = if (self.term.mode.alt_screen) @as(usize, 1) else 0;
         const saved = self.term.saved_cursor[alt];
         self.term.c.attr = saved.attr;
-        try self.moveTo(saved.x, saved.y);
         self.term.c.state = saved.state;
-        self.term.top = saved.top;
-        self.term.bot = saved.bot;
+        try self.moveTo(saved.x, saved.y);
         self.term.trantbl = saved.trantbl;
         self.term.charset = saved.charset;
-        self.term.cursor_style = saved.cursor_style;
         // Restore charset handling (re-apply G0/G1 etc logic if needed, but simple assignment is enough for state)
         // If we were using a translation table pointer, we'd need to update it here.
         // Currently stz uses index access to trantbl, so value copy is fine.
@@ -1044,6 +1043,10 @@ pub const Parser = struct {
             self.csi.arg[0] = 0;
             self.csi.narg = 1;
         }
+
+        // Debug logging for CSI sequences
+        // std.log.debug("CSI Handle: mode={c} private={c} args={any}", .{ mode, if (self.csi.priv != 0) self.csi.priv else ' ', self.csi.arg[0..self.csi.narg] });
+
         if (self.csi.mode[1] != 0) {
             switch (self.csi.mode[1]) {
                 ' ' => if (mode == 'q') {
@@ -1108,7 +1111,8 @@ pub const Parser = struct {
                 5 => self.ptyWrite("\x1B[0n"),
                 6 => {
                     var buf: [64]u8 = undefined;
-                    const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ self.term.c.y + 1, self.term.c.x + 1 });
+                    const y = self.term.c.y + 1;
+                    const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ y, self.term.c.x + 1 });
                     self.ptyWrite(s);
                 },
                 else => {},
@@ -1124,6 +1128,9 @@ pub const Parser = struct {
         if (self.csi.priv != 0) return;
         const top = @max(0, @min(@as(i32, @intCast(if (self.csi.narg > 0 and self.csi.arg[0] > 0) self.csi.arg[0] else 1)) - 1, @as(i32, @intCast(self.term.row)) - 1));
         const bot = @max(0, @min(@as(i32, @intCast(if (self.csi.narg > 1 and self.csi.arg[1] > 0) self.csi.arg[1] else @as(i64, @intCast(self.term.row)))) - 1, @as(i32, @intCast(self.term.row)) - 1));
+
+        std.log.debug("setScrollRegion: top={d} bot={d}", .{ top, bot });
+
         self.term.top = @as(usize, @intCast(@min(top, bot)));
         self.term.bot = @as(usize, @intCast(@max(top, bot)));
         try self.moveTo(0, 0);
@@ -1137,22 +1144,16 @@ pub const Parser = struct {
                 .x = self.term.c.x,
                 .y = self.term.c.y,
                 .state = self.term.c.state,
-                .top = self.term.top,
-                .bot = self.term.bot,
                 .trantbl = self.term.trantbl,
                 .charset = self.term.charset,
-                .cursor_style = self.term.cursor_style,
             };
         } else {
             const s = self.term.saved_cursor[alt];
             self.term.c.attr = s.attr;
-            try self.moveTo(s.x, s.y);
             self.term.c.state = s.state;
-            self.term.top = s.top;
-            self.term.bot = s.bot;
+            try self.moveTo(s.x, s.y);
             self.term.trantbl = s.trantbl;
             self.term.charset = s.charset;
-            self.term.cursor_style = s.cursor_style;
         }
     }
 
@@ -1183,10 +1184,8 @@ pub const Parser = struct {
                 };
             },
             6 => {
-                if (set) {
-                    self.term.c.state.origin = true;
-                    try self.moveTo(0, 0);
-                } else self.term.c.state.origin = false;
+                self.term.c.state.origin = set;
+                try self.moveTo(0, 0);
             },
             7 => self.term.mode.wrap = set,
             25 => self.term.mode.hide_cursor = !set,
@@ -1196,12 +1195,27 @@ pub const Parser = struct {
             1004 => self.term.mode.focused_report = set,
             1006 => self.term.mode.mouse_sgr = set,
             2026 => self.term.mode.sync_update = set,
-            47, 1047 => if (self.term.alt != null and set != self.term.mode.alt_screen) try self.swapScreen(),
+            47, 1047 => {
+                if (self.term.alt != null) {
+                    const alt = self.term.mode.alt_screen;
+                    if (alt) {
+                        try self.eraseDisplay(2);
+                    }
+                    if (set != alt) {
+                        try self.swapScreen();
+                    }
+                    if (set and !alt) {
+                        try self.eraseDisplay(2);
+                    }
+                }
+            },
             1048 => try self.cursorSaveRestore(if (set) .save else .load),
             1049 => {
                 if (set) {
                     try self.cursorSaveRestore(.save);
                     if (self.term.alt != null and !self.term.mode.alt_screen) {
+                        // 进入备用屏幕时，虽然 st 是在退出时清除，但为了稳健性，
+                        // 我们在进入时也确保清除（防止上次异常退出残留）
                         if (self.term.alt) |alt| {
                             var g = self.term.c.attr;
                             g.u = ' ';
@@ -1212,10 +1226,11 @@ pub const Parser = struct {
                             }
                         }
                         try self.swapScreen();
-                        try self.moveTo(0, 0);
+                        // 移除 moveTo(0, 0)，与 st 保持一致，光标位置由应用控制
                     }
                 } else {
                     if (self.term.alt != null and self.term.mode.alt_screen) {
+                        try self.eraseDisplay(2); // 退出前清除备用屏幕 (匹配 st 行为)
                         try self.swapScreen();
                         try self.cursorSaveRestore(.load);
                     }

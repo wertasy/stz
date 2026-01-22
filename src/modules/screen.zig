@@ -437,11 +437,59 @@ pub fn setDirty(term: *Term, top: usize, bot: usize) void {
     const t = @min(top, term.row - 1);
     const b = @min(bot, term.row - 1);
 
-    if (term.dirty) |dirty| {
-        for (t..b + 1) |i| {
-            dirty[i] = true;
+    if (t <= b) {
+        if (term.dirty) |dirty| {
+            for (t..b + 1) |i| {
+                dirty[i] = true;
+            }
         }
     }
+}
+
+/// 将包含特定属性的所有行标记为脏
+pub fn setDirtyAttr(term: *Term, attr_mask: types.GlyphAttr) void {
+    const screen = term.line orelse return;
+    const dirty = term.dirty orelse return;
+
+    for (0..term.row) |y| {
+        if (dirty[y]) continue;
+        for (0..term.col) |x| {
+            // 使用自定义的属性检查逻辑 (st 的 tsetdirtattr)
+            const glyph_attr = screen[y][x].attr;
+            // 检查 bitmask
+            if (attrMatches(glyph_attr, attr_mask)) {
+                dirty[y] = true;
+                break;
+            }
+        }
+    }
+}
+
+/// 检查屏幕上是否存在带有特定属性的字符
+pub fn isAttrSet(term: *Term, attr_mask: types.GlyphAttr) bool {
+    const screen = term.line orelse return false;
+
+    for (0..term.row) |y| {
+        for (0..term.col) |x| {
+            if (attrMatches(screen[y][x].attr, attr_mask)) return true;
+        }
+    }
+    return false;
+}
+
+fn attrMatches(a: types.GlyphAttr, mask: types.GlyphAttr) bool {
+    if (mask.bold and a.bold) return true;
+    if (mask.faint and a.faint) return true;
+    if (mask.italic and a.italic) return true;
+    if (mask.underline and a.underline) return true;
+    if (mask.blink and a.blink) return true;
+    if (mask.reverse and a.reverse) return true;
+    if (mask.hidden and a.hidden) return true;
+    if (mask.struck and a.struck) return true;
+    if (mask.wide and a.wide) return true;
+    if (mask.wide_dummy and a.wide_dummy) return true;
+    if (mask.url and a.url) return true;
+    return false;
 }
 
 /// 获取行长度（忽略尾部空格）

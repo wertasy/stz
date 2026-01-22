@@ -198,6 +198,7 @@ pub const XSetICFocus = c.XSetICFocus;
 pub const XUnsetICFocus = c.XUnsetICFocus;
 pub const XSetLocaleModifiers = c.XSetLocaleModifiers;
 pub const Xutf8LookupString = c.Xutf8LookupString;
+pub const XSetWMProtocols = c.XSetWMProtocols;
 
 pub const XIM = c.XIM;
 pub const XIC = c.XIC;

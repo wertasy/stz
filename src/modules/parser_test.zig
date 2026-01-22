@@ -1,6 +1,9 @@
 //! Parser 模块单元测试
 
 const std = @import("std");
+const libc = @cImport({
+    @cInclude("locale.h");
+});
 const Terminal = @import("terminal.zig").Terminal;
 const types = @import("types.zig");
 
@@ -61,6 +64,9 @@ test "CSI colon arguments" {
 }
 
 test "Wide character wrapping" {
+    // 设置 locale 以确保 wcwidth 正确返回宽字符宽度
+    _ = libc.setlocale(libc.LC_CTYPE, "C.UTF-8");
+
     const allocator = std.testing.allocator;
     var term = try Terminal.init(2, 10, allocator); // 10 columns
     defer term.deinit();

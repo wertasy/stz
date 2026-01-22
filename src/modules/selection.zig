@@ -250,6 +250,12 @@ pub const Selector = struct {
         return self.selected_text.?;
     }
 
+    /// 复制当前选中的文本
+    pub fn copy(self: *Selector, term: *const types.Term) !void {
+        _ = try self.getText(term);
+        try self.copyToClipboard();
+    }
+
     /// 清除选择
     pub fn clear(self: *Selector) void {
         self.selection.mode = .idle;

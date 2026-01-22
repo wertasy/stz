@@ -24,16 +24,6 @@ const c_locale = @cImport({
     @cInclude("locale.h");
 });
 
-// 配置重载标志（volatile 用于信号处理）
-var reload_config: bool = false;
-
-/// 信号处理函数（SIGHUP - 重新加载配置）
-fn signalHandler(sig: c_int) callconv(.c) void {
-    _ = sig;
-    // 标记需要重新加载配置
-    reload_config = true;
-}
-
 pub fn main() !u8 {
     // 获取分配器
     var gpa = std.heap.GeneralPurposeAllocator(.{
@@ -50,9 +40,6 @@ pub fn main() !u8 {
     // Set locale for IME
     _ = c_locale.setlocale(c_locale.LC_CTYPE, "");
 
-    // 设置信号处理器（SIGHUP - 重新加载配置）
-    _ = c.signal(c.SIGHUP, signalHandler);
-
     // 解析命令行参数
     const cols = config.Config.window.cols;
     const rows = config.Config.window.rows;
@@ -60,7 +47,6 @@ pub fn main() !u8 {
 
     std.log.info("stz - Zig 终端模拟器 v0.1.0\n", .{});
     std.log.info("尺寸: {d}x{d}\n", .{ cols, rows });
-    std.log.info("发送 SIGHUP 信号 (kill -HUP <pid>) 可重新加载配置\n", .{});
 
     // 设置 TERM 环境变量 (必须在 PTY 初始化前，以确保子进程能继承)
     _ = c.setenv("TERM", config.Config.term_type, 1);
@@ -129,30 +115,14 @@ pub fn main() !u8 {
     // 设置 PTY 为非阻塞模式
     try pty.setNonBlocking();
 
+    // 渲染限制 (60 FPS)
+    const min_frame_time_ms: i64 = 1000 / 60;
+    var last_render_time: i64 = std.time.milliTimestamp();
+    var pending_render: bool = false;
+
     while (!quit) {
         // Alias term for easy access
         const term = &terminal.term;
-
-        // 0. 检查配置重载
-        if (reload_config) {
-            reload_config = false;
-            std.log.info("正在重新加载配置...\n", .{});
-
-            // 清除颜色缓存
-            for (0..renderer.colors.len) |i| {
-                renderer.loaded_colors[i] = false;
-            }
-
-            // 重绘整个屏幕
-            screen.setFullDirty(term);
-
-            // 强制重绘
-            try renderer.render(term, &selector);
-            try renderer.renderCursor(term);
-            window.present();
-
-            std.log.info("配置已重新加载\n", .{});
-        }
 
         // 1. 处理所有挂起的 X11 事件
         while (window.pollEvent()) |event| {
@@ -161,8 +131,10 @@ pub fn main() !u8 {
 
             switch (ev.type) {
                 x11.ClientMessage => {
-                    // TODO: Handle WM_DELETE_WINDOW
-                    // if (ev.xclient.data.l[0] == wm_delete_window) ...
+                    if (@as(x11.Atom, @intCast(ev.xclient.data.l[0])) == window.wm_delete_window) {
+                        quit = true;
+                        break;
+                    }
                 },
                 x11.KeyPress => {
                     renderer.resetCursorBlink(); // Reset blink on input
@@ -184,15 +156,17 @@ pub fn main() !u8 {
                     if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
                         selector.clear();
                         terminal.kscrollUp(term.row); // Scroll one screen up
-                        try renderer.render(term, &selector);
-                        try renderer.renderCursor(term);
-                        window.present();
+                        if (try renderer.render(term, &selector)) |rect| {
+                            try renderer.renderCursor(term);
+                            window.presentPartial(rect);
+                        }
                     } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
                         selector.clear();
                         terminal.kscrollDown(term.row); // Scroll one screen down
-                        try renderer.render(term, &selector);
-                        try renderer.renderCursor(term);
-                        window.present();
+                        if (try renderer.render(term, &selector)) |rect| {
+                            try renderer.renderCursor(term);
+                            window.presentPartial(rect);
+                        }
                     } else if (ctrl and shift and (keysym == 'V' or keysym == 'v')) {
                         // Ctrl+Shift+V: 从 CLIPBOARD 粘贴 (与现代终端一致)
                         const dpy = window.dpy;
@@ -225,65 +199,55 @@ pub fn main() !u8 {
                             // 如果 handleKey 处理了该按键，直接跳过
                         } else if (window.ic) |ic| {
                             var status: x11.Status = undefined;
-                            var buf: [128]u8 = undefined;
-                            const len = x11.Xutf8LookupString(ic, &ev.xkey, &buf, buf.len, null, &status);
+                            var kbuf: [32]u8 = undefined;
+                            const n = x11.Xutf8LookupString(ic, &ev.xkey, &kbuf, kbuf.len, null, &status);
                             if (status == x11.XLookupChars or status == x11.XLookupBoth) {
-                                if (len > 0) {
-                                    _ = try pty.write(buf[0..@intCast(len)]);
+                                if (n > 0) {
+                                    _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
                                 }
                             }
                         } else {
-                            // 备选方案
+                            var kbuf: [32]u8 = undefined;
+                            const n = x11.XLookupString(&ev.xkey, &kbuf, kbuf.len, null, null);
+                            if (n > 0) {
+                                _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+                            }
                         }
                     }
                 },
                 x11.ConfigureNotify => {
-                    const e = ev.xconfigure;
-                    const new_w = e.width;
-                    const new_h = e.height;
+                    const width = @as(u32, @intCast(ev.xconfigure.width));
+                    const height = @as(u32, @intCast(ev.xconfigure.height));
 
-                    if (new_w != window.width or new_h != window.height) {
-                        window.width = @intCast(new_w);
-                        window.height = @intCast(new_h);
-                        window.resizeBuffer(@intCast(new_w), @intCast(new_h));
-                        renderer.resize();
+                    if (width != window.width or height != window.height) {
+                        window.width = width;
+                        window.height = height;
 
-                        // 窗口调整大小后，由于 Pixmap 是新创建的，需要重绘全屏
-                        screen.setFullDirty(term);
+                        const new_cols = window.width / window.cell_width;
+                        const new_rows = window.height / window.cell_height;
 
-                        // 计算新的行列数（减去边框宽度）
-                        const border = config.Config.window.border_pixels;
-                        const content_width = @max(window.width, border * 2) - border * 2;
-                        const content_height = @max(window.height, border * 2) - border * 2;
-                        const new_cols = @divFloor(content_width, window.cell_width);
-                        const new_rows = @divFloor(content_height, window.cell_height);
-
-                        // 只有当行列数改变时才调整
-                        if (new_cols != terminal.term.col or new_rows != terminal.term.row) {
-                            // 调整终端大小
-                            try terminal.resize(new_rows, new_cols);
-
-                            // 调整 PTY 大小
-                            try pty.resize(new_cols, new_rows);
-
-                            std.log.info("Resize: {}x{} -> {}x{}\n", .{
-                                terminal.term.col, terminal.term.row, new_cols, new_rows,
-                            });
-
-                            // 重绘
-                            if (!terminal.term.mode.sync_update) {
-                                try renderer.render(&terminal.term, &selector);
-                                try renderer.renderCursor(&terminal.term);
-                                window.present();
+                        if (new_cols > 0 and new_rows > 0) {
+                            if (new_cols != terminal.term.col or new_rows != terminal.term.row) {
+                                try terminal.resize(new_rows, new_cols);
+                                try pty.resize(new_cols, new_rows);
+                                window.resizeBuffer(window.width, window.height);
+                                renderer.resize();
+                                if (try renderer.render(&terminal.term, &selector)) |_| {
+                                    window.present(); // Resize always needs full present
+                                }
                             }
                         }
                     }
                 },
                 x11.Expose => {
                     if (!terminal.term.mode.sync_update) {
-                        try renderer.render(&terminal.term, &selector);
-                        try renderer.renderCursor(&terminal.term);
-                        window.present();
+                        if (try renderer.render(&terminal.term, &selector)) |_| {
+                            try renderer.renderCursor(&terminal.term);
+                            window.present();
+                        } else {
+                            // Expose should always refresh window from pixmap at least
+                            window.present();
+                        }
                     }
                 },
                 x11.ButtonPress => {
@@ -369,14 +333,15 @@ pub fn main() !u8 {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
                             if (terminal.term.mode.alt_screen) {
-                                // Alt Screen: send Up arrow key (3 times for speed)
-                                for (0..3) |_| try input.writeArrow(false, 'A', false, false);
+                                // In alt screen (vi/less), send arrow keys
+                                _ = try pty.write("\x1B[A");
                             } else {
                                 selector.clear();
                                 terminal.kscrollUp(3);
-                                try renderer.render(term, &selector);
-                                try renderer.renderCursor(term);
-                                window.present();
+                                if (try renderer.render(&terminal.term, &selector)) |rect| {
+                                    try renderer.renderCursor(&terminal.term);
+                                    window.presentPartial(rect);
+                                }
                             }
                         }
                     } else if (e.button == x11.Button5) { // Scroll Down
@@ -384,33 +349,28 @@ pub fn main() !u8 {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
                             if (terminal.term.mode.alt_screen) {
-                                // Alt Screen: send Down arrow key (3 times for speed)
-                                for (0..3) |_| try input.writeArrow(false, 'B', false, false);
+                                // In alt screen (vi/less), send arrow keys
+                                _ = try pty.write("\x1B[B");
                             } else {
                                 selector.clear();
                                 terminal.kscrollDown(3);
-                                try renderer.render(term, &selector);
-                                try renderer.renderCursor(term);
-                                window.present();
+                                if (try renderer.render(&terminal.term, &selector)) |rect| {
+                                    try renderer.renderCursor(&terminal.term);
+                                    window.presentPartial(rect);
+                                }
                             }
-                        }
-                    } else {
-                        // Check if mouse reporting is enabled
-                        if (terminal.term.mode.mouse) {
-                            try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         }
                     }
                 },
                 x11.ButtonRelease => {
                     const e = ev.xbutton;
+                    const shift = (e.state & x11.ShiftMask) != 0;
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const border = @as(i32, @intCast(config.Config.window.border_pixels));
-                    const x = @as(usize, @intCast(@divTrunc(@max(0, e.x - border), cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
+                    const x = @as(usize, @intCast(@divTrunc(e.x, cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(e.y, cell_h)));
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
-                    const shift = (e.state & x11.ShiftMask) != 0;
 
                     if (terminal.term.mode.mouse and !shift) {
                         try input.sendMouseReport(cx, cy, e.button, e.state, 1);
@@ -419,53 +379,45 @@ pub fn main() !u8 {
                         continue;
                     }
 
-                    if (mouse_pressed) {
-                        const was_dragging = (selector.selection.mode == .ready);
+                    if (e.button == pressed_button) {
                         mouse_pressed = false;
                         pressed_button = 0;
 
-                        // 结束选择扩展
-                        selector.extend(&terminal.term, cx, cy, .regular, true);
-
-                        // 只有在 ready 模式下且是 Button1 释放时，才复制到 PRIMARY
-                        if (was_dragging and e.button == x11.Button1) {
-                            // Only copy to clipboard if we actually performed a selection drag
-                            const text = selector.getText(&terminal.term) catch "";
-                            if (text.len > 0) {
-                                selector.copyToClipboard() catch {};
-                            }
+                        if (e.button == x11.Button1) {
+                            // Copy on release
+                            selector.copy(term) catch |err| {
+                                std.log.err("Copy failed: {}\n", .{err});
+                            };
                         }
-
-                        // Redraw to clear selection highlight
-                        try renderer.render(&terminal.term, &selector);
-                        try renderer.renderCursor(&terminal.term);
-                        window.present();
                     }
                 },
                 x11.MotionNotify => {
                     const e = ev.xmotion;
+                    const shift = (e.state & x11.ShiftMask) != 0;
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const border = @as(i32, @intCast(config.Config.window.border_pixels));
-                    const x = @as(usize, @intCast(@divTrunc(@max(0, e.x - border), cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(@max(0, e.y - border), cell_h)));
+                    const x = @as(usize, @intCast(@divTrunc(e.x, cell_w)));
+                    const y = @as(usize, @intCast(@divTrunc(e.y, cell_h)));
                     const cx = @min(x, terminal.term.col - 1);
                     const cy = @min(y, terminal.term.row - 1);
-                    const shift = (e.state & x11.ShiftMask) != 0;
 
                     if (terminal.term.mode.mouse and !shift) {
-                        try input.sendMouseReport(cx, cy, pressed_button, e.state, 2);
+                        // Only send motion if button is pressed or mouse_many/mouse_motion is set
+                        const send_motion = terminal.term.mode.mouse_many or
+                            (terminal.term.mode.mouse_motion and mouse_pressed);
+                        if (send_motion) {
+                            try input.sendMouseReport(cx, cy, 0, e.state, 2);
+                        }
                         continue;
                     }
 
-                    if (mouse_pressed) {
+                    if (mouse_pressed and pressed_button == x11.Button1) {
+                        // Update selection
                         selector.extend(&terminal.term, cx, cy, .regular, false);
                         screen.setFullDirty(&terminal.term);
-
-                        // Redraw with selection
-                        try renderer.render(&terminal.term, &selector);
-                        // Draw selection highlight (simplified: just redraw)
-                        window.present();
+                        if (try renderer.render(&terminal.term, &selector)) |rect| {
+                            window.presentPartial(rect);
+                        }
                     }
                 },
                 x11.SelectionRequest => {
@@ -539,17 +491,19 @@ pub fn main() !u8 {
                     // 粘贴完成后清除选择高亮
                     selector.clear();
                     screen.setFullDirty(&terminal.term);
-                    try renderer.render(&terminal.term, &selector);
-                    try renderer.renderCursor(&terminal.term);
-                    window.present();
+                    if (try renderer.render(&terminal.term, &selector)) |rect| {
+                        try renderer.renderCursor(&terminal.term);
+                        window.presentPartial(rect);
+                    }
                 },
                 x11.SelectionClear => {
                     const e = ev.xselectionclear;
                     std.log.info("SelectionClear received\n", .{});
                     selector.handleSelectionClear(&e);
                     // Redraw to clear highlight
-                    try renderer.render(&terminal.term, &selector);
-                    window.present();
+                    if (try renderer.render(&terminal.term, &selector)) |rect| {
+                        window.presentPartial(rect);
+                    }
                 },
                 x11.FocusIn => {
                     std.log.info("FocusIn\n", .{});
@@ -558,9 +512,12 @@ pub fn main() !u8 {
                     if (terminal.term.mode.focused_report) {
                         _ = pty.write("\x1B[I") catch {};
                     }
-                    try renderer.render(&terminal.term, &selector);
-                    try renderer.renderCursor(&terminal.term);
-                    window.present();
+                    if (try renderer.render(&terminal.term, &selector)) |rect| {
+                        try renderer.renderCursor(&terminal.term);
+                        window.presentPartial(rect);
+                    } else {
+                        try renderer.renderCursor(&terminal.term);
+                    }
                 },
                 x11.FocusOut => {
                     std.log.info("FocusOut\n", .{});
@@ -569,11 +526,16 @@ pub fn main() !u8 {
                     if (terminal.term.mode.focused_report) {
                         _ = pty.write("\x1B[O") catch {};
                     }
-                    try renderer.render(&terminal.term, &selector);
-                    try renderer.renderCursor(&terminal.term);
-                    window.present();
+                    if (try renderer.render(&terminal.term, &selector)) |rect| {
+                        try renderer.renderCursor(&terminal.term);
+                        window.presentPartial(rect);
+                    } else {
+                        try renderer.renderCursor(&terminal.term);
+                    }
                 },
-                else => {},
+                else => {
+                    // std.log.debug("未处理的 X11 事件: {d}\n", .{ev.type});
+                },
             }
         }
 
@@ -583,23 +545,53 @@ pub fn main() !u8 {
         const now = std.time.milliTimestamp();
         var timeout_ms: i32 = -1;
 
+        // 渲染检查: 如果有待处理的渲染请求且时间间隔已到，则渲染
+        if (pending_render and (now - last_render_time >= min_frame_time_ms)) {
+            if (!terminal.term.mode.sync_update) {
+                if (try renderer.render(&terminal.term, &selector)) |rect| {
+                    try renderer.renderCursor(&terminal.term);
+                    window.presentPartial(rect);
+                }
+                last_render_time = std.time.milliTimestamp();
+                pending_render = false;
+            }
+        }
+
         if (config.Config.cursor.blink_interval_ms > 0) {
             const next_blink = renderer.last_blink_time + config.Config.cursor.blink_interval_ms;
             if (now >= next_blink) {
-                // Time to toggle blink, force redraw
-                // We don't change state here, renderCursor handles state toggling based on time.
-                // We just ensure we wake up to draw it.
-                if (terminal.term.dirty) |dirty| {
-                    if (terminal.term.c.y < dirty.len) {
-                        dirty[terminal.term.c.y] = true;
+                // Time to toggle blink state
+                term.mode.blink = !term.mode.blink;
+
+                // 1. 如果有文本闪烁属性，标记相关行为脏
+                if (screen.isAttrSet(term, .{ .blink = true })) {
+                    screen.setDirtyAttr(term, .{ .blink = true });
+                }
+
+                // 2. 如果光标需要闪烁，标记光标行为脏
+                if (term.cursor_style.shouldBlink()) {
+                    if (term.dirty) |dirty| {
+                        if (term.c.y < dirty.len) {
+                            dirty[term.c.y] = true;
+                        }
                     }
                 }
-                try renderer.render(&terminal.term, &selector);
-                try renderer.renderCursor(&terminal.term);
-                window.present();
-                timeout_ms = @intCast(config.Config.cursor.blink_interval_ms);
+
+                renderer.last_blink_time = now;
+                pending_render = true;
+                timeout_ms = 0;
             } else {
                 timeout_ms = @intCast(next_blink - now);
+            }
+        }
+
+        // 如果有待处理的渲染，缩短 poll 超时时间以保证帧率
+        if (pending_render) {
+            const time_since = std.time.milliTimestamp() - last_render_time;
+            const remaining = min_frame_time_ms - time_since;
+            const wait_ms: i32 = if (remaining > 0) @intCast(remaining) else 0;
+            if (timeout_ms == -1 or wait_ms < timeout_ms) {
+                timeout_ms = wait_ms;
             }
         }
 
@@ -636,64 +628,12 @@ pub fn main() !u8 {
                 return err;
             };
 
-            if (n == 0) {
-                // EOF
-                std.log.info("PTY EOF\n", .{});
-                quit = true;
-                break;
-            }
-
-            std.log.info("Read {d} bytes from PTY\n", .{n});
-
-            // 记录处理前的同步模式状态
-            const was_sync = terminal.term.mode.sync_update;
-
-            // 处理终端数据
-            try terminal.processBytes(read_buffer[0..n]);
-
-            // 检查是否有剪贴板请求 (OSC 52)
-            if (term.clipboard_data) |data| {
-                try selector.copyTextToClipboard(data, term.clipboard_mask);
-                allocator.free(data);
-                term.clipboard_data = null;
-            }
-
-            // 如果有新输出且当前在查看历史，回到实时屏幕
-            if (n > 0 and terminal.term.scr > 0) {
-                terminal.term.scr = 0;
-                screen.setFullDirty(&terminal.term);
-            }
-
-            // 检测并高亮 URL
-            try url_detector.highlightUrls();
-
-            // 检查窗口标题更新
-            if (terminal.term.window_title_dirty) {
-                var title_buf: [512]u8 = undefined;
-                const copy_len = @min(terminal.term.window_title.len, title_buf.len - 1);
-                std.mem.copyForwards(u8, title_buf[0..copy_len], terminal.term.window_title[0..copy_len]);
-                title_buf[copy_len] = 0;
-                window.setTitle(title_buf[0..copy_len :0]);
-                terminal.term.window_title_dirty = false;
-            }
-
-            // 渲染判定：
-            // 1. 如果当前不在同步更新模式，则渲染。
-            // 2. 如果刚刚关闭了同步更新模式 (was_sync=true, now=false)，则必须强制渲染一次。
-            if (!terminal.term.mode.sync_update or (was_sync and !terminal.term.mode.sync_update)) {
-                try renderer.render(&terminal.term, &selector);
-                try renderer.renderCursor(&terminal.term);
-                window.present();
+            if (n > 0) {
+                try terminal.processBytes(read_buffer[0..n]);
+                pending_render = true;
             }
         }
     }
 
-    // 清除 URL 高亮
-    url_detector.clearHighlights();
-
-    // 等待子进程结束
-    const exit_status = try pty.wait();
-    std.log.info("子进程退出，状态: {d}\n", .{exit_status});
-
-    return exit_status;
+    return 0;
 }

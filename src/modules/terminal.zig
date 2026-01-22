@@ -50,9 +50,6 @@ pub const Terminal = struct {
                 .x = 0,
                 .y = 0,
                 .state = .default,
-                .top = 0,
-                .bot = row - 1,
-                .cursor_style = config.Config.cursor.style,
             };
         }
 
@@ -67,6 +64,9 @@ pub const Terminal = struct {
 
     /// 处理输入字节
     pub fn processBytes(self: *Terminal, bytes: []const u8) !void {
+        // Log incoming bytes for debugging
+        // if (bytes.len > 0) std.log.debug("Input bytes: {any}", .{bytes});
+
         var i: usize = 0;
         while (i < bytes.len) {
             const byte_len = unicode.utf8ByteLength(bytes[i]);
@@ -112,6 +112,7 @@ pub const Terminal = struct {
 
     /// 处理控制字符
     fn controlCode(self: *Terminal, c: u8) !void {
+        std.log.debug("Terminal controlCode: 0x{x}", .{c});
         switch (c) {
             '\x09' => try self.putTab(), // HT
             '\x08' => try self.moveCursor(-1, 0), // BS
@@ -131,7 +132,7 @@ pub const Terminal = struct {
         // 检查自动换行
         if (self.term.mode.wrap and self.term.c.state.wrap_next) {
             if (width > 0) {
-                try self.newLine(false);
+                try self.newLine(true);
             }
             self.term.c.state.wrap_next = false;
         }
@@ -139,7 +140,7 @@ pub const Terminal = struct {
         // 检查是否需要换行
         if (self.term.c.x + width > self.term.col) {
             if (self.term.mode.wrap) {
-                try self.newLine(false);
+                try self.newLine(true);
             } else {
                 self.term.c.x = @max(self.term.c.x, width) - width;
             }
@@ -147,8 +148,8 @@ pub const Terminal = struct {
 
         // 限制光标位置
         if (self.term.c.x >= self.term.col) {
-            try self.newLine(false);
-            self.term.c.x = 0;
+            self.term.c.x = self.term.col - 1;
+            self.term.c.state.wrap_next = true;
         }
 
         // 写入字符
@@ -221,19 +222,18 @@ pub const Terminal = struct {
         var new_x = x;
         var new_y = y;
 
-        // 处理原点模式
+        // Determine boundaries based on origin mode
+        var min_y: usize = 0;
+        var max_y: usize = self.term.row - 1;
+
         if (self.term.c.state.origin) {
-            new_y += self.term.top;
+            min_y = self.term.top;
+            max_y = self.term.bot;
         }
 
-        // 限制在范围内
-        if (self.term.c.state.origin) {
-            new_x = @min(new_x, self.term.col - 1);
-            new_y = @min(new_y, self.term.bot);
-        } else {
-            new_x = @min(new_x, self.term.col - 1);
-            new_y = @min(new_y, self.term.row - 1);
-        }
+        // Clamp values
+        new_x = @min(new_x, self.term.col - 1);
+        new_y = @max(min_y, @min(new_y, max_y));
 
         self.term.c.x = new_x;
         self.term.c.y = new_y;
@@ -255,7 +255,11 @@ pub const Terminal = struct {
         if (self.term.c.y == self.term.bot) {
             try screen.scrollUp(&self.term, self.term.top, 1);
         } else {
-            self.term.c.y += 1;
+            // Move down with clamping respecting origin mode
+            var next_y = self.term.c.y + 1;
+            const max_y = if (self.term.c.state.origin) self.term.bot else self.term.row - 1;
+            if (next_y > max_y) next_y = max_y;
+            self.term.c.y = next_y;
         }
 
         self.term.c.x = if (first_col) 0 else self.term.c.x;

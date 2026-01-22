@@ -136,11 +136,8 @@ pub const SavedCursor = struct {
     x: usize = 0,
     y: usize = 0,
     state: CursorState = .default,
-    top: usize = 0,
-    bot: usize = 0,
     trantbl: [4]Charset = [_]Charset{.usa} ** 4,
     charset: u8 = 0,
-    cursor_style: CursorStyle = .blinking_block_default, // 保存的光标样式
 };
 
 /// 选择模式

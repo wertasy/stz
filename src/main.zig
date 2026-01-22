@@ -80,15 +80,15 @@ pub fn main() !u8 {
     var window = try Window.init("stz", cols, rows, allocator);
     defer window.deinit();
 
-    // 显示窗口
-    window.show();
-
     // 初始化渲染器
     var renderer = try Renderer.init(&window, allocator);
     defer renderer.deinit();
 
     // 修复窗口大小以匹配实际字体尺寸
     window.resizeToGrid(cols, rows);
+
+    // 显示窗口
+    window.show();
 
     // 初始化输入处理器
     var input = Input.init(&pty, &terminal.term);

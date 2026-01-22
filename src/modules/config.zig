@@ -7,7 +7,7 @@ const std = @import("std");
 pub const Config = struct {
     // 字体配置
     pub const font = struct {
-        pub const name = "Maple Mono NF:pixelsize=20:antialias=true:autohint=true";
+        pub const name = "FantasqueSansMono Nerd Font:pixelsize=20:antialias=true:autohint=true";
         pub const size: u32 = 20; // 像素大小
         pub const bold: bool = true;
         pub const italic: bool = false;

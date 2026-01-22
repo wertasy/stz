@@ -396,7 +396,7 @@ pub const Renderer = struct {
         }
 
         const style = term.cursor_style;
-        const is_blinking_style = types.cursorStyleShouldBlink(style);
+        const is_blinking_style = style.shouldBlink();
 
         // 如果是闪烁样式且当前在不可见阶段，则不绘制
         if (is_blinking_style and !self.cursor_blink_state) {

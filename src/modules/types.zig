@@ -58,15 +58,15 @@ pub const CursorStyle = enum(u8) {
     steady_bar = 6, // 稳定竖线
     blinking_st_cursor = 7, // 闪烁 st 光标（空心框）
     steady_st_cursor = 8, // 稳定 st 光标（空心框）
-};
 
-/// 判断光标样式是否应该闪烁
-pub fn cursorStyleShouldBlink(style: CursorStyle) bool {
-    return switch (style) {
-        .blinking_block, .blinking_block_default, .blinking_underline, .blinking_bar, .blinking_st_cursor => true,
-        else => false,
-    };
-}
+    /// 判断光标样式是否应该闪烁
+    pub fn shouldBlink(self: CursorStyle) bool {
+        return switch (self) {
+            .blinking_block, .blinking_block_default, .blinking_underline, .blinking_bar, .blinking_st_cursor => true,
+            else => false,
+        };
+    }
+};
 
 /// 终端模式标志
 pub const TermMode = packed struct(u32) {

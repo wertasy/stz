@@ -86,6 +86,8 @@ pub fn main() !u8 {
 
     // 修复窗口大小以匹配实际字体尺寸
     window.resizeToGrid(cols, rows);
+    window.resizeBuffer(window.width, window.height);
+    renderer.resize();
 
     // 显示窗口
     window.show();
@@ -245,6 +247,9 @@ pub fn main() !u8 {
                         window.height = @intCast(new_h);
                         window.resizeBuffer(@intCast(new_w), @intCast(new_h));
                         renderer.resize();
+
+                        // 窗口调整大小后，由于 Pixmap 是新创建的，需要重绘全屏
+                        screen.setFullDirty(term);
 
                         // 计算新的行列数（减去边框宽度）
                         const border = config.Config.window.border_pixels;

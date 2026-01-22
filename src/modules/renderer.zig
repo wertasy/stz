@@ -65,8 +65,8 @@ pub const Renderer = struct {
             if (font == null) return error.FontLoadFailed;
         }
 
-        const char_width = @as(u32, @intCast(font.*.max_advance_width));
-        const char_height = @as(u32, @intCast(font.*.height));
+        const char_width = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.max_advance_width)) * config.Config.font.cwscale)));
+        const char_height = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.ascent + font.*.descent)) * config.Config.font.chscale)));
         const ascent = font.*.ascent;
         const descent = font.*.descent;
 
@@ -239,6 +239,26 @@ pub const Renderer = struct {
         // Default background color
         var default_bg = try self.getColor(term, 259);
 
+        const border = @as(i32, @intCast(config.Config.window.border_pixels));
+        const grid_w = @as(i32, @intCast(term.col)) * @as(i32, @intCast(self.char_width));
+        const grid_h = @as(i32, @intCast(term.row)) * @as(i32, @intCast(self.char_height));
+
+        // 清除四周多余区域及边框
+        // 1. 顶部区域
+        x11.XftDrawRect(self.draw, &default_bg, 0, 0, @intCast(self.window.width), @intCast(border));
+        // 2. 底部区域
+        const bottom_y = border + grid_h;
+        if (bottom_y < @as(i32, @intCast(self.window.height))) {
+            x11.XftDrawRect(self.draw, &default_bg, 0, bottom_y, @intCast(self.window.width), @intCast(@as(i32, @intCast(self.window.height)) - bottom_y));
+        }
+        // 3. 左侧区域
+        x11.XftDrawRect(self.draw, &default_bg, 0, border, @intCast(border), @intCast(grid_h));
+        // 4. 右侧区域
+        const right_x = border + grid_w;
+        if (right_x < @as(i32, @intCast(self.window.width))) {
+            x11.XftDrawRect(self.draw, &default_bg, right_x, border, @intCast(@as(i32, @intCast(self.window.width)) - right_x), @intCast(grid_h));
+        }
+
         // Iterate over rows
         for (0..term.row) |y| {
             // Determine which line to draw
@@ -253,11 +273,10 @@ pub const Renderer = struct {
                 }
             }
 
-            const border = @as(i32, @intCast(config.Config.window.border_pixels));
             const y_pos = @as(i32, @intCast(y * self.char_height)) + border;
 
-            // Clear the dirty row with default background
-            x11.XftDrawRect(self.draw, &default_bg, 0, y_pos, @intCast(self.window.width), @intCast(self.char_height));
+            // Clear the dirty grid row with default background
+            x11.XftDrawRect(self.draw, &default_bg, border, y_pos, @intCast(grid_w), @intCast(self.char_height));
 
             // 第一阶段：绘制所有非默认背景
             for (0..@min(term.col, line_data.len)) |x| {

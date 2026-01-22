@@ -82,6 +82,7 @@ pub const Renderer = struct {
 
         // 加载常见备用字体 (CJK, Emoji, Symbols)
         const fallback_names = [_][:0]const u8{
+            "DejaVu Sans Mono:pixelsize=20",
             "Noto Sans Mono CJK SC:pixelsize=20",
             "WenQuanYi Micro Hei:pixelsize=20",
             "Noto Color Emoji:pixelsize=20",

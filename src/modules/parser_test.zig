@@ -63,6 +63,37 @@ test "CSI colon arguments" {
     try expectEqual(expected_bg, term.term.c.attr.bg);
 }
 
+test "SGR 4 and 58 underline style and color" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+    term.parser.term = &term.term;
+
+    var parser = &term.parser;
+
+    // Test 4:3 (Curly Underline)
+    const seq_curly = "\x1b[4:3m";
+    for (seq_curly) |c| try parser.putc(@intCast(c));
+    try expect(term.term.c.attr.attr.underline);
+    try expectEqual(@as(i32, 3), term.term.c.attr.ustyle);
+
+    // Test 58:5:1 (Set Underline Color to Red/Index 1)
+    // Index 1 (Red) in normal colors is usually 0xFF0000 (RGB) or similar
+    // Just check if it sets valid RGB in ucolor
+    const seq_ucolor = "\x1b[58:5:1m";
+    for (seq_ucolor) |c| try parser.putc(@intCast(c));
+
+    // Check that ucolor is set (not default -1)
+    try expect(term.term.c.attr.ucolor[0] != -1);
+
+    // Test 59 (Reset Underline Color)
+    const seq_reset_ucolor = "\x1b[59m";
+    for (seq_reset_ucolor) |c| try parser.putc(@intCast(c));
+    try expectEqual(@as(i32, -1), term.term.c.attr.ucolor[0]);
+    try expectEqual(@as(i32, -1), term.term.c.attr.ucolor[1]);
+    try expectEqual(@as(i32, -1), term.term.c.attr.ucolor[2]);
+}
+
 test "Wide character wrapping" {
     // 设置 locale 以确保 wcwidth 正确返回宽字符宽度
     _ = libc.setlocale(libc.LC_CTYPE, "C.UTF-8");

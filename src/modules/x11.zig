@@ -7,6 +7,7 @@ const c = @cImport({
     @cInclude("X11/cursorfont.h");
     @cInclude("X11/keysym.h");
     @cInclude("X11/XKBlib.h");
+    @cInclude("fontconfig/fontconfig.h");
 });
 
 // Re-export C module for explicit access if needed
@@ -31,6 +32,8 @@ pub const XSetWindowAttributes = c.XSetWindowAttributes;
 pub const XRenderColor = c.XRenderColor;
 pub const XTextProperty = c.XTextProperty;
 pub const XRectangle = c.XRectangle;
+pub const XGlyphInfo = c.XGlyphInfo;
+pub const XGCValues = c.XGCValues;
 
 pub const ShiftMask = c.ShiftMask;
 pub const LockMask = c.LockMask;
@@ -58,6 +61,20 @@ pub const FocusIn = c.FocusIn;
 pub const FocusOut = c.FocusOut;
 pub const EnterNotify = c.EnterNotify;
 pub const LeaveNotify = c.LeaveNotify;
+pub const ReparentNotify = c.ReparentNotify;
+pub const MapNotify = c.MapNotify;
+pub const NoExpose = c.NoExpose;
+
+pub const XK_Prior = 0xFF55;
+pub const XK_Next = 0xFF56;
+pub const XK_End = 0xFF57;
+pub const XK_Home = 0xFF50;
+pub const XK_KP_Prior = 0xFF9A;
+pub const XK_KP_Next = 0xFF9B;
+pub const XK_KP_Home = 0xFF95;
+pub const XK_Print = 0xFF61;
+pub const XK_v = 0x0076;
+pub const XK_V = 0x0056;
 
 // Mouse button constants
 pub const Button1 = c.Button1;
@@ -73,6 +90,17 @@ pub const CWCursor = c.CWCursor;
 pub const NorthWestGravity = c.NorthWestGravity;
 pub const CWEventMask = c.CWEventMask;
 pub const CWColormap = c.CWColormap;
+
+pub const GCLineWidth = c.GCLineWidth;
+pub const GCLineStyle = c.GCLineStyle;
+pub const GCCapStyle = c.GCCapStyle;
+pub const GCForeground = c.GCForeground;
+pub const LineSolid = c.LineSolid;
+pub const CapButt = c.CapButt;
+pub const CapNotLast = c.CapNotLast;
+pub const JoinMiter = c.JoinMiter;
+pub const JoinRound = c.JoinRound;
+pub const JoinBevel = c.JoinBevel;
 
 pub const KeyPressMask = c.KeyPressMask;
 pub const KeyReleaseMask = c.KeyReleaseMask;
@@ -116,12 +144,48 @@ pub const XftFontClose = c.XftFontClose;
 pub const XftColorAllocValue = c.XftColorAllocValue;
 pub const XftDrawRect = c.XftDrawRect;
 pub const XftDrawString32 = c.XftDrawString32;
+pub const XftDrawGlyphFontSpec = c.XftDrawGlyphFontSpec;
+pub const XftGlyphFontSpec = c.XftGlyphFontSpec;
+pub const XftCharIndex = c.XftCharIndex;
 pub const XftTextExtents32 = c.XftTextExtents32;
+pub const XftTextExtentsUtf8 = c.XftTextExtentsUtf8;
 pub const XftDrawChange = c.XftDrawChange;
 pub const XftCharExists = c.XftCharExists;
 pub const XftColorFree = c.XftColorFree;
 pub const XftDrawSetClipRectangles = c.XftDrawSetClipRectangles;
 pub const XftDrawSetClip = c.XftDrawSetClip;
+pub const XftFontOpenPattern = c.XftFontOpenPattern;
+
+// FontConfig constants and functions
+pub const FC_SLANT = c.FC_SLANT;
+pub const FC_WEIGHT = c.FC_WEIGHT;
+pub const FC_SLANT_ROMAN = c.FC_SLANT_ROMAN;
+pub const FC_SLANT_ITALIC = c.FC_SLANT_ITALIC;
+pub const FC_WEIGHT_BOLD = c.FC_WEIGHT_BOLD;
+pub const FC_PIXEL_SIZE = c.FC_PIXEL_SIZE;
+pub const FC_SIZE = c.FC_SIZE;
+
+pub const FcPattern = c.FcPattern;
+pub const FcPatternCreate = c.FcPatternCreate;
+pub const FcPatternDestroy = c.FcPatternDestroy;
+pub const FcNameParse = c.FcNameParse;
+pub const FcPatternAddInteger = c.FcPatternAddInteger;
+pub const FcPatternDel = c.FcPatternDel;
+pub const FcPatternDuplicate = c.FcPatternDuplicate;
+pub const FcConfigSubstitute = c.FcConfigSubstitute;
+pub const FcDefaultSubstitute = c.FcDefaultSubstitute;
+pub const FcMatchPattern = c.FcMatchPattern;
+pub const XftDefaultSubstitute = c.XftDefaultSubstitute;
+pub const FcFontMatch = c.FcFontMatch;
+pub const FcResult = c.FcResult;
+pub const FcResultMatch = c.FcResultMatch;
+
+pub const FcCharSet = c.FcCharSet;
+pub const FcCharSetCreate = c.FcCharSetCreate;
+pub const FcCharSetDestroy = c.FcCharSetDestroy;
+pub const FcCharSetAddChar = c.FcCharSetAddChar;
+pub const FcPatternAddCharSet = c.FcPatternAddCharSet;
+pub const FC_CHARSET = c.FC_CHARSET;
 
 // X11 Selection/Clipboard Atoms
 pub const XA_STRING = c.XA_STRING;
@@ -180,14 +244,19 @@ pub const XCreateIC = c.XCreateIC;
 pub const XDestroyIC = c.XDestroyIC;
 pub const XFilterEvent = c.XFilterEvent;
 pub const XSetForeground = c.XSetForeground;
+pub const XSetLineAttributes = c.XSetLineAttributes;
 pub const XFillPolygon = c.XFillPolygon;
+pub const XDrawLines = c.XDrawLines;
+pub const XDrawArcs = c.XDrawArcs;
 
 // X11 geometry constants
 pub const Convex = c.Convex;
 pub const CoordModeOrigin = c.CoordModeOrigin;
+pub const CoordModePrevious = c.CoordModePrevious;
 
 // X11 point structure
 pub const XPoint = c.XPoint;
+pub const XArc = c.XArc;
 
 // X11 key event structure
 pub const XKeyEvent = c.XKeyEvent;

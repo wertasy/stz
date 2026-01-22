@@ -24,21 +24,21 @@ test "Selection word snap" {
     defer selector.deinit();
 
     // 在 "hello" 中间点击 (x=2)
-    selector.start(2, 0, .word);
+    selector.start(&term.term, 2, 0, .word);
     selector.extend(&term.term, 2, 0, .regular, true);
 
     // 应该选中 "hello" (0-4)
-    try expectEqual(@as(usize, 0), selector.selection.nb.x);
-    try expectEqual(@as(usize, 4), selector.selection.ne.x);
+    try expectEqual(@as(usize, 0), term.term.selection.nb.x);
+    try expectEqual(@as(usize, 4), term.term.selection.ne.x);
 
     // 在空格点击 (x=5)
-    selector.clear();
-    selector.start(5, 0, .word);
+    selector.clear(&term.term);
+    selector.start(&term.term, 5, 0, .word);
     selector.extend(&term.term, 5, 0, .regular, true);
 
     // 应该选中空格本身 (5-5)
-    try expectEqual(@as(usize, 5), selector.selection.nb.x);
-    try expectEqual(@as(usize, 5), selector.selection.ne.x);
+    try expectEqual(@as(usize, 5), term.term.selection.nb.x);
+    try expectEqual(@as(usize, 5), term.term.selection.ne.x);
 }
 
 test "Selection line snap" {
@@ -50,10 +50,10 @@ test "Selection line snap" {
     defer selector.deinit();
 
     // 在中间点击并启用行吸附
-    selector.start(10, 0, .line);
+    selector.start(&term.term, 10, 0, .line);
     selector.extend(&term.term, 10, 0, .regular, true);
 
     // 应该选中整行 (0-19)
-    try expectEqual(@as(usize, 0), selector.selection.nb.x);
-    try expectEqual(@as(usize, 19), selector.selection.ne.x);
+    try expectEqual(@as(usize, 0), term.term.selection.nb.x);
+    try expectEqual(@as(usize, 19), term.term.selection.ne.x);
 }

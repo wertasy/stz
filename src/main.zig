@@ -533,8 +533,11 @@ pub fn main() !u8 {
                         try renderer.renderCursor(term);
                     }
                 },
+                x11.EnterNotify, x11.LeaveNotify, x11.ReparentNotify, x11.MapNotify, x11.NoExpose, x11.KeyRelease => {
+                    // 忽略这些常见但当前无需处理的事件，避免日志刷屏
+                },
                 else => {
-                    // std.log.debug("未处理的 X11 事件: {d}\n", .{ev.type});
+                    std.log.debug("未处理的 X11 事件: {d}\n", .{ev.type});
                 },
             }
         }

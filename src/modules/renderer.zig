@@ -23,12 +23,18 @@ pub const Renderer = struct {
     allocator: std.mem.Allocator,
     draw: *x11.XftDraw,
     font: *x11.XftFont,
+    font_italic: *x11.XftFont,
+    font_bold: *x11.XftFont,
+    font_italic_bold: *x11.XftFont,
     fallbacks: std.ArrayList(*x11.XftFont),
 
     char_width: u32,
     char_height: u32,
     ascent: i32,
     descent: i32,
+
+    current_font_size: u32,
+    original_font_size: u32,
 
     // Cursor blink state
     cursor_blink_state: bool = true,
@@ -65,10 +71,52 @@ pub const Renderer = struct {
             if (font == null) return error.FontLoadFailed;
         }
 
-        const char_width = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.max_advance_width)) * config.Config.font.cwscale)));
+        // Calculate average character width from ASCII printable characters
+        var width_sum: u32 = 0;
+        var count: u32 = 0;
+        var ascii_char: u8 = ' ';
+        while (ascii_char <= '~') : (ascii_char += 1) {
+            if (x11.XftCharExists(window.dpy, font, ascii_char) != 0) {
+                var extents: x11.XGlyphInfo = undefined;
+                x11.XftTextExtents32(window.dpy, font, &@as(u32, ascii_char), 1, &extents);
+                width_sum += @intCast(extents.xOff);
+                count += 1;
+            }
+        }
+
+        const avg_width = if (count > 0) @as(f32, @floatFromInt(width_sum)) / @as(f32, @floatFromInt(count)) else @as(f32, @floatFromInt(font.*.max_advance_width));
+        const char_width = @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale)));
         const char_height = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.ascent + font.*.descent)) * config.Config.font.chscale)));
         const ascent = font.*.ascent;
         const descent = font.*.descent;
+
+        // Load font variants
+        const pattern = x11.FcPatternDuplicate(font.*.pattern);
+
+        // Italic
+        const italic_pattern = x11.FcPatternDuplicate(pattern);
+        _ = x11.FcPatternDel(italic_pattern, x11.FC_SLANT);
+        _ = x11.FcPatternAddInteger(italic_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
+        var font_italic = x11.XftFontOpenPattern(window.dpy, italic_pattern);
+        if (font_italic == null) font_italic = font;
+
+        // Bold
+        const bold_pattern = x11.FcPatternDuplicate(pattern);
+        _ = x11.FcPatternDel(bold_pattern, x11.FC_WEIGHT);
+        _ = x11.FcPatternAddInteger(bold_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
+        var font_bold = x11.XftFontOpenPattern(window.dpy, bold_pattern);
+        if (font_bold == null) font_bold = font;
+
+        // Italic Bold
+        const ib_pattern = x11.FcPatternDuplicate(pattern);
+        _ = x11.FcPatternDel(ib_pattern, x11.FC_SLANT);
+        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
+        _ = x11.FcPatternDel(ib_pattern, x11.FC_WEIGHT);
+        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
+        var font_italic_bold = x11.XftFontOpenPattern(window.dpy, ib_pattern);
+        if (font_italic_bold == null) font_italic_bold = font;
+
+        x11.FcPatternDestroy(pattern);
 
         // Update window metrics
         window.cell_width = char_width;
@@ -100,11 +148,16 @@ pub const Renderer = struct {
             .allocator = allocator,
             .draw = draw.?,
             .font = font.?,
+            .font_italic = font_italic.?,
+            .font_bold = font_bold.?,
+            .font_italic_bold = font_italic_bold.?,
             .fallbacks = fallbacks,
             .char_width = char_width,
             .char_height = char_height,
             .ascent = ascent,
             .descent = descent,
+            .current_font_size = config.Config.font.size,
+            .original_font_size = config.Config.font.size,
             .cursor_blink_state = true,
             .last_blink_time = std.time.milliTimestamp(),
             .colors = undefined,
@@ -113,8 +166,111 @@ pub const Renderer = struct {
         };
     }
 
+    pub fn zoom(self: *Renderer, zoom_in: bool) !void {
+        const step: u32 = 1;
+        var new_size = self.current_font_size;
+
+        if (zoom_in) {
+            new_size += step;
+        } else {
+            if (new_size > 1) new_size -= step;
+        }
+
+        if (new_size == self.current_font_size) return;
+
+        // Reload font with new size
+        try self.reloadFont(new_size);
+    }
+
+    pub fn resetZoom(self: *Renderer) !void {
+        if (self.current_font_size == self.original_font_size) return;
+        try self.reloadFont(self.original_font_size);
+    }
+
+    fn reloadFont(self: *Renderer, size: u32) !void {
+        // Construct new font name with size
+        // We need to parse base name from config or store it.
+        // Simplified: assumes config.font.name format "Name:pixelsize=..."
+        // Ideally we should use FcPattern to modify size.
+
+        const pattern = x11.FcPatternDuplicate(self.font.*.pattern);
+        defer x11.FcPatternDestroy(pattern);
+
+        // Remove existing size
+        _ = x11.FcPatternDel(pattern, x11.FC_PIXEL_SIZE);
+        _ = x11.FcPatternDel(pattern, x11.FC_SIZE);
+
+        // Add new size
+        _ = x11.FcPatternAddInteger(pattern, x11.FC_PIXEL_SIZE, @intCast(size));
+
+        const new_font = x11.XftFontOpenPattern(self.window.dpy, pattern);
+        if (new_font == null) return; // Failed to load
+
+        // Update successful, close old fonts and replace
+        x11.XftFontClose(self.window.dpy, self.font);
+        if (self.font_italic != self.font) x11.XftFontClose(self.window.dpy, self.font_italic);
+        if (self.font_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_bold);
+        if (self.font_italic_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_italic_bold);
+
+        self.font = new_font.?;
+        self.current_font_size = size;
+
+        // Reload variants
+        // Italic
+        const italic_pattern = x11.FcPatternDuplicate(pattern);
+        _ = x11.FcPatternDel(italic_pattern, x11.FC_SLANT);
+        _ = x11.FcPatternAddInteger(italic_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
+        var font_italic = x11.XftFontOpenPattern(self.window.dpy, italic_pattern);
+        if (font_italic == null) font_italic = self.font;
+        self.font_italic = font_italic.?;
+
+        // Bold
+        const bold_pattern = x11.FcPatternDuplicate(pattern);
+        _ = x11.FcPatternDel(bold_pattern, x11.FC_WEIGHT);
+        _ = x11.FcPatternAddInteger(bold_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
+        var font_bold = x11.XftFontOpenPattern(self.window.dpy, bold_pattern);
+        if (font_bold == null) font_bold = self.font;
+        self.font_bold = font_bold.?;
+
+        // Italic Bold
+        const ib_pattern = x11.FcPatternDuplicate(pattern);
+        _ = x11.FcPatternDel(ib_pattern, x11.FC_SLANT);
+        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
+        _ = x11.FcPatternDel(ib_pattern, x11.FC_WEIGHT);
+        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
+        var font_italic_bold = x11.XftFontOpenPattern(self.window.dpy, ib_pattern);
+        if (font_italic_bold == null) font_italic_bold = self.font;
+        self.font_italic_bold = font_italic_bold.?;
+
+        // Recalculate metrics
+        var width_sum: u32 = 0;
+        var count: u32 = 0;
+        var ascii_char: u8 = ' ';
+        while (ascii_char <= '~') : (ascii_char += 1) {
+            if (x11.XftCharExists(self.window.dpy, self.font, ascii_char) != 0) {
+                var extents: x11.XGlyphInfo = undefined;
+                x11.XftTextExtents32(self.window.dpy, self.font, &@as(u32, ascii_char), 1, &extents);
+                width_sum += @intCast(extents.xOff);
+                count += 1;
+            }
+        }
+
+        const avg_width = if (count > 0) @as(f32, @floatFromInt(width_sum)) / @as(f32, @floatFromInt(count)) else @as(f32, @floatFromInt(self.font.*.max_advance_width));
+        self.char_width = @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale)));
+        self.char_height = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(self.font.*.ascent + self.font.*.descent)) * config.Config.font.chscale)));
+        self.ascent = self.font.*.ascent;
+        self.descent = self.font.*.descent;
+
+        // Update window metrics
+        self.window.cell_width = self.char_width;
+        self.window.cell_height = self.char_height;
+    }
+
     pub fn deinit(self: *Renderer) void {
         x11.XftDrawDestroy(self.draw);
+        if (self.font_italic != self.font) x11.XftFontClose(self.window.dpy, self.font_italic);
+        if (self.font_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_bold);
+        if (self.font_italic_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_italic_bold);
         x11.XftFontClose(self.window.dpy, self.font);
         for (self.fallbacks.items) |f| {
             x11.XftFontClose(self.window.dpy, f);
@@ -209,28 +365,146 @@ pub const Renderer = struct {
             return u32ToRgb(term.palette[index]);
         }
         // 光标颜色
-        if (index == config.Config.colors.default_cursor) return u32ToRgb(config.Config.colors.cursor);
+        if (index == config.Config.colors.default_cursor) return u32ToRgb(term.default_cs);
         // 前景色
-        if (index == config.Config.colors.default_foreground) return u32ToRgb(config.Config.colors.foreground);
+        if (index == config.Config.colors.default_foreground) return u32ToRgb(term.default_fg);
         // 背景色
-        if (index == config.Config.colors.default_background) return u32ToRgb(config.Config.colors.background);
+        if (index == config.Config.colors.default_background) return u32ToRgb(term.default_bg);
 
         // 默认白色
         return .{ 0xFF, 0xFF, 0xFF };
     }
 
-    fn getFontForGlyph(self: *Renderer, u: u21) *x11.XftFont {
-        if (x11.XftCharExists(self.window.dpy, self.font, u) != 0) {
-            return self.font;
+    fn getFontForGlyph(self: *Renderer, u: u21, attr: types.GlyphAttr) *x11.XftFont {
+        var f = self.font;
+        if (attr.bold and attr.italic) {
+            f = self.font_italic_bold;
+        } else if (attr.bold) {
+            f = self.font_bold;
+        } else if (attr.italic) {
+            f = self.font_italic;
         }
 
-        for (self.fallbacks.items) |f| {
-            if (x11.XftCharExists(self.window.dpy, f, u) != 0) {
-                return f;
+        if (x11.XftCharExists(self.window.dpy, f, u) != 0) {
+            return f;
+        }
+
+        for (self.fallbacks.items) |fb| {
+            if (x11.XftCharExists(self.window.dpy, fb, u) != 0) {
+                return fb;
             }
         }
 
-        return self.font;
+        // Dynamic fallback via FontConfig
+        const fc_charset = x11.FcCharSetCreate();
+        defer x11.FcCharSetDestroy(fc_charset);
+        if (x11.FcCharSetAddChar(fc_charset, u) == 0) return f;
+
+        const pattern = x11.FcPatternDuplicate(self.font.pattern);
+        if (pattern == null) return f;
+        defer x11.FcPatternDestroy(pattern);
+
+        _ = x11.FcPatternAddCharSet(pattern, x11.FC_CHARSET, fc_charset);
+
+        // Add style attributes
+        if (attr.italic) {
+            _ = x11.FcPatternDel(pattern, x11.FC_SLANT);
+            _ = x11.FcPatternAddInteger(pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
+        }
+        if (attr.bold) {
+            _ = x11.FcPatternDel(pattern, x11.FC_WEIGHT);
+            _ = x11.FcPatternAddInteger(pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
+        }
+
+        _ = x11.FcConfigSubstitute(null, pattern, x11.FcMatchPattern);
+        _ = x11.XftDefaultSubstitute(self.window.dpy, self.window.screen, pattern);
+
+        var result: x11.FcResult = undefined;
+        const match = x11.FcFontMatch(null, pattern, &result);
+
+        if (match) |m| {
+            // Check if we already have this font open to avoid duplicates?
+            // Ideally yes, but XftFont structure comparison is tricky.
+            // For now, just open it.
+            const font_open = x11.XftFontOpenPattern(self.window.dpy, m);
+            if (font_open) |new_font| {
+                if (x11.XftCharExists(self.window.dpy, new_font, u) != 0) {
+                    self.fallbacks.append(self.allocator, new_font) catch {
+                        x11.XftFontClose(self.window.dpy, new_font);
+                        return f;
+                    };
+                    return new_font;
+                }
+                x11.XftFontClose(self.window.dpy, new_font);
+            } else {
+                x11.FcPatternDestroy(m);
+            }
+        }
+
+        return f;
+    }
+
+    fn drawRun(self: *Renderer, term: *Term, buf: []const u32, x: i32, y: i32, font: *x11.XftFont, fg: *x11.XftColor, glyph: Glyph, width_pixels: i32) !void {
+        if (buf.len == 0) return;
+
+        // Draw string
+        x11.XftDrawString32(self.draw, fg, font, x, y + self.ascent, buf.ptr, @intCast(buf.len));
+
+        // Draw decorations
+        if (glyph.attr.underline) {
+            const underline_fg_idx = if (glyph.ucolor[0] >= 0) custom: {
+                const r = @as(u8, @intCast(@max(0, glyph.ucolor[0])));
+                const g = @as(u8, @intCast(@max(0, glyph.ucolor[1])));
+                const b = @as(u8, @intCast(@max(0, glyph.ucolor[2])));
+                break :custom 0xFF000000 | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+            } else glyph.fg;
+
+            var underline_fg = try self.getColor(term, underline_fg_idx);
+
+            const thickness = config.Config.cursor.thickness;
+            const underline_y = y + self.ascent + 1;
+
+            if (glyph.ustyle <= 0 or glyph.ustyle == 1) { // Single
+                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
+            } else if (glyph.ustyle == 1) { // Single (Duplicate case handled)
+                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
+            } else if (glyph.ustyle == 2) { // Double
+                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
+                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y + thickness * 2, @intCast(width_pixels), thickness);
+            } else if (glyph.ustyle == 3) { // Curly
+                const amp = @max(1, @as(i32, @intCast(thickness)));
+                const cy = underline_y + amp;
+                const char_w = @as(i32, @intCast(self.char_width));
+                var current_x = x;
+                while (current_x < x + width_pixels) {
+                    var points: [4]x11.XPoint = undefined;
+                    points[0] = .{ .x = @intCast(current_x), .y = @intCast(cy) };
+                    points[1] = .{ .x = @intCast(current_x + @divTrunc(char_w, 4)), .y = @intCast(cy - amp) };
+                    points[2] = .{ .x = @intCast(current_x + @divTrunc(3 * char_w, 4)), .y = @intCast(cy + amp) };
+                    points[3] = .{ .x = @intCast(current_x + char_w), .y = @intCast(cy) };
+
+                    _ = x11.XSetForeground(self.window.dpy, self.window.gc, underline_fg.pixel);
+                    _ = x11.XSetLineAttributes(self.window.dpy, self.window.gc, 0, x11.LineSolid, x11.CapButt, x11.JoinMiter);
+                    _ = x11.XDrawLines(self.window.dpy, self.window.buf, self.window.gc, &points, 4, x11.CoordModeOrigin);
+                    current_x += char_w;
+                }
+            } else if (glyph.ustyle == 4) { // Dotted
+                const dash_width_u = @divTrunc(self.char_width, 4);
+                var cx: i32 = x;
+                while (cx < x + width_pixels) {
+                    for (0..2) |k| {
+                        const dash_x = cx + @as(i32, @intCast(k * dash_width_u * 2));
+                        if (dash_x < x + width_pixels)
+                            x11.XftDrawRect(self.draw, &underline_fg, dash_x, underline_y, dash_width_u, thickness);
+                    }
+                    cx += @intCast(self.char_width);
+                }
+            }
+        }
+
+        if (glyph.attr.struck) {
+            x11.XftDrawRect(self.draw, fg, x, y + @divTrunc(self.ascent * 2, 3), @intCast(width_pixels), 1);
+        }
     }
 
     pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !?x11.XRectangle {
@@ -307,10 +581,20 @@ pub const Renderer = struct {
                 }
             }
 
-            // 第二阶段：绘制所有字符
+            // 第二阶段：绘制所有字符 (批量绘制优化)
+            var run_len: usize = 0;
+            var run_buf: [1024]u32 = undefined;
+            var run_x: i32 = 0;
+            var run_font: *x11.XftFont = undefined;
+            var run_fg: x11.XftColor = undefined;
+            var run_glyph: Glyph = undefined;
+            var run_allocated_faint: bool = false;
+
             for (0..@min(term.col, line_data.len)) |x| {
                 const glyph = line_data[x];
                 const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
+
+                if (glyph.attr.wide_dummy) continue;
 
                 var fg_idx = glyph.fg;
                 var bg_idx = glyph.bg;
@@ -336,58 +620,108 @@ pub const Renderer = struct {
 
                 if (glyph.attr.blink and config.Config.cursor.blink_interval_ms > 0) {
                     const blink_state = @mod(@divFloor(std.time.milliTimestamp(), config.Config.cursor.blink_interval_ms), 2) == 0;
-                    if (!blink_state) continue;
-                }
-
-                if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
-                    var fg = try self.getColor(term, fg_idx);
-                    var bg = try self.getColor(term, bg_idx);
-                    try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &fg, &bg, glyph.attr.bold);
-                } else if (glyph.u != ' ' and glyph.u != 0) {
-                    var fg = try self.getColor(term, fg_idx);
-                    const char = @as(u32, glyph.u);
-                    const font = self.getFontForGlyph(glyph.u);
-                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
-                }
-
-                if (glyph.attr.underline) {
-                    const underline_fg_idx = if (glyph.ucolor[0] >= 0) custom: {
-                        const r = @as(u8, @intCast(@max(0, glyph.ucolor[0])));
-                        const g = @as(u8, @intCast(@max(0, glyph.ucolor[1])));
-                        const b = @as(u8, @intCast(@max(0, glyph.ucolor[2])));
-                        break :custom 0xFF000000 | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
-                    } else fg_idx;
-
-                    var underline_fg = try self.getColor(term, underline_fg_idx);
-                    const thickness = config.Config.cursor.thickness;
-                    const underline_y = y_pos + self.ascent + 1;
-
-                    if (glyph.ustyle <= 0) {
-                        x11.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y, @intCast(self.char_width), thickness);
-                    } else if (glyph.ustyle == 1) {
-                        x11.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y, @intCast(self.char_width), thickness);
-                        x11.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y + thickness * 2, @intCast(self.char_width), thickness);
-                    } else if (glyph.ustyle == 2) {
-                        const wave_width_u = @divTrunc(self.char_width, 4);
-                        const wave_height = thickness * 2;
-                        const wave_y = underline_y + wave_height;
-                        for (0..4) |i| {
-                            const arc_x = x_pos + @as(i32, @intCast(i * wave_width_u)) + @as(i32, @intCast(wave_width_u / 2));
-                            const arc_start_y = if (i % 2 == 0) underline_y else wave_y;
-                            x11.XftDrawRect(self.draw, &underline_fg, arc_x, arc_start_y, 1, wave_height);
+                    if (!blink_state) {
+                        // Skip invisible blinking text, but must flush current run first
+                        if (run_len > 0) {
+                            try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
+                            run_len = 0;
+                            if (run_allocated_faint) {
+                                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                                run_allocated_faint = false;
+                            }
                         }
-                    } else if (glyph.ustyle == 3) {
-                        const dash_width_u = @divTrunc(self.char_width, 4);
-                        for (0..4) |i| {
-                            const dash_x = x_pos + @as(i32, @intCast(i * dash_width_u * 2));
-                            x11.XftDrawRect(self.draw, &underline_fg, dash_x, underline_y, dash_width_u, thickness);
-                        }
+                        continue;
                     }
                 }
 
-                if (glyph.attr.struck) {
-                    var fg = try self.getColor(term, fg_idx);
-                    x11.XftDrawRect(self.draw, &fg, x_pos, y_pos + @divTrunc(self.ascent * 2, 3), @intCast(self.char_width), 1);
+                var font: *x11.XftFont = undefined;
+                var fg: x11.XftColor = undefined;
+                var allocated_faint = false;
+
+                if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
+                    if (run_len > 0) {
+                        try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
+                        run_len = 0;
+                        if (run_allocated_faint) {
+                            x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                            run_allocated_faint = false;
+                        }
+                    }
+
+                    var b_fg = try self.getColor(term, fg_idx);
+                    var b_bg = try self.getColor(term, bg_idx);
+                    try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &b_fg, &b_bg, glyph.attr.bold);
+                    continue;
+                }
+
+                font = self.getFontForGlyph(glyph.u, glyph.attr);
+                fg = try self.getColor(term, fg_idx);
+
+                if (glyph.attr.faint) {
+                    var col_faint = fg.color;
+                    col_faint.red /= 2;
+                    col_faint.green /= 2;
+                    col_faint.blue /= 2;
+                    var new_fg: x11.XftColor = undefined;
+                    if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &col_faint, &new_fg) != 0) {
+                        fg = new_fg;
+                        allocated_faint = true;
+                    }
+                }
+
+                var compatible = true;
+                if (run_len == 0) {
+                    compatible = false;
+                } else {
+                    if (run_font != font) compatible = false;
+                    if (run_fg.pixel != fg.pixel) compatible = false;
+                    if (run_glyph.attr.underline != glyph.attr.underline) compatible = false;
+                    if (glyph.attr.underline) {
+                        if (run_glyph.ustyle != glyph.ustyle) compatible = false;
+                        if (!std.meta.eql(run_glyph.ucolor, glyph.ucolor)) compatible = false;
+                    }
+                    if (run_glyph.attr.struck != glyph.attr.struck) compatible = false;
+                }
+
+                if (!compatible) {
+                    if (run_len > 0) {
+                        try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
+                        run_len = 0;
+                        if (run_allocated_faint) {
+                            x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                            run_allocated_faint = false;
+                        }
+                    }
+
+                    run_x = x_pos;
+                    run_font = font;
+                    run_fg = fg;
+                    run_glyph = glyph;
+                    run_allocated_faint = allocated_faint;
+                } else {
+                    if (allocated_faint) {
+                        x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &fg);
+                    }
+                }
+
+                if (glyph.u != ' ' and glyph.u != 0) {
+                    run_buf[run_len] = @as(u32, glyph.u);
+                } else {
+                    run_buf[run_len] = ' '; // Draw space for empty/space cells
+                }
+                run_len += 1;
+
+                if (run_len >= run_buf.len) {
+                    try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
+                    run_x += @as(i32, @intCast(run_len * self.char_width));
+                    run_len = 0;
+                }
+            }
+
+            if (run_len > 0) {
+                try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
+                if (run_allocated_faint) {
+                    x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
                 }
             }
 
@@ -451,7 +785,13 @@ pub const Renderer = struct {
             self.cursor_blink_state = true;
         }
 
-        const style = term.cursor_style;
+        var style = term.cursor_style;
+
+        // Force hollow cursor when window is not focused
+        if (!term.mode.focused) {
+            style = .steady_st_cursor;
+        }
+
         const is_blinking_style = style.shouldBlink();
 
         // 如果是闪烁样式且当前在不可见阶段，则不绘制
@@ -486,7 +826,7 @@ pub const Renderer = struct {
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const char = @as(u32, glyph.u);
-                    const font = self.getFontForGlyph(glyph.u);
+                    const font = self.getFontForGlyph(glyph.u, glyph.attr);
                     x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
@@ -495,7 +835,7 @@ pub const Renderer = struct {
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const char = @as(u32, glyph.u);
-                    const font = self.getFontForGlyph(glyph.u);
+                    const font = self.getFontForGlyph(glyph.u, glyph.attr);
                     x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
@@ -526,7 +866,7 @@ pub const Renderer = struct {
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, 258);
                     const char = @as(u32, glyph.u);
-                    const font = self.getFontForGlyph(glyph.u);
+                    const font = self.getFontForGlyph(glyph.u, glyph.attr);
                     x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
@@ -579,7 +919,10 @@ pub const Renderer = struct {
                     points[1] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
                     points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h / 2.0) };
                 },
-                else => return,
+                else => {
+                    std.log.debug("未知的三角形绘制类型: {d}", .{type_});
+                    return;
+                },
             }
 
             const gc = x11.XCreateGC(self.window.dpy, self.window.buf, 0, null);

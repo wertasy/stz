@@ -252,9 +252,9 @@ pub const Term = struct {
 
     // 颜色调色板
     palette: [256]u32 = undefined,
-    default_fg: u32 = config.Config.colors.default_foreground, // 默认前景色
-    default_bg: u32 = config.Config.colors.default_background, // 默认背景色
-    default_cs: u32 = config.Config.colors.default_cursor, // 默认光标颜色
+    default_fg: u32 = config.Config.colors.foreground, // 默认前景色 (RGB)
+    default_bg: u32 = config.Config.colors.background, // 默认背景色 (RGB)
+    default_cs: u32 = config.Config.colors.cursor, // 默认光标颜色 (RGB)
 
     // 光标样式
     cursor_style: CursorStyle = .blinking_bar, // 默认使用闪烁竖线（与 config 对齐）

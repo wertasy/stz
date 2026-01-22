@@ -13,9 +13,12 @@ const TCursor = types.TCursor;
 const Parser = @import("parser.zig").Parser;
 const config = @import("config.zig");
 
+const Printer = @import("printer.zig").Printer;
+
 pub const TerminalError = error{
     OutOfBounds,
     InvalidSequence,
+    PrinterError,
 };
 
 /// 终端模拟器
@@ -23,6 +26,7 @@ pub const Terminal = struct {
     term: Term,
     parser: Parser,
     allocator: std.mem.Allocator,
+    printer: ?*Printer = null,
 
     /// 初始化终端
     pub fn init(row: usize, col: usize, allocator: std.mem.Allocator) !Terminal {
@@ -31,6 +35,7 @@ pub const Terminal = struct {
         t.term = Term{
             .allocator = allocator,
         };
+        t.printer = null;
 
         try screen.init(&t.term, row, col, allocator);
         t.parser = try Parser.init(&t.term, allocator);
@@ -85,9 +90,24 @@ pub const Terminal = struct {
         }
     }
 
+    /// 设置打印机
+    pub fn setPrinter(self: *Terminal, printer: *Printer) void {
+        self.printer = printer;
+    }
+
     /// 写入字符到终端
     pub fn putc(self: *Terminal, u: u21) !void {
         const is_control = unicode.isControl(u);
+
+        // 如果开启了打印机模式，将所有字符（包括控制字符）发送到打印机
+        if (self.term.mode.print) {
+            if (self.printer) |p| {
+                // 将 u21 转换为 utf8 字节并写入
+                var buf: [4]u8 = undefined;
+                const len = try unicode.encode(u, &buf);
+                p.write(buf[0..len]) catch {};
+            }
+        }
 
         if (unicode.isControlC1(u) and self.term.mode.utf8) {
             return; // 在 UTF-8 模式下忽略 C1
@@ -112,7 +132,7 @@ pub const Terminal = struct {
 
     /// 处理控制字符
     fn controlCode(self: *Terminal, c: u8) !void {
-        std.log.debug("Terminal controlCode: 0x{x}", .{c});
+        // std.log.debug("Terminal controlCode: 0x{x}", .{c});
         switch (c) {
             '\x09' => try self.putTab(), // HT
             '\x08' => try self.moveCursor(-1, 0), // BS
@@ -121,7 +141,9 @@ pub const Terminal = struct {
             '\x07' => { // BEL
                 // 触发铃声
             },
-            else => {},
+            else => {
+                std.log.debug("Terminal忽略的控制字符: 0x{x}", .{c});
+            },
         }
     }
 
@@ -338,7 +360,9 @@ pub const Terminal = struct {
             3 => { // 清除滚动区域
                 try screen.clearRegion(&self.term, 0, self.term.top, self.term.col - 1, self.term.bot);
             },
-            else => {},
+            else => {
+                std.log.debug("未知的清屏模式: {d}", .{mode});
+            },
         }
     }
 
@@ -354,7 +378,9 @@ pub const Terminal = struct {
             2 => { // 清除整行
                 try screen.clearRegion(&self.term, 0, self.term.c.y, self.term.col - 1, self.term.c.y);
             },
-            else => {},
+            else => {
+                std.log.debug("未知的清除行模式: {d}", .{mode});
+            },
         }
     }
 

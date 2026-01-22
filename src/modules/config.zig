@@ -4,13 +4,14 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const x11 = @import("x11.zig");
 
 const CursorStyle = types.CursorStyle;
 
 pub const Config = struct {
     // 字体配置
     pub const font = struct {
-        pub const name = "FantasqueSansMono Nerd Font:pixelsize=20:antialias=true:autohint=true";
+        pub const name = "Maple Mono NF:pixelsize=20:antialias=true:autohint=true";
         pub const size: u32 = 20; // 像素大小
         pub const bold: bool = true;
         pub const italic: bool = false;
@@ -137,6 +138,48 @@ pub const Config = struct {
 
     // Tab 配置
     pub const tab_spaces: u32 = 8;
+
+    // 键盘绑定动作
+    pub const KeyAction = enum {
+        Paste,
+        Copy,
+        ScrollUp,
+        ScrollDown,
+        ZoomIn,
+        ZoomOut,
+        ZoomReset,
+        PrintScreen,
+        PrintSelection,
+        PrintToggle,
+        None,
+    };
+
+    pub const KeyBinding = struct {
+        mod: u32,
+        key: x11.KeySym,
+        action: KeyAction,
+        arg: i32 = 0,
+    };
+
+    // 键盘快捷键配置
+    pub const shortcuts = [_]KeyBinding{
+        .{ .mod = x11.ShiftMask, .key = x11.XK_Prior, .action = .ScrollUp, .arg = 0 }, // PageUp
+        .{ .mod = x11.ShiftMask, .key = x11.XK_Next, .action = .ScrollDown, .arg = 0 }, // PageDown
+        .{ .mod = x11.ShiftMask, .key = x11.XK_KP_Prior, .action = .ScrollUp, .arg = 0 },
+        .{ .mod = x11.ShiftMask, .key = x11.XK_KP_Next, .action = .ScrollDown, .arg = 0 },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Prior, .action = .ZoomIn },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Next, .action = .ZoomOut },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Prior, .action = .ZoomIn },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Next, .action = .ZoomOut },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Home, .action = .ZoomReset },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Home, .action = .ZoomReset },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_V, .action = .Paste },
+        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_v, .action = .Paste },
+        // Print shortcuts
+        .{ .mod = x11.ControlMask, .key = x11.XK_Print, .action = .PrintToggle },
+        .{ .mod = x11.ShiftMask, .key = x11.XK_Print, .action = .PrintScreen },
+        .{ .mod = 0, .key = x11.XK_Print, .action = .PrintSelection },
+    };
 };
 
 // 初始化默认配置

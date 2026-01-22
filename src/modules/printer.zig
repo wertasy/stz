@@ -146,7 +146,10 @@ pub const Printer = struct {
             '\n' => "\n",
             '\r' => "\r",
             '\t' => "\t",
-            else => return, // 忽略其他控制字符
+            else => {
+                std.log.debug("Printer忽略的控制字符: 0x{x}", .{c});
+                return;
+            },
         };
 
         try self.write(str);

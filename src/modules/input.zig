@@ -175,6 +175,13 @@ pub const Input = struct {
                 {
                     return try self.writeKeypad(keysym, shift, ctrl, alt);
                 }
+
+                // 忽略普通 ASCII 字符和修饰键的日志，避免刷屏
+                if (keysym < 0x80 or (keysym >= 0xFFE1 and keysym <= 0xFFEE)) {
+                    return false;
+                }
+
+                std.log.debug("未处理的特殊按键: 0x{x}", .{keysym});
                 return false;
             },
         }
@@ -207,6 +214,7 @@ pub const Input = struct {
             } else if (keysym == XK_KP_Divide) {
                 c = 'o';
             } else {
+                std.log.debug("未处理的 keypad 键 (AppKeypad): 0x{x}", .{keysym});
                 return false;
             }
             var seq: [3]u8 = undefined;
@@ -231,6 +239,7 @@ pub const Input = struct {
             } else if (keysym == 0xFFAF) {
                 char = '/';
             } else {
+                std.log.debug("未处理的 keypad 键 (Normal): 0x{x}", .{keysym});
                 return false;
             }
             try self.writePrintable(char, alt, ctrl, shift);
@@ -320,7 +329,10 @@ pub const Input = struct {
                 'B' => "\x1B[1;5B",
                 'C' => "\x1B[1;5C",
                 'D' => "\x1B[1;5D",
-                else => return,
+                else => {
+                    std.log.debug("未知的方向键 (Ctrl): {c}", .{direction});
+                    return;
+                },
             };
         } else if (shift) {
             seq = switch (direction) {
@@ -328,7 +340,10 @@ pub const Input = struct {
                 'B' => "\x1B[1;2B",
                 'C' => "\x1B[1;2C",
                 'D' => "\x1B[1;2D",
-                else => return,
+                else => {
+                    std.log.debug("未知的方向键 (Shift): {c}", .{direction});
+                    return;
+                },
             };
         } else if (alt) {
             seq = switch (direction) {
@@ -336,7 +351,10 @@ pub const Input = struct {
                 'B' => "\x1B[1;3B",
                 'C' => "\x1B[1;3C",
                 'D' => "\x1B[1;3D",
-                else => return,
+                else => {
+                    std.log.debug("未知的方向键 (Alt): {c}", .{direction});
+                    return;
+                },
             };
         } else {
             if (self.term.mode.app_cursor) {
@@ -345,7 +363,10 @@ pub const Input = struct {
                     'B' => "\x1BOB",
                     'C' => "\x1BOC",
                     'D' => "\x1BOD",
-                    else => return,
+                    else => {
+                        std.log.debug("未知的方向键 (AppCursor): {c}", .{direction});
+                        return;
+                    },
                 };
             } else {
                 seq = switch (direction) {
@@ -353,7 +374,10 @@ pub const Input = struct {
                     'B' => "\x1B[B",
                     'C' => "\x1B[C",
                     'D' => "\x1B[D",
-                    else => return,
+                    else => {
+                        std.log.debug("未知的方向键 (Default): {c}", .{direction});
+                        return;
+                    },
                 };
             }
         }
@@ -395,7 +419,10 @@ pub const Input = struct {
             10 => "[21~",
             11 => "[23~",
             12 => "[24~",
-            else => return,
+            else => {
+                std.log.debug("未知的 Fn 键: {d}", .{fn_num});
+                return;
+            },
         };
         var seq: [32]u8 = undefined;
         const formatted_seq = if (shift or alt or ctrl)

@@ -401,7 +401,9 @@ pub const Parser = struct {
                     for (0..dirty.len) |i| dirty[i] = true;
                 }
             },
-            else => {},
+            else => {
+                std.log.debug("未知的清除显示模式: {d}", .{mode});
+            },
         }
     }
 
@@ -414,7 +416,9 @@ pub const Parser = struct {
             0 => try self.clearRegion(x, y, self.term.col - 1, y),
             1 => try self.clearRegion(0, y, x, y),
             2 => try self.clearRegion(0, y, self.term.col - 1, y),
-            else => {},
+            else => {
+                std.log.debug("未知的清除行模式: {d}", .{mode});
+            },
         }
     }
 
@@ -593,12 +597,12 @@ pub const Parser = struct {
                 3 => self.term.c.attr.attr.italic = true,
                 4 => {
                     self.term.c.attr.attr.underline = true;
-                    if (i + 1 < self.csi.narg) {
-                        const style = self.csi.arg[i + 1];
-                        if (style >= 0 and style <= 5) {
-                            self.term.c.attr.ustyle = @intCast(style);
-                            i += 1;
-                        }
+                    // Check for colon argument (4:x)
+                    const sub = self.csi.carg[i][0];
+                    if (sub != -1) {
+                        self.term.c.attr.ustyle = @intCast(sub);
+                    } else {
+                        self.term.c.attr.ustyle = 1; // Default to single underline
                     }
                 },
                 5, 6 => self.term.c.attr.attr.blink = true,
@@ -686,9 +690,57 @@ pub const Parser = struct {
                     if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.bg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.bg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
                 49 => self.term.c.attr.bg = config.Config.colors.default_background,
+                58 => {
+                    var color_submode: i64 = -1;
+                    var r: i64 = -1;
+                    var g: i64 = -1;
+                    var b: i64 = -1;
+                    var index: i64 = -1;
+                    if (self.csi.carg[i][0] != -1) {
+                        color_submode = self.csi.carg[i][0];
+                        if (color_submode == 5) index = self.csi.carg[i][1] else if (color_submode == 2) {
+                            r = self.csi.carg[i][1];
+                            g = self.csi.carg[i][2];
+                            b = self.csi.carg[i][3];
+                        }
+                    } else {
+                        i += 1;
+                        if (i < self.csi.narg) {
+                            color_submode = self.csi.arg[i];
+                            if (color_submode == 5) {
+                                i += 1;
+                                if (i < self.csi.narg) index = self.csi.arg[i];
+                            } else if (color_submode == 2) {
+                                i += 3;
+                                if (i < self.csi.narg) {
+                                    r = self.csi.arg[i - 2];
+                                    g = self.csi.arg[i - 1];
+                                    b = self.csi.arg[i];
+                                }
+                            }
+                        }
+                    }
+                    if (color_submode == 5 and index >= 0 and index <= 255) {
+                        const pal = self.term.palette[@intCast(index)];
+                        self.term.c.attr.ucolor[0] = @intCast((pal >> 16) & 0xFF);
+                        self.term.c.attr.ucolor[1] = @intCast((pal >> 8) & 0xFF);
+                        self.term.c.attr.ucolor[2] = @intCast(pal & 0xFF);
+                    } else if (color_submode == 2 and r != -1) {
+                        self.term.c.attr.ucolor[0] = @intCast(r);
+                        self.term.c.attr.ucolor[1] = @intCast(g);
+                        self.term.c.attr.ucolor[2] = @intCast(b);
+                    }
+                },
+                59 => {
+                    self.term.c.attr.ucolor[0] = -1;
+                    self.term.c.attr.ucolor[1] = -1;
+                    self.term.c.attr.ucolor[2] = -1;
+                },
                 90...97 => self.term.c.attr.fg = @as(u32, @intCast(arg - 90 + 8)),
                 100...107 => self.term.c.attr.bg = @as(u32, @intCast(arg - 100 + 8)),
-                else => {},
+                else => {
+                    std.log.debug("未处理的 SGR 参数: {d}", .{arg});
+                },
             }
         }
     }
@@ -814,9 +866,9 @@ pub const Parser = struct {
         };
         self.term.esc = .{};
         self.resetPalette();
-        self.term.default_fg = config.Config.colors.default_foreground;
-        self.term.default_bg = config.Config.colors.default_background;
-        self.term.default_cs = config.Config.colors.default_cursor;
+        self.term.default_fg = config.Config.colors.foreground;
+        self.term.default_bg = config.Config.colors.background;
+        self.term.default_cs = config.Config.colors.cursor;
         self.term.cursor_style = config.Config.cursor.style; // 使用配置中的默认样式
         self.term.window_title = "stz";
         self.term.window_title_dirty = true;
@@ -918,7 +970,9 @@ pub const Parser = struct {
                 self.csiReset();
                 self.str.type = '_';
             },
-            else => {},
+            else => {
+                std.log.debug("忽略的控制字符: 0x{x}", .{c});
+            },
         }
     }
 
@@ -977,7 +1031,9 @@ pub const Parser = struct {
             '>' => self.term.mode.app_keypad = false,
             '=' => self.term.mode.app_keypad = true,
             '\\' => if (self.term.esc.str_end) try self.strHandle(),
-            else => {},
+            else => {
+                std.log.debug("未处理的转义序列: {u} (0x{x})", .{ c, c });
+            },
         }
     }
 
@@ -1064,7 +1120,30 @@ pub const Parser = struct {
                     try self.resetTerminal();
                     return;
                 },
-                else => {},
+                '$' => if (mode == 'p') {
+                    // DECRQM (Request Mode) - CSI Pa $ p
+                    // If we reach here, priv is not '$' (priv is handled in csiParse logic for start chars)
+                    // The '$' is intermediate.
+                    // This handles DECRQM (ANSI) where priv==0 and mode[1]=='$'
+                    // or DECRQM (Private) where priv=='?' and mode[1]=='$'
+
+                    const req_mode = self.csi.arg[0];
+                    var buf: [64]u8 = undefined;
+                    // Always respond with 0 (not recognized) for now to be safe and spec compliant
+                    const status = 0;
+                    const prefix: u8 = if (self.csi.priv == '?') '?' else 0;
+
+                    const s = if (prefix != 0)
+                        try std.fmt.bufPrint(&buf, "\x1B[{c}{d};{d}$y", .{ prefix, req_mode, status })
+                    else
+                        try std.fmt.bufPrint(&buf, "\x1B[{d};{d}$y", .{ req_mode, status });
+
+                    self.ptyWrite(s);
+                    return;
+                },
+                else => {
+                    std.log.debug("未处理的 CSI 私有序列: {c}{c}", .{ self.csi.mode[1], mode });
+                },
             }
         }
         switch (mode) {
@@ -1078,7 +1157,9 @@ pub const Parser = struct {
             'i' => switch (self.csi.arg[0]) {
                 4 => self.term.mode.print = false,
                 5 => self.term.mode.print = true,
-                else => {},
+                else => {
+                    std.log.debug("未处理的 CSI 媒体拷贝命令: {d}", .{self.csi.arg[0]});
+                },
             },
             'A' => try self.moveCursor(0, -@as(i32, @intCast(@max(1, self.csi.arg[0])))),
             'B', 'e' => try self.moveCursor(0, @as(i32, @intCast(@max(1, self.csi.arg[0])))),
@@ -1115,12 +1196,43 @@ pub const Parser = struct {
                     const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ y, self.term.c.x + 1 });
                     self.ptyWrite(s);
                 },
-                else => {},
+                else => {
+                    std.log.debug("未处理的 CSI 设备状态报告: {d}", .{self.csi.arg[0]});
+                },
             },
+            // 'p' => ... DECRQM is now handled in `if (self.csi.mode[1] != 0)` above
             'r' => try self.setScrollRegion(),
             's' => try self.cursorSaveRestore(.save),
+            't' => switch (self.csi.arg[0]) {
+                14 => { // Report window size in pixels
+                    // Using fixed 800x600 for now or similar placeholder if we can't easily access Window size here
+                    // Actually, we are just a parser. But terminal logic should handle this.
+                    // Let's defer to ptyWrite response directly for simplicity in this iteration.
+                    // Response: CSI 4 ; height ; width t
+                    // We need pixel dimensions. Parser doesn't know them directly, only rows/cols.
+                    // Assuming standard cell size or just stubbing to avoid error.
+                    // Let's ignore or return a dummy response.
+                    // For now, logging it as handled but doing nothing is better than spam.
+                },
+                18 => { // Report window size in chars
+                    // Response: CSI 8 ; rows ; cols t
+                    var buf: [64]u8 = undefined;
+                    const s = try std.fmt.bufPrint(&buf, "\x1B[8;{d};{d}t", .{ self.term.row, self.term.col });
+                    self.ptyWrite(s);
+                },
+                22, 23 => {
+                    // Push/Pop window title.
+                    // Implementing a stack for this is good but maybe overkill for now.
+                    // Just ignoring prevents log spam.
+                },
+                else => {
+                    std.log.debug("未处理的窗口操作: {d}", .{self.csi.arg[0]});
+                },
+            },
             'u' => if (self.csi.priv == 0) try self.cursorSaveRestore(.load),
-            else => {},
+            else => {
+                std.log.debug("未处理的 CSI 序列: {c}", .{mode});
+            },
         }
     }
 
@@ -1129,7 +1241,7 @@ pub const Parser = struct {
         const top = @max(0, @min(@as(i32, @intCast(if (self.csi.narg > 0 and self.csi.arg[0] > 0) self.csi.arg[0] else 1)) - 1, @as(i32, @intCast(self.term.row)) - 1));
         const bot = @max(0, @min(@as(i32, @intCast(if (self.csi.narg > 1 and self.csi.arg[1] > 0) self.csi.arg[1] else @as(i64, @intCast(self.term.row)))) - 1, @as(i32, @intCast(self.term.row)) - 1));
 
-        std.log.debug("setScrollRegion: top={d} bot={d}", .{ top, bot });
+        // std.log.debug("setScrollRegion: top={d} bot={d}", .{ top, bot });
 
         self.term.top = @as(usize, @intCast(@min(top, bot)));
         self.term.bot = @as(usize, @intCast(@max(top, bot)));
@@ -1174,7 +1286,9 @@ pub const Parser = struct {
             4 => self.term.mode.insert = set,
             12 => self.term.mode.echo = !set,
             20 => self.term.mode.crlf = set,
-            else => {},
+            else => {
+                std.log.debug("未知的模式设置 (ANSI): {d}", .{self.csi.arg[0]});
+            },
         } else switch (self.csi.arg[0]) {
             1 => self.term.mode.app_cursor = set,
             5 => {
@@ -1188,12 +1302,14 @@ pub const Parser = struct {
                 try self.moveTo(0, 0);
             },
             7 => self.term.mode.wrap = set,
+            12 => self.term.mode.blink = set,
             25 => self.term.mode.hide_cursor = !set,
             1000 => self.term.mode.mouse = set,
             1002 => self.term.mode.mouse_btn = set,
             1003 => self.term.mode.mouse_many = set,
             1004 => self.term.mode.focused_report = set,
             1006 => self.term.mode.mouse_sgr = set,
+            2004 => self.term.mode.brckt_paste = set,
             2026 => self.term.mode.sync_update = set,
             47, 1047 => {
                 if (self.term.alt != null) {
@@ -1236,7 +1352,9 @@ pub const Parser = struct {
                     }
                 }
             },
-            else => {},
+            else => {
+                std.log.debug("未知的模式设置 (DEC): {d}", .{self.csi.arg[0]});
+            },
         }
     }
 
@@ -1249,7 +1367,9 @@ pub const Parser = struct {
             ']' => try self.oscHandle(par),
             'P' => {}, // DCS
             'k' => {}, // Title
-            else => {},
+            else => {
+                std.log.debug("未处理的字符串序列类型: {c}", .{self.str.type});
+            },
         }
     }
 
@@ -1344,7 +1464,9 @@ pub const Parser = struct {
                     self.resetPalette();
                 }
             },
-            else => {},
+            else => {
+                std.log.debug("未处理的 OSC 命令: {d}", .{par});
+            },
         }
     }
 

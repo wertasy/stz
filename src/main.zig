@@ -222,10 +222,10 @@ pub fn main() !u8 {
                         if (try input.handleKey(&ev.xkey)) {
                             // 如果 handleKey 处理了该按键，直接跳过
                         } else if (window.ic) |ic| {
-                            var status: x11.C.Status = undefined;
+                            var status: x11.Status = undefined;
                             var buf: [128]u8 = undefined;
                             const len = x11.Xutf8LookupString(ic, &ev.xkey, &buf, buf.len, null, &status);
-                            if (status == x11.C.XLookupChars or status == x11.C.XLookupBoth) {
+                            if (status == x11.XLookupChars or status == x11.XLookupBoth) {
                                 if (len > 0) {
                                     _ = try pty.write(buf[0..@intCast(len)]);
                                 }
@@ -295,7 +295,7 @@ pub fn main() !u8 {
 
                     // Ctrl + Left Click: 打开 URL
                     if (e.button == x11.Button1 and
-                        (e.state & x11.C.ControlMask) != 0)
+                        (e.state & x11.ControlMask) != 0)
                     {
                         if (url_detector.isUrlAt(cx, cy)) {
                             url_detector.openUrlAt(cx, cy) catch |err| {
@@ -483,12 +483,12 @@ pub fn main() !u8 {
 
                     var success = false;
                     if (e.target == targets) {
-                        const supported = [_]x11.C.Atom{ targets, utf8, x11.XA_STRING };
-                        _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.C.XA_ATOM, 32, x11.C.PropModeReplace, @ptrCast(&supported), supported.len);
+                        const supported = [_]x11.Atom{ targets, utf8, x11.XA_STRING };
+                        _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.XA_ATOM, 32, x11.PropModeReplace, @ptrCast(&supported), supported.len);
                         success = true;
-                    } else if (e.target == utf8 or e.target == x11.C.XA_STRING) {
+                    } else if (e.target == utf8 or e.target == x11.XA_STRING) {
                         if (selector.selected_text) |text| {
-                            _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.C.PropModeReplace, text.ptr, @intCast(text.len));
+                            _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.PropModeReplace, text.ptr, @intCast(text.len));
                             success = true;
                         }
                     }

@@ -10,12 +10,15 @@ const c = @cImport({
 });
 
 // Re-export C module for explicit access if needed
-pub const C = c;
+// pub const C = c;
 
 // Re-export common types for easier access
 pub const Display = c.Display;
 pub const Window = c.Window;
 pub const GC = c.GC;
+pub const Cursor = c.Cursor;
+pub const Atom = c.Atom;
+pub const Status = c.Status;
 pub const XEvent = c.XEvent;
 pub const KeySym = c.KeySym;
 pub const XftDraw = c.XftDraw;
@@ -33,6 +36,7 @@ pub const ShiftMask = c.ShiftMask;
 pub const LockMask = c.LockMask;
 pub const ControlMask = c.ControlMask;
 pub const Mod1Mask = c.Mod1Mask;
+pub const CurrentTime = c.CurrentTime;
 pub const False = 0;
 pub const None = 0;
 pub const InputOutput = c.InputOutput;
@@ -114,6 +118,8 @@ pub const XftDrawRect = c.XftDrawRect;
 pub const XftDrawString32 = c.XftDrawString32;
 pub const XftTextExtents32 = c.XftTextExtents32;
 pub const XftDrawChange = c.XftDrawChange;
+pub const XftCharExists = c.XftCharExists;
+pub const XftColorFree = c.XftColorFree;
 pub const XftDrawSetClipRectangles = c.XftDrawSetClipRectangles;
 pub const XftDrawSetClip = c.XftDrawSetClip;
 
@@ -121,6 +127,10 @@ pub const XftDrawSetClip = c.XftDrawSetClip;
 pub const XA_STRING = c.XA_STRING;
 pub const XA_ATOM = c.XA_ATOM;
 pub const PropModeReplace = c.PropModeReplace;
+
+// IME status
+pub const XLookupChars = c.XLookupChars;
+pub const XLookupBoth = c.XLookupBoth;
 // XA_CLIPBOARD might not be directly available in all C compilers via @cImport
 // Define it manually if not available, using XInternAtom at runtime in code
 const XA_CLIPBOARD_NAME = "CLIPBOARD";
@@ -169,6 +179,21 @@ pub const XCloseIM = c.XCloseIM;
 pub const XCreateIC = c.XCreateIC;
 pub const XDestroyIC = c.XDestroyIC;
 pub const XFilterEvent = c.XFilterEvent;
+pub const XSetForeground = c.XSetForeground;
+pub const XFillPolygon = c.XFillPolygon;
+
+// X11 geometry constants
+pub const Convex = c.Convex;
+pub const CoordModeOrigin = c.CoordModeOrigin;
+
+// X11 point structure
+pub const XPoint = c.XPoint;
+
+// X11 key event structure
+pub const XKeyEvent = c.XKeyEvent;
+
+// X11 selection clear event structure
+pub const XSelectionClearEvent = c.XSelectionClearEvent;
 pub const XSetICFocus = c.XSetICFocus;
 pub const XUnsetICFocus = c.XUnsetICFocus;
 pub const XSetLocaleModifiers = c.XSetLocaleModifiers;

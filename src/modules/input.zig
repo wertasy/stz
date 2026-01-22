@@ -73,14 +73,14 @@ pub const Input = struct {
 
     /// 处理键盘事件
     /// 返回: true 表示按键已被特殊处理，false 表示应由输入法继续处理
-    pub fn handleKey(self: *Input, event: *const x11.C.XKeyEvent) !bool {
+    pub fn handleKey(self: *Input, event: *const x11.XKeyEvent) !bool {
         var keysym: x11.KeySym = 0;
-        keysym = x11.C.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.C.ShiftMask) != 0) 1 else 0);
+        keysym = x11.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.ShiftMask) != 0) 1 else 0);
 
         const state = event.state;
-        const ctrl = (state & x11.C.ControlMask) != 0;
-        const alt = (state & x11.C.Mod1Mask) != 0;
-        const shift = (state & x11.C.ShiftMask) != 0;
+        const ctrl = (state & x11.ControlMask) != 0;
+        const alt = (state & x11.Mod1Mask) != 0;
+        const shift = (state & x11.ShiftMask) != 0;
 
         // 如果是特殊功能键，拦截并处理
         if (try self.handleSpecialKey(keysym, ctrl, alt, shift)) {
@@ -260,9 +260,9 @@ pub const Input = struct {
             }
         }
         if (self.term.mode.mouse_sgr or (x < 223 and y < 223)) {
-            if ((state & x11.C.ShiftMask) != 0) code += 4;
-            if ((state & x11.C.Mod1Mask) != 0) code += 8;
-            if ((state & x11.C.ControlMask) != 0) code += 16;
+            if ((state & x11.ShiftMask) != 0) code += 4;
+            if ((state & x11.Mod1Mask) != 0) code += 8;
+            if ((state & x11.ControlMask) != 0) code += 16;
         }
         if (self.term.mode.mouse_sgr) {
             const ch: u8 = if (event_type == 1) 'm' else 'M';

@@ -123,13 +123,13 @@ pub const Renderer = struct {
         // Free indexed colors
         for (0..300) |i| {
             if (self.loaded_colors[i]) {
-                x11.C.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &self.colors[i]);
+                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &self.colors[i]);
             }
         }
         // Free truecolors
         var it = self.truecolor_cache.iterator();
         while (it.next()) |entry| {
-            x11.C.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, entry.value_ptr);
+            x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, entry.value_ptr);
         }
         self.truecolor_cache.deinit();
     }
@@ -146,7 +146,7 @@ pub const Renderer = struct {
                 // 简单的 FIFO 清理
                 const first_key = self.truecolor_cache.keys()[0];
                 var entry = self.truecolor_cache.fetchOrderedRemove(first_key).?;
-                x11.C.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &entry.value);
+                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &entry.value);
             }
 
             var temp_color: x11.XftColor = undefined;
@@ -220,12 +220,12 @@ pub const Renderer = struct {
     }
 
     fn getFontForGlyph(self: *Renderer, u: u21) *x11.XftFont {
-        if (x11.C.XftCharExists(self.window.dpy, self.font, u) != 0) {
+        if (x11.XftCharExists(self.window.dpy, self.font, u) != 0) {
             return self.font;
         }
 
         for (self.fallbacks.items) |f| {
-            if (x11.C.XftCharExists(self.window.dpy, f, u) != 0) {
+            if (x11.XftCharExists(self.window.dpy, f, u) != 0) {
                 return f;
             }
         }
@@ -501,35 +501,35 @@ pub const Renderer = struct {
             const tx = @as(f32, @floatFromInt(x)) + (@as(f32, @floatFromInt(w)) - target_w) / 2.0;
             const ty = @as(f32, @floatFromInt(y)) + (@as(f32, @floatFromInt(h)) - target_h) / 2.0;
 
-            var points: [3]x11.C.XPoint = undefined;
+            var points: [3]x11.XPoint = undefined;
             switch (type_) {
                 1 => { // Up ▲
-                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty) };
-                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
-                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
+                    points[0] = x11.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty) };
+                    points[1] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
                 },
                 2 => { // Down ▼
-                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
-                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
-                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty + target_h) };
+                    points[0] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
+                    points[1] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
+                    points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty + target_h) };
                 },
                 3 => { // Left ◀
-                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
-                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
-                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h / 2.0) };
+                    points[0] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
+                    points[1] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h / 2.0) };
                 },
                 4 => { // Right ▶
-                    points[0] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
-                    points[1] = x11.C.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
-                    points[2] = x11.C.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h / 2.0) };
+                    points[0] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
+                    points[1] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h / 2.0) };
                 },
                 else => return,
             }
 
             const gc = x11.XCreateGC(self.window.dpy, self.window.buf, 0, null);
             defer _ = x11.XFreeGC(self.window.dpy, gc);
-            _ = x11.C.XSetForeground(self.window.dpy, gc, color.pixel);
-            _ = x11.C.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, 3, x11.C.Convex, x11.C.CoordModeOrigin);
+            _ = x11.XSetForeground(self.window.dpy, gc, color.pixel);
+            _ = x11.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, 3, x11.Convex, x11.CoordModeOrigin);
             return;
         }
         if (cat == boxdraw_data.BRL) {
@@ -585,7 +585,7 @@ pub const Renderer = struct {
             var xfc: x11.XftColor = undefined;
             if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &xrc, &xfc) != 0) {
                 x11.XftDrawRect(self.draw, &xfc, x, y, @intCast(w), @intCast(h));
-                x11.C.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &xfc);
+                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &xfc);
             }
             return;
         }

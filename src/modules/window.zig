@@ -20,7 +20,7 @@ pub const Window = struct {
     gc: x11.GC,
     im: ?x11.XIM = null,
     ic: ?x11.XIC = null,
-    cursor: x11.C.Cursor = 0,
+    cursor: x11.Cursor = 0,
 
     // Double buffering
     buf: x11.Pixmap = 0,
@@ -122,7 +122,7 @@ pub const Window = struct {
 
     pub fn deinit(self: *Window) void {
         if (self.cursor != 0) {
-            _ = x11.C.XFreeCursor(self.dpy, self.cursor);
+            _ = x11.XFreeCursor(self.dpy, self.cursor);
         }
         if (self.ic) |ic| {
             _ = x11.XDestroyIC(ic);

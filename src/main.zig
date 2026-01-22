@@ -584,6 +584,11 @@ pub fn main() !u8 {
                 // Time to toggle blink, force redraw
                 // We don't change state here, renderCursor handles state toggling based on time.
                 // We just ensure we wake up to draw it.
+                if (terminal.term.dirty) |dirty| {
+                    if (terminal.term.c.y < dirty.len) {
+                        dirty[terminal.term.c.y] = true;
+                    }
+                }
                 try renderer.render(&terminal.term, &selector);
                 try renderer.renderCursor(&terminal.term);
                 window.present();

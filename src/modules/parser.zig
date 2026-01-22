@@ -809,9 +809,18 @@ pub const Parser = struct {
         self.term.default_fg = config.Config.colors.default_foreground;
         self.term.default_bg = config.Config.colors.default_background;
         self.term.default_cs = config.Config.colors.default_cursor;
+        self.term.cursor_style = config.Config.cursor.style; // 使用配置中的默认样式
         self.term.window_title = "stz";
         self.term.window_title_dirty = true;
-        for (0..2) |i| self.term.saved_cursor[i] = .{ .attr = self.term.c.attr, .x = 0, .y = 0, .state = .default, .top = 0, .bot = self.term.row - 1 };
+        for (0..2) |i| self.term.saved_cursor[i] = .{
+            .attr = self.term.c.attr,
+            .x = 0,
+            .y = 0,
+            .state = .default,
+            .top = 0,
+            .bot = self.term.row - 1,
+            .cursor_style = config.Config.cursor.style,
+        };
         if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
             dirty[i] = true;
         };
@@ -828,6 +837,7 @@ pub const Parser = struct {
             .bot = self.term.bot,
             .trantbl = self.term.trantbl,
             .charset = self.term.charset,
+            .cursor_style = self.term.cursor_style,
         };
     }
 
@@ -841,6 +851,7 @@ pub const Parser = struct {
         self.term.bot = saved.bot;
         self.term.trantbl = saved.trantbl;
         self.term.charset = saved.charset;
+        self.term.cursor_style = saved.cursor_style;
         // Restore charset handling (re-apply G0/G1 etc logic if needed, but simple assignment is enough for state)
         // If we were using a translation table pointer, we'd need to update it here.
         // Currently stz uses index access to trantbl, so value copy is fine.
@@ -1036,8 +1047,13 @@ pub const Parser = struct {
         if (self.csi.mode[1] != 0) {
             switch (self.csi.mode[1]) {
                 ' ' => if (mode == 'q') {
+                    // DECSCUSR - Set Cursor Style
                     const style = self.csi.arg[0];
-                    if (style >= 0 and style <= 8) self.term.cursor_style = @as(u8, @intCast(style));
+                    if (style == 0) {
+                        self.term.cursor_style = config.Config.cursor.style;
+                    } else if (style >= 1 and style <= 8) {
+                        self.term.cursor_style = @as(types.CursorStyle, @enumFromInt(@as(u8, @intCast(style))));
+                    }
                     return;
                 },
                 '!' => if (mode == 'p') {
@@ -1115,13 +1131,28 @@ pub const Parser = struct {
 
     fn cursorSaveRestore(self: *Parser, mode: types.CursorMove) !void {
         const alt = @intFromBool(self.term.mode.alt_screen);
-        if (mode == .save) self.term.saved_cursor[alt] = .{ .attr = self.term.c.attr, .x = self.term.c.x, .y = self.term.c.y, .state = self.term.c.state, .top = self.term.top, .bot = self.term.bot } else {
+        if (mode == .save) {
+            self.term.saved_cursor[alt] = .{
+                .attr = self.term.c.attr,
+                .x = self.term.c.x,
+                .y = self.term.c.y,
+                .state = self.term.c.state,
+                .top = self.term.top,
+                .bot = self.term.bot,
+                .trantbl = self.term.trantbl,
+                .charset = self.term.charset,
+                .cursor_style = self.term.cursor_style,
+            };
+        } else {
             const s = self.term.saved_cursor[alt];
             self.term.c.attr = s.attr;
             try self.moveTo(s.x, s.y);
             self.term.c.state = s.state;
             self.term.top = s.top;
             self.term.bot = s.bot;
+            self.term.trantbl = s.trantbl;
+            self.term.charset = s.charset;
+            self.term.cursor_style = s.cursor_style;
         }
     }
 
@@ -1168,9 +1199,9 @@ pub const Parser = struct {
             47, 1047 => if (self.term.alt != null and set != self.term.mode.alt_screen) try self.swapScreen(),
             1048 => try self.cursorSaveRestore(if (set) .save else .load),
             1049 => {
-                try self.cursorSaveRestore(if (set) .save else .load);
-                if (self.term.alt != null) {
-                    if (set and !self.term.mode.alt_screen) {
+                if (set) {
+                    try self.cursorSaveRestore(.save);
+                    if (self.term.alt != null and !self.term.mode.alt_screen) {
                         if (self.term.alt) |alt| {
                             var g = self.term.c.attr;
                             g.u = ' ';
@@ -1182,7 +1213,9 @@ pub const Parser = struct {
                         }
                         try self.swapScreen();
                         try self.moveTo(0, 0);
-                    } else if (!set and self.term.mode.alt_screen) {
+                    }
+                } else {
+                    if (self.term.alt != null and self.term.mode.alt_screen) {
                         try self.swapScreen();
                         try self.cursorSaveRestore(.load);
                     }

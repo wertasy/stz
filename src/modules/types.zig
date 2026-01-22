@@ -47,6 +47,27 @@ pub const CursorMove = enum(u8) {
     load,
 };
 
+/// 光标样式 (DECSCUSR)
+pub const CursorStyle = enum(u8) {
+    blinking_block = 0, // 闪烁块
+    blinking_block_default = 1, // 闪烁块（默认）
+    steady_block = 2, // 稳定块
+    blinking_underline = 3, // 闪烁下划线
+    steady_underline = 4, // 稳定下划线
+    blinking_bar = 5, // 闪烁竖线
+    steady_bar = 6, // 稳定竖线
+    blinking_st_cursor = 7, // 闪烁 st 光标（空心框）
+    steady_st_cursor = 8, // 稳定 st 光标（空心框）
+};
+
+/// 判断光标样式是否应该闪烁
+pub fn cursorStyleShouldBlink(style: CursorStyle) bool {
+    return switch (style) {
+        .blinking_block, .blinking_block_default, .blinking_underline, .blinking_bar, .blinking_st_cursor => true,
+        else => false,
+    };
+}
+
 /// 终端模式标志
 pub const TermMode = packed struct(u32) {
     wrap: bool = false,
@@ -119,6 +140,7 @@ pub const SavedCursor = struct {
     bot: usize = 0,
     trantbl: [4]Charset = [_]Charset{.usa} ** 4,
     charset: u8 = 0,
+    cursor_style: CursorStyle = .blinking_block_default, // 保存的光标样式
 };
 
 /// 选择模式
@@ -237,8 +259,8 @@ pub const Term = struct {
     default_bg: u32 = config.Config.colors.default_background, // 默认背景色
     default_cs: u32 = config.Config.colors.default_cursor, // 默认光标颜色
 
-    // 光标样式 (0-8, 参考配置文件)
-    cursor_style: u8 = 1,
+    // 光标样式
+    cursor_style: CursorStyle = .blinking_bar, // 默认使用闪烁竖线（与 config 对齐）
 
     // 保存的光标状态（主屏幕和备用屏幕各一个）
     saved_cursor: [2]SavedCursor = [_]SavedCursor{.{}} ** 2,

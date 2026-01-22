@@ -385,8 +385,8 @@ pub const Renderer = struct {
         if (screen_y < 0 or screen_y >= @as(isize, @intCast(term.row))) return;
         const y_pos = @as(i32, @intCast(screen_y)) * @as(i32, @intCast(self.char_height)) + border;
 
-        const now = std.time.milliTimestamp();
         if (config.Config.cursor.blink_interval_ms > 0) {
+            const now = std.time.milliTimestamp();
             if (now - self.last_blink_time >= config.Config.cursor.blink_interval_ms) {
                 self.cursor_blink_state = !self.cursor_blink_state;
                 self.last_blink_time = now;
@@ -395,10 +395,11 @@ pub const Renderer = struct {
             self.cursor_blink_state = true;
         }
 
-        const style = config.Config.cursor.style;
-        const is_blinking_style = (style == 0 or style == 1 or style == 3 or style == 5 or style == 7);
+        const style = term.cursor_style;
+        const is_blinking_style = types.cursorStyleShouldBlink(style);
 
-        if (is_blinking_style and term.mode.blink and !self.cursor_blink_state) {
+        // 如果是闪烁样式且当前在不可见阶段，则不绘制
+        if (is_blinking_style and !self.cursor_blink_state) {
             return;
         }
 
@@ -414,7 +415,7 @@ pub const Renderer = struct {
         var cursor_bg_idx: u32 = 256;
 
         if (term.mode.reverse) {
-            if (self.cursor_blink_state and is_blinking_style) {
+            if (is_blinking_style and self.cursor_blink_state) {
                 cursor_bg_idx = 258;
             } else {
                 cursor_bg_idx = 259;
@@ -424,18 +425,7 @@ pub const Renderer = struct {
         var draw_col = try self.getColor(term, cursor_bg_idx);
 
         switch (style) {
-            0, 1 => { // blinking block
-                if (!term.mode.blink or self.cursor_blink_state) {
-                    x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
-                    if (glyph.u != ' ' and glyph.u != 0) {
-                        var fg = try self.getColor(term, cursor_fg_idx);
-                        const char = @as(u32, glyph.u);
-                        const font = self.getFontForGlyph(glyph.u);
-                        x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
-                    }
-                }
-            },
-            2 => { // steady block
+            .blinking_block, .blinking_block_default => { // blinking block
                 x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
@@ -444,34 +434,39 @@ pub const Renderer = struct {
                     x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
-            3 => { // blinking underline
-                if (!term.mode.blink or self.cursor_blink_state) {
-                    const thickness = config.Config.cursor.thickness;
-                    const y_line = y_pos + self.char_height - thickness;
-                    x11.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
+            .steady_block => { // steady block
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                if (glyph.u != ' ' and glyph.u != 0) {
+                    var fg = try self.getColor(term, cursor_fg_idx);
+                    const char = @as(u32, glyph.u);
+                    const font = self.getFontForGlyph(glyph.u);
+                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
-            4 => { // steady underline
+            .blinking_underline => { // blinking underline
                 const thickness = config.Config.cursor.thickness;
-                const y_line = y_pos + self.char_height - thickness;
+                const y_line = y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness));
                 x11.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
             },
-            5 => { // blinking bar
-                if (!term.mode.blink or self.cursor_blink_state) {
-                    const thickness = config.Config.cursor.thickness;
-                    x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
-                }
+            .steady_underline => { // steady underline
+                const thickness = config.Config.cursor.thickness;
+                const y_line = y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness));
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
             },
-            6 => { // steady bar
+            .blinking_bar => { // blinking bar
                 const thickness = config.Config.cursor.thickness;
                 x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
             },
-            7, 8 => { // st cursor (hollow box)
+            .steady_bar => { // steady bar
+                const thickness = config.Config.cursor.thickness;
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
+            },
+            .blinking_st_cursor, .steady_st_cursor => { // st cursor (hollow box)
                 const thickness = config.Config.cursor.thickness;
                 x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), thickness);
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + self.char_height - thickness, @intCast(self.char_width), thickness);
+                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness)), @intCast(self.char_width), thickness);
                 x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
-                x11.XftDrawRect(self.draw, &draw_col, x_pos + self.char_width - thickness, y_pos, thickness, @intCast(self.char_height));
+                x11.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(self.char_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, 258);
                     const char = @as(u32, glyph.u);
@@ -479,7 +474,6 @@ pub const Renderer = struct {
                     x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
-            else => {},
         }
     }
 

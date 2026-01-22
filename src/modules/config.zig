@@ -3,6 +3,9 @@
 //! 与 /home/10292721@zte.intra/Github/suckless/st/config.h 对齐
 
 const std = @import("std");
+const types = @import("types.zig");
+
+const CursorStyle = types.CursorStyle;
 
 pub const Config = struct {
     // 字体配置
@@ -73,7 +76,7 @@ pub const Config = struct {
 
     // 光标配置
     pub const cursor = struct {
-        pub const style: u32 = 5; // 0:闪烁块, 1:闪烁块(default), 2:稳定块, 3:闪烁下划线, 4:稳定下划线, 5:闪烁竖线, 6:稳定竖线
+        pub const style: CursorStyle = .blinking_bar; // 默认使用闪烁竖线
         pub const thickness: u32 = 2; // 光标粗细（像素）
         pub const blink_interval_ms: u32 = 500; // 闪烁间隔
     };

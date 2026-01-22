@@ -39,6 +39,7 @@ pub const Terminal = struct {
         t.term.mode.utf8 = true;
         t.term.mode.wrap = true;
         t.term.c = TCursor{};
+        t.term.cursor_style = config.Config.cursor.style; // 使用配置中的光标样式（闪烁竖线）
         t.term.top = 0;
         t.term.bot = row - 1;
 
@@ -51,6 +52,7 @@ pub const Terminal = struct {
                 .state = .default,
                 .top = 0,
                 .bot = row - 1,
+                .cursor_style = config.Config.cursor.style,
             };
         }
 

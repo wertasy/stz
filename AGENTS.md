@@ -99,6 +99,6 @@ const result = someFunction() catch |err| {
 - [ ] 宽字符写入行尾的 `wrap_next` 逻辑符合 `st` 预期。
 
 ## 参考资料
-- 原始 C 版 st 路径: `/home/wert/Github/suckless/st`
+- 原始 C 版 st 路径: `/home/$USER/Github/suckless/st`
 - [Zig 0.15.2 文档](https://ziglang.org/documentation/0.15.2/)
 - [Xterm 控制序列手册](http://invisible-island.net/xterm/ctlseqs/ctlseqs.html)

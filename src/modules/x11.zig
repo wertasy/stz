@@ -277,6 +277,9 @@ pub const XNFocusWindow = c.XNFocusWindow;
 pub const XIMPreeditNothing = c.XIMPreeditNothing;
 pub const XIMStatusNothing = c.XIMStatusNothing;
 
+pub const XWindowAttributes = c.XWindowAttributes;
+pub const XGetWindowAttributes = c.XGetWindowAttributes;
+
 pub fn XConnectionNumber(dpy: *Display) c_int {
     return c.XConnectionNumber(dpy);
 }

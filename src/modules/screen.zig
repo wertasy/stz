@@ -375,6 +375,7 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
 /// 屏幕向上滚动
 pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
     if (orig > term.bot) return;
+
     const limit_n = @min(n, term.bot - orig + 1);
     const screen = term.line;
 

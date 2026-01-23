@@ -46,9 +46,26 @@ pub fn main() !u8 {
     const shell_path = config.Config.shell;
 
     std.log.info("stz - Zig 终端模拟器 v0.1.0\n", .{});
-    std.log.info("尺寸: {d}x{d}\n", .{ cols, rows });
+    std.log.info("配置尺寸: {d}x{d}\n", .{ cols, rows });
 
-    // 设置 TERM 环境变量 (必须在 PTY 初始化前，以确保子进程能继承)
+    // 初始化窗口
+    var window = try Window.init("stz", cols, rows, allocator);
+    defer window.deinit();
+
+    // 初始化渲染器 (这将加载字体并确定实际的字符宽高)
+    var renderer = try Renderer.init(&window, allocator);
+    defer renderer.deinit();
+
+    // 修复窗口大小以匹配实际字体尺寸
+    // 注意：这将根据字体度量调整窗口大小，可能改变行数/列数
+    window.resizeToGrid(cols, rows);
+    window.resizeBuffer(window.width, window.height);
+    renderer.resize();
+
+    // 显示窗口
+    window.show();
+
+    // 设置 TERM 环境变量
     _ = c.setenv("TERM", config.Config.term_type, 1);
 
     // 初始化 PTY
@@ -57,26 +74,14 @@ pub fn main() !u8 {
 
     // 初始化终端
     var terminal = try Terminal.init(rows, cols, allocator);
+
     // 修复 Parser 中的 Term 和 PTY 指针
     terminal.parser.term = &terminal.term;
     terminal.parser.pty = &pty;
     defer terminal.deinit();
 
-    // 初始化窗口
-    var window = try Window.init("stz", cols, rows, allocator);
-    defer window.deinit();
-
-    // 初始化渲染器
-    var renderer = try Renderer.init(&window, allocator);
-    defer renderer.deinit();
-
-    // 修复窗口大小以匹配实际字体尺寸
-    window.resizeToGrid(cols, rows);
-    window.resizeBuffer(window.width, window.height);
-    renderer.resize();
-
-    // 显示窗口
-    window.show();
+    // 设置 PTY 为非阻塞模式
+    try pty.setNonBlocking();
 
     // 初始化输入处理器
     var input = Input.init(&pty, &terminal.term);
@@ -112,13 +117,15 @@ pub fn main() !u8 {
     var paste_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096);
     defer paste_buffer.deinit(allocator);
 
-    // 设置 PTY 为非阻塞模式
-    try pty.setNonBlocking();
-
     // 渲染限制 (60 FPS)
     const min_frame_time_ms: i64 = 1000 / 60;
     var last_render_time: i64 = std.time.milliTimestamp();
     var pending_render: bool = false;
+
+    // 初始渲染
+    if (try renderer.render(&terminal.term, &selector)) |_| {
+        window.present();
+    }
 
     while (!quit) {
         // Alias term for easy access
@@ -223,8 +230,12 @@ pub fn main() !u8 {
                         window.width = width;
                         window.height = height;
 
-                        const new_cols = window.width / window.cell_width;
-                        const new_rows = window.height / window.cell_height;
+                        const b = config.Config.window.border_pixels;
+                        const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
+                        const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
+
+                        const new_cols = avail_w / window.cell_width;
+                        const new_rows = avail_h / window.cell_height;
 
                         if (new_cols > 0 and new_rows > 0) {
                             if (new_cols != terminal.term.col or new_rows != terminal.term.row) {

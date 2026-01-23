@@ -750,10 +750,15 @@ pub const Parser = struct {
 
     fn newLine(self: *Parser, first_col: bool) !void {
         var y = self.term.c.y;
-        if (y == self.term.bot) {
-            std.log.debug("NEWLINE_SCROLL: y={d} bot={d} wrap={}", .{ y, self.term.bot, self.term.c.state.wrap_next });
-            try self.scrollUp(self.term.top, 1);
-        } else {
+        if (y >= self.term.top and y <= self.term.bot) {
+            if (y == self.term.bot) {
+                std.log.debug("NEWLINE_SCROLL: y={d} bot={d} wrap={}", .{ y, self.term.bot, self.term.c.state.wrap_next });
+                try self.scrollUp(self.term.top, 1);
+            } else {
+                y += 1;
+            }
+        } else if (y < self.term.row - 1) {
+            // 光标在滚动区域外，只移动不滚动
             y += 1;
         }
         try self.moveTo(if (first_col) 0 else self.term.c.x, y);
@@ -925,18 +930,45 @@ pub const Parser = struct {
                 self.csiReset();
                 self.term.esc.start = true;
             },
-            0x84 => try self.newLine(false), // IND
-            0x85 => try self.newLine(true), // NEL
+            0x84 => {
+                // IND (C1): 光标在滚动区域内才可能触发滚动
+                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
+                    if (self.term.c.y == self.term.bot) {
+                        try self.scrollUp(self.term.top, 1);
+                    } else {
+                        try self.moveCursor(0, 1);
+                    }
+                } else if (self.term.c.y < self.term.row - 1) {
+                    try self.moveCursor(0, 1);
+                }
+            },
+            0x85 => {
+                // NEL (C1): 光标在滚动区域内才可能触发滚动
+                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
+                    if (self.term.c.y == self.term.bot) {
+                        try self.scrollUp(self.term.top, 1);
+                    } else {
+                        try self.moveCursor(0, 1);
+                    }
+                } else if (self.term.c.y < self.term.row - 1) {
+                    try self.moveCursor(0, 1);
+                }
+                self.term.c.x = 0;
+            },
             0x88 => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
                 tabs[self.term.c.x] = true;
             },
-            0x8D => { // RI
-                if (self.term.c.y == self.term.top) {
-                    try self.scrollDown(self.term.top, 1);
-                } else {
+            0x8D => {
+                // RI (C1): 光标在滚动区域内才可能触发滚动
+                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
+                    if (self.term.c.y == self.term.top) {
+                        try self.scrollDown(self.term.top, 1);
+                    } else {
+                        try self.moveCursor(0, -1);
+                    }
+                } else if (self.term.c.y > 0) {
                     try self.moveCursor(0, -1);
                 }
-                self.term.c.state.wrap_next = false;
             },
             0x8E => {
                 self.term.esc.alt_charset = true;
@@ -1023,18 +1055,47 @@ pub const Parser = struct {
             } else try self.cursorRestore(),
             'n' => self.term.charset = 2,
             'o' => self.term.charset = 3,
-            'D' => try self.newLine(false), // IND
-            'E' => try self.newLine(true), // NEL
+            'D' => {
+                // IND (Index): 光标在滚动区域内才可能触发滚动
+                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
+                    if (self.term.c.y == self.term.bot) {
+                        try self.scrollUp(self.term.top, 1);
+                    } else {
+                        try self.moveCursor(0, 1);
+                    }
+                } else if (self.term.c.y < self.term.row - 1) {
+                    // 光标在滚动区域外，只移动不滚动
+                    try self.moveCursor(0, 1);
+                }
+            },
+            'E' => {
+                // NEL (Next Line): 光标在滚动区域内才可能触发滚动
+                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
+                    if (self.term.c.y == self.term.bot) {
+                        try self.scrollUp(self.term.top, 1);
+                    } else {
+                        try self.moveCursor(0, 1);
+                    }
+                } else if (self.term.c.y < self.term.row - 1) {
+                    try self.moveCursor(0, 1);
+                }
+                self.term.c.x = 0;
+            },
             'H' => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
                 tabs[self.term.c.x] = true;
             },
-            'M' => { // RI
-                if (self.term.c.y == self.term.top) {
-                    try self.scrollDown(self.term.top, 1);
-                } else {
+            'M' => {
+                // RI (Reverse Index): 光标在滚动区域内才可能触发滚动
+                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
+                    if (self.term.c.y == self.term.top) {
+                        try self.scrollDown(self.term.top, 1);
+                    } else {
+                        try self.moveCursor(0, -1);
+                    }
+                } else if (self.term.c.y > 0) {
+                    // 光标在滚动区域外，只移动不滚动
                     try self.moveCursor(0, -1);
                 }
-                self.term.c.state.wrap_next = false;
             },
             'Z' => self.ptyWrite("\x1B[?6c"),
             'c' => try self.resetTerminal(),

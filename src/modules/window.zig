@@ -36,6 +36,10 @@ pub const Window = struct {
     cols: usize,
     rows: usize,
 
+    // Dynamic borders for centering
+    hborder_px: u32,
+    vborder_px: u32,
+
     allocator: std.mem.Allocator,
 
     pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Allocator) !Window {
@@ -123,6 +127,8 @@ pub const Window = struct {
             .cell_height = @intCast(cell_h),
             .cols = cols,
             .rows = rows,
+            .hborder_px = border,
+            .vborder_px = border,
             .allocator = allocator,
         };
     }

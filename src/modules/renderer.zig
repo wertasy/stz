@@ -513,24 +513,27 @@ pub const Renderer = struct {
         // Default background color
         var default_bg = try self.getColor(term, 259);
 
-        const border = @as(i32, @intCast(config.Config.window.border_pixels));
+        const hborder = @as(i32, @intCast(self.window.hborder_px));
+        const vborder = @as(i32, @intCast(self.window.vborder_px));
         const grid_w = @as(i32, @intCast(term.col)) * @as(i32, @intCast(self.char_width));
         const grid_h = @as(i32, @intCast(term.row)) * @as(i32, @intCast(self.char_height));
 
         // 清除四周多余区域及边框
         // 1. 顶部区域
-        x11.XftDrawRect(self.draw, &default_bg, 0, 0, @intCast(self.window.width), @intCast(border));
+        if (vborder > 0)
+            x11.XftDrawRect(self.draw, &default_bg, 0, 0, @intCast(self.window.width), @intCast(vborder));
         // 2. 底部区域
-        const bottom_y = border + grid_h;
+        const bottom_y = vborder + grid_h;
         if (bottom_y < @as(i32, @intCast(self.window.height))) {
             x11.XftDrawRect(self.draw, &default_bg, 0, bottom_y, @intCast(self.window.width), @intCast(@as(i32, @intCast(self.window.height)) - bottom_y));
         }
         // 3. 左侧区域
-        x11.XftDrawRect(self.draw, &default_bg, 0, border, @intCast(border), @intCast(grid_h));
+        if (hborder > 0)
+            x11.XftDrawRect(self.draw, &default_bg, 0, vborder, @intCast(hborder), @intCast(grid_h));
         // 4. 右侧区域
-        const right_x = border + grid_w;
+        const right_x = hborder + grid_w;
         if (right_x < @as(i32, @intCast(self.window.width))) {
-            x11.XftDrawRect(self.draw, &default_bg, right_x, border, @intCast(@as(i32, @intCast(self.window.width)) - right_x), @intCast(grid_h));
+            x11.XftDrawRect(self.draw, &default_bg, right_x, vborder, @intCast(@as(i32, @intCast(self.window.width)) - right_x), @intCast(grid_h));
         }
 
         var min_y: ?usize = null;
@@ -554,15 +557,15 @@ pub const Renderer = struct {
             if (min_y == null) min_y = y;
             max_y = y;
 
-            const y_pos = @as(i32, @intCast(y * self.char_height)) + border;
+            const y_pos = @as(i32, @intCast(y * self.char_height)) + vborder;
 
             // Clear the dirty grid row with default background
-            x11.XftDrawRect(self.draw, &default_bg, border, y_pos, @intCast(grid_w), @intCast(self.char_height));
+            x11.XftDrawRect(self.draw, &default_bg, hborder, y_pos, @intCast(grid_w), @intCast(self.char_height));
 
             // 第一阶段：绘制所有非默认背景
             for (0..@min(term.col, line_data.len)) |x| {
                 const glyph = line_data[x];
-                const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
+                const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
 
                 var bg_idx = glyph.bg;
 
@@ -592,7 +595,7 @@ pub const Renderer = struct {
 
             for (0..@min(term.col, line_data.len)) |x| {
                 const glyph = line_data[x];
-                const x_pos = @as(i32, @intCast(x * self.char_width)) + border;
+                const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
 
                 if (glyph.attr.wide_dummy) continue;
 
@@ -735,7 +738,7 @@ pub const Renderer = struct {
 
             var rect = x11.XRectangle{
                 .x = 0,
-                .y = @intCast(@as(i32, @intCast(min * self.char_height)) + border),
+                .y = @intCast(@as(i32, @intCast(min * self.char_height)) + vborder),
                 .width = @intCast(self.window.width),
                 .height = @intCast((max - min + 1) * self.char_height),
             };
@@ -743,7 +746,7 @@ pub const Renderer = struct {
             // Include top border if drawing first line
             if (min == 0) {
                 rect.y = 0;
-                rect.height += @intCast(border);
+                rect.height += @intCast(vborder);
             }
 
             // Include bottom border if drawing last line
@@ -769,11 +772,12 @@ pub const Renderer = struct {
 
         if (cx >= term.col or cy >= term.row) return;
 
-        const border = @as(i32, @intCast(config.Config.window.border_pixels));
-        const x_pos = @as(i32, @intCast(cx * self.char_width)) + border;
+        const hborder = @as(i32, @intCast(self.window.hborder_px));
+        const vborder = @as(i32, @intCast(self.window.vborder_px));
+        const x_pos = @as(i32, @intCast(cx * self.char_width)) + hborder;
         const screen_y = if (term.scr > 0 and !term.mode.alt_screen) @as(isize, @intCast(cy)) - @as(isize, @intCast(term.scr)) else @as(isize, @intCast(cy));
         if (screen_y < 0 or screen_y >= @as(isize, @intCast(term.row))) return;
-        const y_pos = @as(i32, @intCast(screen_y)) * @as(i32, @intCast(self.char_height)) + border;
+        const y_pos = @as(i32, @intCast(screen_y)) * @as(i32, @intCast(self.char_height)) + vborder;
 
         if (config.Config.cursor.blink_interval_ms > 0) {
             const now = std.time.milliTimestamp();

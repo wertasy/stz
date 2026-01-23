@@ -232,13 +232,17 @@ pub fn main() !u8 {
                         window.width = width;
                         window.height = height;
 
-                        const b = config.Config.window.border_pixels;
-                        const fudge = window.cell_height / 2;
-                        const avail_w = if (window.width > 2 * b) window.width - 2 * b + fudge else 0;
-                        const avail_h = if (window.height > 2 * b) window.height - 2 * b + fudge else 0;
+                        const border = config.Config.window.border_pixels;
+                        var avail_w: u32 = 0;
+                        if (window.width > 2 * border) avail_w = window.width - 2 * border;
+                        var avail_h: u32 = 0;
+                        if (window.height > 2 * border) avail_h = window.height - 2 * border;
 
-                        const new_cols = avail_w / window.cell_width;
-                        const new_rows = avail_h / window.cell_height;
+                        const new_cols = @max(1, avail_w / window.cell_width);
+                        const new_rows = @max(1, avail_h / window.cell_height);
+
+                        window.hborder_px = (window.width - @as(u32, @intCast(new_cols)) * window.cell_width) / 2;
+                        window.vborder_px = (window.height - @as(u32, @intCast(new_rows)) * window.cell_height) / 2;
 
                         if (new_cols > 0 and new_rows > 0) {
                             if (new_cols != terminal.term.col or new_rows != terminal.term.row) {
@@ -267,14 +271,23 @@ pub fn main() !u8 {
                 x11.ButtonPress => {
                     const e = ev.xbutton;
                     const shift = (e.state & x11.ShiftMask) != 0;
+
+                    const border_x = @as(c_int, @intCast(window.hborder_px));
+                    const border_y = @as(c_int, @intCast(window.vborder_px));
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const x = @as(usize, @intCast(@divTrunc(e.x, cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(e.y, cell_h)));
 
-                    // Limit to screen bounds
-                    const cx = @min(x, terminal.term.col - 1);
-                    const cy = @min(y, terminal.term.row - 1);
+                    var mx = e.x - border_x;
+                    var my = e.y - border_y;
+
+                    const term_w = @as(c_int, @intCast(terminal.term.col)) * cell_w;
+                    const term_h = @as(c_int, @intCast(terminal.term.row)) * cell_h;
+
+                    mx = @max(0, @min(mx, term_w - 1));
+                    my = @max(0, @min(my, term_h - 1));
+
+                    const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
+                    const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
                     // Ctrl + Left Click: 打开 URL
                     if (e.button == x11.Button1 and
@@ -379,12 +392,23 @@ pub fn main() !u8 {
                 x11.ButtonRelease => {
                     const e = ev.xbutton;
                     const shift = (e.state & x11.ShiftMask) != 0;
+
+                    const border_x = @as(c_int, @intCast(window.hborder_px));
+                    const border_y = @as(c_int, @intCast(window.vborder_px));
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const x = @as(usize, @intCast(@divTrunc(e.x, cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(e.y, cell_h)));
-                    const cx = @min(x, terminal.term.col - 1);
-                    const cy = @min(y, terminal.term.row - 1);
+
+                    var mx = e.x - border_x;
+                    var my = e.y - border_y;
+
+                    const term_w = @as(c_int, @intCast(terminal.term.col)) * cell_w;
+                    const term_h = @as(c_int, @intCast(terminal.term.row)) * cell_h;
+
+                    mx = @max(0, @min(mx, term_w - 1));
+                    my = @max(0, @min(my, term_h - 1));
+
+                    const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
+                    const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
                     if (terminal.term.mode.mouse and !shift) {
                         try input.sendMouseReport(cx, cy, e.button, e.state, 1);
@@ -408,12 +432,23 @@ pub fn main() !u8 {
                 x11.MotionNotify => {
                     const e = ev.xmotion;
                     const shift = (e.state & x11.ShiftMask) != 0;
+
+                    const border_x = @as(c_int, @intCast(window.hborder_px));
+                    const border_y = @as(c_int, @intCast(window.vborder_px));
                     const cell_w = @as(c_int, @intCast(window.cell_width));
                     const cell_h = @as(c_int, @intCast(window.cell_height));
-                    const x = @as(usize, @intCast(@divTrunc(e.x, cell_w)));
-                    const y = @as(usize, @intCast(@divTrunc(e.y, cell_h)));
-                    const cx = @min(x, terminal.term.col - 1);
-                    const cy = @min(y, terminal.term.row - 1);
+
+                    var mx = e.x - border_x;
+                    var my = e.y - border_y;
+
+                    const term_w = @as(c_int, @intCast(terminal.term.col)) * cell_w;
+                    const term_h = @as(c_int, @intCast(terminal.term.row)) * cell_h;
+
+                    mx = @max(0, @min(mx, term_w - 1));
+                    my = @max(0, @min(my, term_h - 1));
+
+                    const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
+                    const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
                     if (terminal.term.mode.mouse and !shift) {
                         // Only send motion if button is pressed or mouse_many/mouse_motion is set

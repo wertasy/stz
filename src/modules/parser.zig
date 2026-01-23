@@ -750,15 +750,10 @@ pub const Parser = struct {
 
     fn newLine(self: *Parser, first_col: bool) !void {
         var y = self.term.c.y;
-        if (y >= self.term.top and y <= self.term.bot) {
-            if (y == self.term.bot) {
-                std.log.debug("NEWLINE_SCROLL: y={d} bot={d} wrap={}", .{ y, self.term.bot, self.term.c.state.wrap_next });
-                try self.scrollUp(self.term.top, 1);
-            } else {
-                y += 1;
-            }
-        } else if (y < self.term.row - 1) {
-            // 光标在滚动区域外，只移动不滚动
+        if (y == self.term.bot) {
+            std.log.debug("NEWLINE_SCROLL: y={d} bot={d} wrap={}", .{ y, self.term.bot, self.term.c.state.wrap_next });
+            try self.scrollUp(self.term.top, 1);
+        } else {
             y += 1;
         }
         try self.moveTo(if (first_col) 0 else self.term.c.x, y);

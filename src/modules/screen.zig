@@ -376,7 +376,11 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
 pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
     if (orig > term.bot) return;
 
+    // Log scroll event
+    std.log.debug("SCROLL_UP: orig={d}, n={d}, bot={d}, cursor=({d},{d})", .{ orig, n, term.bot, term.c.x, term.c.y });
+
     const limit_n = @min(n, term.bot - orig + 1);
+
     const screen = term.line;
 
     if (orig == 0 and limit_n > 0 and !term.mode.alt_screen) {

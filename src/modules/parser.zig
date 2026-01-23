@@ -228,16 +228,17 @@ pub const Parser = struct {
         }
 
         // 2. 检查是否需要立即换行（如插入位置超出边界）
+        // 智能适配：如果宽字符在行尾导致溢出，且只差 1 格，说明 Vim 可能认为它是单宽。
+        // 此时强制视为单宽，避免意外滚动。
+        var effective_width = width;
         if (self.term.c.x + width > self.term.col) {
             if (self.term.mode.wrap) {
-                if (self.term.line) |lines| {
-                    if (self.term.c.y < lines.len) {
-                        lines[self.term.c.y][self.term.col - 1].attr.wrap = true;
-                    }
+                if (width > 1 and self.term.c.x == self.term.col - 1) {
+                    effective_width = 1;
+                } else {
+                    try self.newLine(true);
                 }
-                try self.newLine(true);
             } else {
-                // 非换行模式，则在行尾覆盖
                 self.term.c.x = self.term.col - width;
             }
         }
@@ -264,7 +265,7 @@ pub const Parser = struct {
 
                 var glyph = self.term.c.attr;
                 glyph.u = codepoint;
-                if (width == 2) {
+                if (effective_width == 2) {
                     glyph.attr.wide = true;
                     line[cx] = glyph;
                     if (cx + 1 < self.term.col) {
@@ -284,14 +285,16 @@ pub const Parser = struct {
                         line[cx + 1].attr.wide_dummy = true;
                     }
                 } else {
+                    // 即使原本是宽字符，因为 effective_width=1，我们只写一个格子
+                    // 渲染器可能会把它画出去，但逻辑上它占1格
                     line[cx] = glyph;
                 }
             }
         }
 
         // 4. 更新光标位置和换行状态
-        if (self.term.c.x + width < self.term.col) {
-            self.term.c.x += width;
+        if (self.term.c.x + effective_width < self.term.col) {
+            self.term.c.x += effective_width;
         } else {
             self.term.c.state.wrap_next = true;
         }
@@ -747,9 +750,8 @@ pub const Parser = struct {
 
     fn newLine(self: *Parser, first_col: bool) !void {
         var y = self.term.c.y;
-
         if (y == self.term.bot) {
-            // std.log.debug("newLine SCROLL: y={d} bot={d} top={d}", .{ y, self.term.bot, self.term.top });
+            std.log.debug("NEWLINE_SCROLL: y={d} bot={d} wrap={}", .{ y, self.term.bot, self.term.c.state.wrap_next });
             try self.scrollUp(self.term.top, 1);
         } else {
             y += 1;

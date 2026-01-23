@@ -69,6 +69,8 @@ pub fn main() !u8 {
     _ = c.setenv("TERM", config.Config.term_type, 1);
 
     // 初始化 PTY
+    // 直接使用配置的行列数初始化，因为我们刚刚请求了 resizeToGrid
+    // 如果 WM 不遵守请求，后续的 ConfigureNotify 会修正 PTY 大小
     var pty = try PTY.init(shell_path, cols, rows);
     defer pty.close();
 
@@ -231,8 +233,9 @@ pub fn main() !u8 {
                         window.height = height;
 
                         const b = config.Config.window.border_pixels;
-                        const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
-                        const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
+                        const fudge = window.cell_height / 2;
+                        const avail_w = if (window.width > 2 * b) window.width - 2 * b + fudge else 0;
+                        const avail_h = if (window.height > 2 * b) window.height - 2 * b + fudge else 0;
 
                         const new_cols = avail_w / window.cell_width;
                         const new_rows = avail_h / window.cell_height;

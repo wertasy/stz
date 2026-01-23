@@ -47,6 +47,7 @@ pub fn main() !u8 {
 
     std.log.info("stz - Zig 终端模拟器 v0.1.0\n", .{});
     std.log.info("配置尺寸: {d}x{d}\n", .{ cols, rows });
+    std.log.info("配置尺寸: {d}x{d}\n", .{ cols, rows });
 
     // 初始化窗口
     var window = try Window.init("stz", cols, rows, allocator);
@@ -71,6 +72,24 @@ pub fn main() !u8 {
     // 初始化 PTY
     // 直接使用配置的行列数初始化，因为我们刚刚请求了 resizeToGrid
     // 如果 WM 不遵守请求，后续的 ConfigureNotify 会修正 PTY 大小
+    var pty = try PTY.init(shell_path, cols, rows);
+    defer pty.close();
+
+    // 初始化终端
+    var terminal = try Terminal.init(rows, cols, allocator);
+
+    // 修复 Parser 中的 Term 和 PTY 指针
+    terminal.parser.term = &terminal.term;
+    terminal.parser.pty = &pty;
+    defer terminal.deinit();
+
+    // 设置 PTY 为非阻塞模式
+    try pty.setNonBlocking();
+
+    // 设置 TERM 环境变量
+    _ = c.setenv("TERM", config.Config.term_type, 1);
+
+    // 初始化 PTY
     var pty = try PTY.init(shell_path, cols, rows);
     defer pty.close();
 

@@ -930,45 +930,18 @@ pub const Parser = struct {
                 self.csiReset();
                 self.term.esc.start = true;
             },
-            0x84 => {
-                // IND (C1): 光标在滚动区域内才可能触发滚动
-                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
-                    if (self.term.c.y == self.term.bot) {
-                        try self.scrollUp(self.term.top, 1);
-                    } else {
-                        try self.moveCursor(0, 1);
-                    }
-                } else if (self.term.c.y < self.term.row - 1) {
-                    try self.moveCursor(0, 1);
-                }
-            },
-            0x85 => {
-                // NEL (C1): 光标在滚动区域内才可能触发滚动
-                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
-                    if (self.term.c.y == self.term.bot) {
-                        try self.scrollUp(self.term.top, 1);
-                    } else {
-                        try self.moveCursor(0, 1);
-                    }
-                } else if (self.term.c.y < self.term.row - 1) {
-                    try self.moveCursor(0, 1);
-                }
-                self.term.c.x = 0;
-            },
+            0x84 => try self.newLine(false), // IND
+            0x85 => try self.newLine(true), // NEL
             0x88 => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
                 tabs[self.term.c.x] = true;
             },
-            0x8D => {
-                // RI (C1): 光标在滚动区域内才可能触发滚动
-                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
-                    if (self.term.c.y == self.term.top) {
-                        try self.scrollDown(self.term.top, 1);
-                    } else {
-                        try self.moveCursor(0, -1);
-                    }
-                } else if (self.term.c.y > 0) {
+            0x8D => { // RI
+                if (self.term.c.y == self.term.top) {
+                    try self.scrollDown(self.term.top, 1);
+                } else {
                     try self.moveCursor(0, -1);
                 }
+                self.term.c.state.wrap_next = false;
             },
             0x8E => {
                 self.term.esc.alt_charset = true;
@@ -1055,47 +1028,18 @@ pub const Parser = struct {
             } else try self.cursorRestore(),
             'n' => self.term.charset = 2,
             'o' => self.term.charset = 3,
-            'D' => {
-                // IND (Index): 光标在滚动区域内才可能触发滚动
-                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
-                    if (self.term.c.y == self.term.bot) {
-                        try self.scrollUp(self.term.top, 1);
-                    } else {
-                        try self.moveCursor(0, 1);
-                    }
-                } else if (self.term.c.y < self.term.row - 1) {
-                    // 光标在滚动区域外，只移动不滚动
-                    try self.moveCursor(0, 1);
-                }
-            },
-            'E' => {
-                // NEL (Next Line): 光标在滚动区域内才可能触发滚动
-                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
-                    if (self.term.c.y == self.term.bot) {
-                        try self.scrollUp(self.term.top, 1);
-                    } else {
-                        try self.moveCursor(0, 1);
-                    }
-                } else if (self.term.c.y < self.term.row - 1) {
-                    try self.moveCursor(0, 1);
-                }
-                self.term.c.x = 0;
-            },
+            'D' => try self.newLine(false), // IND
+            'E' => try self.newLine(true), // NEL
             'H' => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
                 tabs[self.term.c.x] = true;
             },
-            'M' => {
-                // RI (Reverse Index): 光标在滚动区域内才可能触发滚动
-                if (self.term.c.y >= self.term.top and self.term.c.y <= self.term.bot) {
-                    if (self.term.c.y == self.term.top) {
-                        try self.scrollDown(self.term.top, 1);
-                    } else {
-                        try self.moveCursor(0, -1);
-                    }
-                } else if (self.term.c.y > 0) {
-                    // 光标在滚动区域外，只移动不滚动
+            'M' => { // RI
+                if (self.term.c.y == self.term.top) {
+                    try self.scrollDown(self.term.top, 1);
+                } else {
                     try self.moveCursor(0, -1);
                 }
+                self.term.c.state.wrap_next = false;
             },
             'Z' => self.ptyWrite("\x1B[?6c"),
             'c' => try self.resetTerminal(),

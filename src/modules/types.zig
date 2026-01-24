@@ -468,6 +468,7 @@ pub const SavedCursor = struct {
     x: usize = 0, // 保存的列位置
     y: usize = 0, // 保存的行位置
     state: CursorState = .default, // 保存的光标状态
+    style: CursorStyle = .blinking_block_default, // 保存的光标样式
     trantbl: [4]Charset = [_]Charset{.usa} ** 4, // 字符集映射表：G0-G3 的字符集
     charset: u8 = 0, // 当前字符集索引：0-3（G0-G3）
 };

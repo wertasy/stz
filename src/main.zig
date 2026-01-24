@@ -867,6 +867,7 @@ pub fn main() !u8 {
             if (now >= next_blink) {
                 // Time to toggle blink state
                 term.mode.blink = !term.mode.blink;
+                renderer.cursor_blink_state = !renderer.cursor_blink_state;
 
                 // 1. 如果有文本闪烁属性，标记相关行为脏
                 if (screen.isAttrSet(term, .{ .blink = true })) {

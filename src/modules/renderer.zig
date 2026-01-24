@@ -825,13 +825,7 @@ pub const Renderer = struct {
         if (screen_y < 0 or screen_y >= @as(isize, @intCast(term.row))) return;
         const y_pos = @as(i32, @intCast(screen_y)) * @as(i32, @intCast(self.char_height)) + vborder;
 
-        if (config.Config.cursor.blink_interval_ms > 0) {
-            const now = std.time.milliTimestamp();
-            if (now - self.last_blink_time >= config.Config.cursor.blink_interval_ms) {
-                self.cursor_blink_state = !self.cursor_blink_state;
-                self.last_blink_time = now;
-            }
-        } else {
+        if (config.Config.cursor.blink_interval_ms == 0) {
             self.cursor_blink_state = true;
         }
 

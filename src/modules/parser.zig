@@ -976,6 +976,7 @@ pub const Parser = struct {
             .x = 0,
             .y = 0,
             .state = .default,
+            .style = self.term.cursor_style,
         };
         if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
             dirty[i] = true;
@@ -1363,6 +1364,7 @@ pub const Parser = struct {
                 .x = self.term.c.x,
                 .y = self.term.c.y,
                 .state = self.term.c.state,
+                .style = self.term.cursor_style,
                 .trantbl = self.term.trantbl,
                 .charset = self.term.charset,
             };
@@ -1370,6 +1372,7 @@ pub const Parser = struct {
             const s = self.term.saved_cursor[alt];
             self.term.c.attr = s.attr;
             self.term.c.state = s.state;
+            self.term.cursor_style = s.style;
             try self.moveTo(s.x, s.y);
             self.term.trantbl = s.trantbl;
             self.term.charset = s.charset;

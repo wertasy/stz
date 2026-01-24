@@ -1,5 +1,104 @@
 //! stz - 简单终端模拟器 (Zig 重写版)
 //! 主程序入口和事件循环
+//!
+//! ## 文件概述
+//!
+//! 本文件是终端模拟器的入口点，负责：
+//! 1. 初始化所有子系统（窗口、渲染器、PTY、终端等）
+//! 2. 运行主事件循环（处理 X11 事件和 PTY 数据）
+//! 3. 管理键盘输入、鼠标事件、窗口大小调整
+//! 4. 协调渲染和屏幕更新
+//!
+//! ## 核心概念
+//!
+//! ### 1. 主事件循环
+//! 终端模拟器是一个事件驱动程序，主循环不断等待和处理事件：
+//! - **X11 事件**：键盘输入、鼠标点击、窗口调整、焦点变化
+//! - **PTY 数据**：shell 程序输出的字节流
+//!
+//! ### 2. 初始化顺序
+//! 1. Window（窗口）：创建 X11 窗口
+//! 2. Renderer（渲染器）：加载字体，初始化 Xft
+//! 3. PTY（伪终端）：创建 fork/exec 子进程
+//! 4. Terminal（终端）：初始化屏幕缓冲区、光标、解析器
+//!
+//! ### 3. 事件处理流程
+//!
+//! ```
+//! while (!quit) {
+//!     // 1. 处理所有挂起的 X11 事件
+//!     while (window.pollEvent()) |event| {
+//!         switch (event.type) {
+//!             KeyPress: 处理键盘输入，发送给 PTY
+//!             ButtonPress/Release: 处理鼠标选择
+//!             ConfigureNotify: 处理窗口大小调整
+//!             Expose: 处理窗口重绘
+//!             FocusIn/Out: 处理焦点变化
+//!             SelectionRequest/Notify: 处理剪贴板
+//!         }
+//!     }
+//!
+//!     // 2. 检查 PTY 数据
+//!     if (pty.read(read_buffer)) |n| {
+//!         terminal.processBytes(buffer[0..n]);  // 解析并更新屏幕
+//!         pending_render = true;                 // 标记需要渲染
+//!     }
+//!
+//!     // 3. 如果需要渲染，更新屏幕
+//!     if (pending_render) {
+//!         renderer.render(&terminal.term);  // 渲染屏幕到 Pixmap
+//!         window.present();                  // 显示 Pixmap 到窗口
+//!         pending_render = false;
+//!     }
+//! }
+//! ```
+//!
+//! ## 新手入门：理解终端模拟器的工作原理
+//!
+//! ### 终端模拟器 = 窗口 + 渲染器 + PTY + 解析器
+//!
+//! 1. **Window (窗口)**: X11 窗口，接收用户输入（键盘、鼠标）
+//! 2. **Renderer (渲染器)**: 使用 Xft 将字符绘制到窗口
+//! 3. **PTY (伪终端)**: 与 shell 程序通信的双向通道
+//! 4. **Terminal (终端)**: 解析 PTY 输出的转义序列，更新屏幕缓冲区
+//!
+//! ### 数据流向
+//!
+//! #### 输入（用户 → Shell）
+//! ```
+//! 键盘输入 → KeyPress 事件 → 处理特殊键 → 发送给 PTY → Shell 程序
+//! ```
+//!
+//! #### 输出（Shell → 屏幕）
+//! ```
+//! Shell 程序 → PTY 输出 → 转义序列 → 解析器 → 屏幕缓冲区 → 渲染器 → 窗口
+//! //!
+//!
+//! ## 新手入门：理解终端模拟器的工作原理
+//!
+//! ### 终端模拟器 = 窗口 + 渲染器 + PTY + 解析器
+//!
+//! 1. **Window (窗口)**: X11 窗口，接收用户输入（键盘、鼠标）
+//! 2. **Renderer (渲染器)**: 使用 Xft 将字符绘制到窗口
+//! 3. **PTY (伪终端)**: 与 shell 程序通信的双向通道
+//! 4. **Terminal (终端)**: 解析 PTY 输出的转义序列，更新屏幕缓冲区
+//!
+//! ### 数据流向
+//!
+//! #### 输入（用户 → Shell）
+//! ```
+//! 键盘输入 → KeyPress 事件 → 处理特殊键 → 发送给 PTY → Shell 程序
+//! ```
+//!
+//! #### 输出（Shell → 屏幕）
+//! ```
+//! Shell 程序 → PTY 输出 → 转义序列 → 解析器 → 屏幕缓冲区 → 渲染器 → 窗口
+//! //!
+//!
+//! ## 与原版 st 的对应关系
+//! - main() 函数对应 st 的 main() 函数
+//! - 主事件循环对应 st 的 run() 函数
+//! - 所有 X11 事件处理与 st 的事件处理逻辑对齐
 
 const std = @import("std");
 const c = @cImport({
@@ -25,7 +124,15 @@ const c_locale = @cImport({
 });
 
 pub fn main() !u8 {
-    // 获取分配器
+    // ========== 获取内存分配器 ==========
+    //
+    // 使用 Zig 的 GeneralPurposeAllocator（GPA），这是一个通用的内存分配器。
+    // GPA 会检测内存泄漏，在程序结束时报告泄漏情况。
+    //
+    // 为什么需要分配器？
+    // - 动态分配屏幕缓冲区（line、alt、hist）
+    // - 动态分配转义序列字符串缓冲区（str.buf）
+    // - 动态分配选择文本缓冲区（selector.selected_text）
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .thread_safe = true,
     }){};
@@ -37,10 +144,20 @@ pub fn main() !u8 {
     }
     const allocator = gpa.allocator();
 
-    // Set locale for IME
+    // ========== 设置本地化（Locale）==========
+    //
+    // 设置 LC_CTYPE 为空字符串，使用系统默认本地化。
+    // 这对于输入法（IME）是必需的。
+    //
+    // 什么是本地化？
+    // - 本地化决定了字符编码、字符分类（如大写字母、小写字母、数字等）
+    // - 对中文输入法非常重要
     _ = c_locale.setlocale(c_locale.LC_CTYPE, "");
 
-    // 解析命令行参数
+    // ========== 解析命令行参数 ==========
+    //
+    // 当前实现：从配置文件读取行列数
+    // 未来扩展：可以添加命令行参数支持（如 --cols 120 --rows 35）
     const cols = config.Config.window.cols;
     const rows = config.Config.window.rows;
     const shell_path = config.Config.shell;
@@ -48,59 +165,159 @@ pub fn main() !u8 {
     std.log.info("stz - Zig 终端模拟器 v0.1.0\n", .{});
     std.log.info("配置尺寸: {d}x{d}\n", .{ cols, rows });
 
-    // 初始化窗口
+    // ========== 初始化窗口 ==========
+    //
+    // 创建 X11 窗口，但此时窗口还不可见。
+    // 窗口初始化步骤：
+    // 1. 连接到 X11 服务器
+    // 2. 创建窗口（使用默认大小）
+    // 3. 设置输入法上下文（IC，用于中文输入）
     var window = try Window.init("stz", cols, rows, allocator);
     defer window.deinit();
 
-    // 初始化渲染器 (这将加载字体并确定实际的字符宽高)
+    // ========== 初始化渲染器 ==========
+    //
+    // 渲染器负责：
+    // 1. 加载字体（使用 FontConfig）
+    // 2. 初始化 Xft 渲染器
+    // 3. 计算字符的宽度和高度
+    //
+    // 注意：此时字体还未加载，需要调用 resize() 来加载字体并计算尺寸。
     var renderer = try Renderer.init(&window, allocator);
     defer renderer.deinit();
 
-    // 修复窗口大小以匹配实际字体尺寸
-    // 注意：这将根据字体度量调整窗口大小，可能改变行数/列数
+    // ========== 调整窗口大小以匹配实际字体尺寸 ==========
+    //
+    // 步骤：
+    // 1. resizeToGrid(): 根据配置的行列数和字体尺寸，调整窗口像素大小
+    // 2. resizeBuffer(): 调整 Pixmap（双缓冲）的大小
+    // 3. renderer.resize(): 加载字体并计算字符宽高
+    //
+    // 为什么需要这一步？
+    // - 配置文件指定的行列数是逻辑值（如 120x35）
+    // - 窗口需要的是像素值（如 2400x700）
+    // - 需要根据字体尺寸进行转换（假设 20x20 像素，则 120x35 = 2400x700）
     window.resizeToGrid(cols, rows);
     window.resizeBuffer(window.width, window.height);
     renderer.resize();
 
-    // 显示窗口
+    // ========== 显示窗口 ==========
+    //
+    // 窗口现在对用户可见。
+    // 但此时窗口内容为空（PTY 还未初始化，还没有输出）。
     window.show();
 
-    // 设置 TERM 环境变量
+    // ========== 设置 TERM 环境变量 ==========
+    //
+    // TERM 环境变量告诉 shell 程序终端的类型。
+    // - xterm-256color: 告诉程序终端支持 256 色和真彩色
+    // - st: 原版 st 终端的 TERM 值
+    //
+    // 为什么需要？
+    // - 程序根据 TERM 值决定发送哪些转义序列
+    // - 例如：vim 会根据 TERM 值决定是否使用 256 色
     _ = c.setenv("TERM", config.Config.term_type, 1);
 
-    // 初始化 PTY
-    // 直接使用配置的行列数初始化，因为我们刚刚请求了 resizeToGrid
-    // 如果 WM 不遵守请求，后续的 ConfigureNotify 会修正 PTY 大小
+    // ========== 初始化 PTY（伪终端）==========
+    //
+    // PTY = Pseudo-TTY（伪终端），是内核提供的一种虚拟终端设备。
+    // PTY 的作用：在终端模拟器和 shell 程序之间建立双向通信通道。
+    //
+    // 初始化步骤：
+    // 1. 打开 /dev/ptmx（伪终端主设备）
+    // 2. 设置终端属性（波特率、字符大小等）
+    // 3. Fork 子进程
+    // 4. 子进程中：打开从设备，exec shell
+    // 5. 父进程中：返回 PTY 句柄，用于读写
+    //
+    // 注意：此时使用配置的行列数初始化。
+    // 如果窗口管理器不遵守我们请求的大小，
+    // 后续的 ConfigureNotify 事件会修正 PTY 大小。
     var pty = try PTY.init(shell_path, cols, rows);
     defer pty.close();
 
-    // 初始化终端
+    // ========== 初始化终端 ==========
+    //
+    // 终端（Terminal）是终端模拟器的核心逻辑层。
+    // 它负责：
+    // 1. 管理屏幕缓冲区（line、alt、hist）
+    // 2. 管理光标位置和状态
+    // 3. 解析转义序列（由 Parser 负责）
+    //
+    // 初始化后，屏幕缓冲区被填充为空格字符。
     var terminal = try Terminal.init(rows, cols, allocator);
 
-    // 修复 Parser 中的 Term 和 PTY 指针
+    // ========== 修复 Parser 中的 Term 和 PTY 指针 ==========
+    //
+    // Parser 需要 Term 和 PTY 的引用：
+    // - Term: 解析转义序列后，需要更新 Term 的屏幕缓冲区
+    // - PTY: 某些转义序列需要向 PTY 发送响应（如终端标识查询）
     terminal.parser.term = &terminal.term;
     terminal.parser.pty = &pty;
     defer terminal.deinit();
 
-    // 设置 PTY 为非阻塞模式
+    // ========== 设置 PTY 为非阻塞模式 ==========
+    //
+    // 非阻塞模式：read() 立即返回，不等待数据。
+    // - 如果有数据：返回读取的字节数
+    // - 如果没有数据：返回 EAGAIN（错误：会再次尝试）
+    //
+    // 为什么需要？
+    // - 主事件循环需要同时等待 X11 事件和 PTY 数据
+    // - 使用 poll() 等待多个文件描述符
+    // - PTY 非阻塞模式确保循环不会被阻塞
     try pty.setNonBlocking();
 
-    // 初始化输入处理器
+    // ========== 初始化输入处理器 ==========
+    //
+    // 输入处理器负责：
+    // 1. 处理键盘输入（KeyPress 事件）
+    // 2. 将特殊键转换为转义序列（如方向键 → ESC [ A）
+    // 3. 发送给 PTY
     var input = Input.init(&pty, &terminal.term);
 
-    // 初始化选择器
+    // ========== 初始化选择器 ==========
+    //
+    // 选择器负责：
+    // 1. 处理鼠标拖拽选择（ButtonPress、MotionNotify、ButtonRelease）
+    // 2. 智能选择边界（单词吸附、行吸附）
+    // 3. 复制/粘贴到 X11 剪贴板（PRIMARY、CLIPBOARD）
     var selector = Selector.init(allocator);
     selector.setX11Context(window.dpy, window.win);
     defer selector.deinit();
 
-    // 初始化 URL 检测器
+    // ========== 初始化 URL 检测器 ==========
+    //
+    // URL 检测器负责：
+    // 1. 识别屏幕上的 URL（http://、https://、ftp://）
+    // 2. Ctrl+点击打开 URL（使用 xdg-open）
     var url_detector = UrlDetector.init(&terminal.term, allocator);
 
-    // 初始化打印器
+    // ========== 初始化打印器 ==========
+    //
+    // 打印器负责：
+    // 1. 打印屏幕内容（Print 键）
+    // 2. 打印选择内容（Shift+Print 键）
+    // 3. 打印模式切换（Ctrl+Print 键）
     var printer = Printer.init(allocator);
     defer printer.deinit();
 
-    // 主事件循环
+    // ========== 主事件循环 ==========
+    //
+    // 这是终端模拟器的核心循环，不断处理 X11 事件和 PTY 数据。
+    //
+    // 变量说明：
+    // - read_buffer: PTY 数据缓冲区（8KB）
+    // - quit: 退出标志（设置为 true 时退出循环）
+    // - mouse_pressed: 鼠标按下状态
+    // - last_click_time: 上次点击时间（用于检测双击/三击）
+    // - paste_buffer: X11 剪贴板缓冲区
+    // - pending_render: 待渲染标志（屏幕内容改变时设置为 true）
+    //
+    // 限制帧率：
+    // - min_frame_time_ms: 最小帧间隔（1000 / 60 = 16.67ms）
+    // - last_render_time: 上次渲染时间
+    // - pending_render: 标记需要渲染
     const read_buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(read_buffer);
 
@@ -110,41 +327,78 @@ pub fn main() !u8 {
     var mouse_x: usize = 0;
     var mouse_y: usize = 0;
 
-    // 点击检测变量
-    var last_click_time: i64 = 0;
-    var last_button: u32 = 0;
-    var click_count: u32 = 0;
+    // 点击检测变量（用于双击/三击检测）
+    var last_click_time: i64 = 0; // 上次点击时间（毫秒）
+    var last_button: u32 = 0; // 上次点击的按钮
+    var click_count: u32 = 0; // 点击计数（1=单击，2=双击，3=三击）
 
-    // Paste buffer (for receiving X11 selection)
+    // X11 剪贴板缓冲区（用于接收粘贴内容）
     var paste_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096);
     defer paste_buffer.deinit(allocator);
 
-    // 渲染限制 (60 FPS)
-    const min_frame_time_ms: i64 = 1000 / 60;
-    var last_render_time: i64 = std.time.milliTimestamp();
-    var pending_render: bool = false;
+    // ========== 渲染限制 (60 FPS) ==========
+    //
+    // 为什么要限制帧率？
+    // - 避免不必要的渲染（节省 CPU）
+    // - 避免闪烁（双缓冲）
+    // - 减少电源消耗（笔记本电脑）
+    //
+    // 如何实现？
+    // - 记录上次渲染时间
+    // - 如果距离上次渲染时间 < 16.67ms，延迟渲染
+    // - 使用 poll() 的超时参数控制延迟
+    const min_frame_time_ms: i64 = 1000 / 60; // 60 FPS = 16.67ms
+    var last_render_time: i64 = std.time.milliTimestamp(); // 上次渲染时间
+    var pending_render: bool = false; // 待渲染标志
 
-    // 初始渲染
+    // ========== 初始渲染 ==========
+    //
+    // 渲染初始屏幕（全空格），然后显示窗口。
+    // 此时 PTY 还未输出任何内容，所以屏幕是空的。
     if (try renderer.render(&terminal.term, &selector)) |_| {
         window.present();
     }
 
+    // ========== 主循环 ==========
     while (!quit) {
         // Alias term for easy access
         const term = &terminal.term;
 
-        // 1. 处理所有挂起的 X11 事件
+        // ========== 步骤 1：处理所有挂起的 X11 事件 ==========
+        //
+        // X11 事件包括：
+        // - ClientMessage: 窗口关闭请求
+        // - KeyPress: 键盘输入
+        // - ConfigureNotify: 窗口大小调整
+        // - Expose: 窗口重绘
+        // - ButtonPress/Release: 鼠标点击/释放
+        // - MotionNotify: 鼠标移动
+        // - FocusIn/Out: 焦点变化
+        // - SelectionRequest/Notify: 剪贴板请求/通知
+        //
+        // XFilterEvent():
+        // - 处理输入法（IME）事件
+        // - 如果事件被输入法处理，返回非零，跳过该事件
         while (window.pollEvent()) |event| {
             var ev = event;
             if (x11.XFilterEvent(&ev, x11.None) != 0) continue;
 
             switch (ev.type) {
+                // ========== ClientMessage: 窗口关闭请求 ==========
+                // 窗口管理器（如 i3、GNOME Shell）发送关闭请求
                 x11.ClientMessage => {
                     if (@as(x11.Atom, @intCast(ev.xclient.data.l[0])) == window.wm_delete_window) {
                         quit = true;
                         break;
                     }
                 },
+
+                // ========== KeyPress: 键盘输入 ==========
+                // 处理键盘输入，包括：
+                // - 普通字符（a-z、0-9、符号）
+                // - 特殊键（方向键、Backspace、Delete 等）
+                // - 功能键（F1-F12）
+                // - 组合键（Ctrl+C、Ctrl+Shift+V 等）
                 x11.KeyPress => {
                     renderer.resetCursorBlink(); // Reset blink on input
 
@@ -233,9 +487,9 @@ pub fn main() !u8 {
                         window.height = height;
 
                         const b = config.Config.window.border_pixels;
-                        const fudge = window.cell_height / 2;
-                        const avail_w = if (window.width > 2 * b) window.width - 2 * b + fudge else 0;
-                        const avail_h = if (window.height > 2 * b) window.height - 2 * b + fudge else 0;
+                        // remove fudge factor to match st behavior (strict truncation)
+                        const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
+                        const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
 
                         const new_cols = @max(1, avail_w / window.cell_width);
                         const new_rows = @max(1, avail_h / window.cell_height);

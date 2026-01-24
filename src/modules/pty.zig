@@ -1,5 +1,34 @@
 //! 伪终端管理
 //! 使用 POSIX 伪终端 PTY 与子 shell 通信
+//!
+//! 什么是伪终端 (PTY)？
+//! PTY = Pseudo-TTY（伪终端），是内核提供的一种虚拟终端设备。
+//! 它的作用是在终端模拟器和 shell 程序之间建立双向通信通道。
+//!
+//! PTY 的工作原理：
+//! - PTY 有两端：主设备 (master) 和从设备 (slave)
+//! - 终端模拟器读写 master 端
+//! - Shell 程序读写 slave 端（作为 stdin/stdout/stderr）
+//! - 内核自动在两端之间转发数据
+//!
+//! 初始化流程：
+//! 1. 打开伪终端主从设备 (openpty)
+//! 2. Fork 子进程
+//! 3. 子进程中：设置会话、重定向 stdio、exec shell
+//! 4. 父进程中：关闭 slave 端，返回 master 端
+//!
+//! 与 PTY 相关的系统调用：
+//! - openpty(): 打开伪终端主从设备
+//! - fork(): 创建子进程
+//! - setsid(): 创建新会话
+//! - ioctl(): 设置窗口大小、获取控制终端
+//! - dup2(): 重定向文件描述符
+//! - execve(): 执行 shell 程序
+//!
+//! 主事件循环中的使用：
+//! - 使用 poll() 等待 PTY 数据可读
+//! - 读取 PTY 输出，解析转义序列，更新屏幕
+//! - 将用户输入写入 PTY，发送给 shell 程序
 
 const std = @import("std");
 const builtin = @import("builtin");

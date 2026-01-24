@@ -1,10 +1,120 @@
 //! 终端转义序列解析器
 //! 解析 ANSI/VT100/VT220 转义序列
+//! ## 文件概述
+//! 本文件实现了终端转义序列解析器，负责解析 PTY 输出的转义序列，
+//! 并执行相应的操作（如移动光标、设置颜色、清除屏幕等）。
+//! ## 转义序列类型
+//! 终端转义序列可以分为以下几类：
+//! ### 1. 控制字符 (Control Characters)
+//! - ASCII 控制字符 (0x00-0x1F, 0x7F)
+//! - 例如：LF (0x0A 换行), CR (0x0D 回车), HT (0x09 制表符), BEL (0x07 铃声)
+//! ### 2. CSI 序列 (Control Sequence Introducer)
+//! - 格式：ESC [ Ps;Ps... 终结符
+//! - 例如：ESC [ 10 ; 20 H (移动光标到第10行第20列）
+//! - 例如：ESC [ 31 m (设置前景色为红色）
+//! ### 3. OSC 序列 (Operating System Command)
+//! - 格式：ESC ] Ps;Pt ST
+//! - 例如：ESC ] 2;stz ST (设置窗口标题为 "stz"）
+//! - 例如：ESC ] 4;c:red ST (设置调色板）
+//! ### 4. 其他转义序列
+//! - DEC 字符集选择：ESC ( 0 (选择 G0 为 graphic0)
+//! - SS2/SS3：单次字符集切换
+//! ## 解析流程
+//! 解析器是一个状态机，根据当前状态决定如何处理每个字符：
+//!
+//! 1. 接收字符 → 检查是否是转义序列开始 (ESC 0x1B)
+//!    ├─ 是 ESC → 进入转义模式
+//!    │   ├─ 接收 [ (0x5B) → 进入 CSI 模式
+//!    │   │   └─ 接收参数和终结符 → 解析并执行 CSI 命令
+//!    │   ├─ 接收 ] (0x5D) → 进入 OSC 模式
+//!    │   │   └─ 接收字符串和终止符 → 解析并执行 OSC 命令
+//!    │   ├─ 接收 ( (0x28) 或 ) (0x29) → 进入字符集选择模式
+//!    │   │   └─ 接收字符集标识符 → 设置字符集
+//!    │   └─ 其他 → 执行相应的转义命令
+//!    │
+//!    └─ 不是 ESC → 检查是否是控制字符
+//!        ├─ 是控制字符 → 执行控制操作
+//!        └─ 不是控制字符 → 写入屏幕
+//!
+//! ## 状态机详解
+//! ### EscapeState 状态字段
+//! - **start**: 转义序列开始（遇到 ESC）
+//! - **csi**: CSI 模式（ESC [ ...）
+//! - **str**: 字符串模式（OSC、DCS 等）
+//! - **alt_charset**: 字符集选择模式（等待 G0-G3 选择字符）
+//! - **tstate**: 临时字符集模式（SS2、SS3 单次切换）
+//! - **utf8**: UTF-8 解码状态（多字节字符解码）
+//! - **str_end**: 字符串结束标志
+//! - **decaln**: DECALN 测试模式（屏幕对齐测试）
+//! ### 状态转换示例
+//! #### 示例 1：解析 CSI 光标移动序列 "ESC [ 10 ; 20 H"
+//! ```
+//! 接收 ESC (0x1B):  start = true
+//! 接收 [ (0x5B):   start = true, csi = true
+//! 接收 1 (0x31):   累积到 csi.buf
+//! 接收 0 (0x30):   累积到 csi.buf
+//! 接收 ; (0x3B):   累积到 csi.buf（分隔符）
+//! 接收 2 (0x32):   累积到 csi.buf
+//! 接收 0 (0x30):   累积到 csi.buf
+//! 接收 H (0x48):   csi = false, 执行移动光标到 (10, 20)
+//! ```
+//! #### 示例 2：解析 OSC 窗口标题序列 "ESC ] 2;stz BEL"
+//! ```
+//! 接收 ESC (0x1B):  start = true
+//! 接收 ] (0x5D):   start = true, str = true
+//! 接收 2 (0x32):   累积到 str.buf
+//! 接收 ; (0x3B):   累积到 str.buf（分隔符）
+//! 接收 s (0x73):   累积到 str.buf
+//! 接收 t (0x74):   累积到 str.buf
+//! 接收 z (0x7A):   累积到 str.buf
+//! 接收 BEL (0x07):  str = false, str_end = true, 执行设置标题为 "stz"
+//! ```
+//! ## 字符集处理
+//! VT100 终端支持 4 个字符集槽位（G0-G3）：
+//! - **G0**: 默认字符集（通常是美国 ASCII）
+//! - **G1**: 备用字符集（通常是图形字符）
+//! - **G2/G3**: 额外的字符集
+//! ### 常见字符集类型
+//! - **usa (US ASCII)**: 标准 ASCII 字符集（0-127）
+//! - **graphic0 (VT100 制表符)**: 包含制表符（如 ┌ ─ ┐ 等）
+//! - **uk (UK ASCII)**: 英国 ASCII（某些符号不同）
+//! - **ger (German)**: 德语字符集
+//! - **fin (Finnish)**: 芬兰语字符集
+//! ### 字符集切换
+//! - **切换 G0**: ESC ( C (例如：ESC ( 0 设置 G0 为 graphic0）
+//! - **切换 G1**: ESC ) C (例如：ESC ) 0 设置 G1 为 graphic0）
+//! - **切换到 G0**: SI (Shift In, 0x0F）
+//! - **切换到 G1**: SO (Shift Out, 0x0E）
+//! - **单次切换到 G2**: ESC N (SS2, 0x8E）
+//! - **单次切换到 G3**: ESC O (SS3, 0x8F）
+//! ## VT100 图形字符映射
+//! graphic0 字符集将某些 ASCII 字符映射为图形符号：
+//! - 'q' (0x71) → ─ (水平线）
+//! - 'x' (0x78) → │ (垂直线）
+//! - 'l' (0x6C) → ┌ (左上角）
+//! - 'k' (0x6B) → ┐ (右上角）
+//! - 'm' (0x6D) → └ (左下角）
+//! - 'j' (0x6A) → ┘ (右下角）
+//! - 'n' (0x6E) → ┼ (十字交叉）
+//! ### 示例：绘制边框
+//! ```
+//! ESC ( 0  设置 G0 为 graphic0
+//! SO        切换到 G0
+//! lqkxxxxxj  绘制顶边框
+//! x........x  绘制两边
+//! mnx.....n  绘制底边框
+//! SI        切换回 G0
+//! ```
+//! ## 与原版 st 的对应关系
+//! - Parser 结构对应 st 的 escaped 结构
+//! - 所有函数与 st 的解析逻辑对齐
+//! - CSI 解析参数处理与 st 的 arg parsing 一致
 
 const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
 const screen = @import("screen.zig");
+const pty = @import("pty.zig");
 
 const Term = types.Term;
 const Glyph = types.Glyph;
@@ -12,6 +122,7 @@ const CSIEscape = types.CSIEscape;
 const STREscape = types.STREscape;
 const EscapeState = types.EscapeState;
 const Charset = types.Charset;
+const PTY = pty.PTY;
 
 pub const ParserError = error{
     InvalidEscape,
@@ -24,7 +135,7 @@ pub const Parser = struct {
     csi: CSIEscape = .{},
     str: STREscape = .{},
     allocator: std.mem.Allocator,
-    pty: ?*const anyopaque = null, // PTY 引用，用于发送响应
+    pty: ?*PTY = null, // PTY 引用，用于发送响应
 
     pub fn init(term: *Term, allocator: std.mem.Allocator) !Parser {
         var p = Parser{
@@ -43,11 +154,7 @@ pub const Parser = struct {
 
     /// 写入数据到 PTY
     fn ptyWrite(self: *Parser, data: []const u8) void {
-        if (self.pty) |pty_ptr| {
-            const PTYType = @import("pty.zig").PTY;
-            const pty = @as(*PTYType, @ptrCast(@alignCast(@constCast(pty_ptr))));
-            _ = pty.write(data) catch {};
-        }
+        _ = self.pty.?.write(data) catch {};
     }
 
     pub fn deinit(self: *Parser) void {
@@ -228,16 +335,9 @@ pub const Parser = struct {
         }
 
         // 2. 检查是否需要立即换行（如插入位置超出边界）
-        // 智能适配：如果宽字符在行尾导致溢出，且只差 1 格，说明 Vim 可能认为它是单宽。
-        // 此时强制视为单宽，避免意外滚动。
-        var effective_width = width;
         if (self.term.c.x + width > self.term.col) {
             if (self.term.mode.wrap) {
-                if (width > 1 and self.term.c.x == self.term.col - 1) {
-                    effective_width = 1;
-                } else {
-                    try self.newLine(true);
-                }
+                try self.newLine(true);
             } else {
                 self.term.c.x = self.term.col - width;
             }
@@ -265,7 +365,7 @@ pub const Parser = struct {
 
                 var glyph = self.term.c.attr;
                 glyph.u = codepoint;
-                if (effective_width == 2) {
+                if (width == 2) {
                     glyph.attr.wide = true;
                     line[cx] = glyph;
                     if (cx + 1 < self.term.col) {
@@ -285,16 +385,14 @@ pub const Parser = struct {
                         line[cx + 1].attr.wide_dummy = true;
                     }
                 } else {
-                    // 即使原本是宽字符，因为 effective_width=1，我们只写一个格子
-                    // 渲染器可能会把它画出去，但逻辑上它占1格
                     line[cx] = glyph;
                 }
             }
         }
 
         // 4. 更新光标位置和换行状态
-        if (self.term.c.x + effective_width < self.term.col) {
-            self.term.c.x += effective_width;
+        if (self.term.c.x + width < self.term.col) {
+            self.term.c.x += width;
         } else {
             self.term.c.state.wrap_next = true;
         }
@@ -306,7 +404,6 @@ pub const Parser = struct {
             }
         }
     }
-
     /// 插入空白字符 (ICH)
     fn insertBlank(self: *Parser, n: usize) !void {
         const max_chars = self.term.col - self.term.c.x;
@@ -914,10 +1011,7 @@ pub const Parser = struct {
         switch (c) {
             '\x08' => try self.moveCursor(-1, 0),
             '\x09' => try self.putTab(),
-            '\x0A', '\x0B', '\x0C' => {
-                try self.newLine(false);
-                if (self.term.mode.crlf) self.term.c.x = 0;
-            },
+            '\x0A', '\x0B', '\x0C' => try self.newLine(self.term.mode.crlf),
             '\x0D' => try self.moveTo(0, self.term.c.y),
             0x0E => self.term.charset = 1,
             0x0F => self.term.charset = 0,

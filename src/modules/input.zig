@@ -1,4 +1,40 @@
 //! 键盘和鼠标输入处理
+//!
+//! 输入处理器负责将用户的键盘和鼠标输入转换为终端能够理解的格式，
+//! 然后发送给 PTY（伪终端）。
+//!
+//! 核心功能：
+//! - 键盘输入处理：将 KeyPress 事件转换为字符或转义序列
+//! - 特殊键处理：方向键、功能键、编辑键（Backspace、Delete 等）
+//! - 应用程序模式：根据 mode.app_cursor 和 mode.app_keypad 发送不同的转义序列
+//! - 括号粘贴模式：处理特殊的粘贴序列（bracketed paste）
+//! - 鼠标事件：发送鼠标报告到 PTY（如果启用了鼠标模式）
+//!
+//! 特殊键的处理流程：
+//! 1. 检测特殊键（Backspace、Delete、方向键、PageUp/PageDown 等）
+//! 2. 根据当前模式（普通模式/应用程序模式）选择对应的转义序列
+//! 3. 将转义序列写入 PTY
+//! 4. 返回 true（表示已处理，不需要输入法处理）
+//!
+//! 普通字符的处理流程：
+//! 1. Xutf8LookupString 或 XLookupString 将 KeyPress 事件转换为 UTF-8 字符
+//! 2. 将 UTF-8 字符写入 PTY
+//! 3. 返回 false（表示已处理，不需要输入法处理）
+//!
+//! 应用程序模式 (Application Keypad/Cursor Mode)：
+//! - 普通：方向键发送 ESC [ A/B/C/D
+//! - 应用：方向键发送 ESC O A/B/C/D
+//! - 用途：vim、htop 等 TUI 程序需要应用程序模式
+//!
+//! 括号粘贴模式 (Bracketed Paste Mode)：
+//! - 启用时：粘贴内容被特殊字符包裹（\x1B[200~ 和 \x1B[201~）
+//! - 用途：防止粘贴的内容被解释为命令
+//! - 示例：粘贴 "Ctrl+C" 不会被解释为中断信号
+//!
+//! 与 PTY 的交互：
+//! - pty.write(): 将字符或转义序列写入 PTY
+//! - PTY 将数据转发给 shell 程序
+//! - Shell 程序接收到输入，执行相应的命令
 
 const std = @import("std");
 const x11 = @import("x11.zig");

@@ -116,17 +116,16 @@ test "Wide character wrapping" {
     const wide_char: u21 = 0x6d4b;
     try parser.putc(wide_char);
 
-    // 更新：为了兼容 Vim 等应用在行尾可能的宽度误判，我们实施了“智能挤压”策略
-    // 如果宽字符在行尾溢出，我们强制将其视为单宽而不换行，以防止意外滚动。
-    // 所以光标应该停留在行尾 (x=9)，且行号不变 (y=0)。
-    try expectEqual(@as(usize, 0), term.term.c.y);
-    // x 保持在 9 (因为 x+1 == col)，wrap_next=true
-    try expectEqual(@as(usize, 9), term.term.c.x);
-    try expect(term.term.c.state.wrap_next);
-    // 字符应该被写入到最后一个格子
-    try expectEqual(wide_char, term.term.line.?[0][9].u);
-    // 且不应该有 wide_dummy (因为被强行当单宽写了)
-    try expect(!term.term.line.?[0][9].attr.wide);
+    // 更新：移除了“智能挤压” hack，恢复标准 wrapping 行为 (st 兼容)
+    // 如果宽字符在行尾溢出，应该换行。
+    // 所以光标应该移动到下一行 (y=1)，x=0 开始写入，写完后 x=2。
+    try expectEqual(@as(usize, 1), term.term.c.y);
+    try expectEqual(@as(usize, 2), term.term.c.x);
+    try expect(!term.term.c.state.wrap_next);
+    // 字符应该被写入到下一行开头
+    try expectEqual(wide_char, term.term.line.?[1][0].u);
+    // 且应该是 wide
+    try expect(term.term.line.?[1][0].attr.wide);
 }
 
 test "LF behavior (LNM)" {

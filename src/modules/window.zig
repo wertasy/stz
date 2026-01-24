@@ -1,4 +1,53 @@
 //! X11 窗口系统抽象层
+//!
+//! Window 模块负责创建和管理 X11 窗口，处理窗口事件。
+//!
+//! 核心功能：
+//! - 窗口创建和配置：创建 X11 窗口，设置属性、事件掩码、鼠标光标
+//! - 双缓冲管理：创建和管理 Pixmap（离屏缓冲区）
+//! - 窗口大小调整：响应 ConfigureNotify 事件，调整窗口和缓冲区大小
+//! - 事件轮询：使用 XNextEvent 或 XPending 获取窗口事件
+//! - 输入法支持：创建 XIM/XIC 上下文，支持中文输入法
+//! - 窗口标题：设置和更新窗口标题
+//! - 显示和刷新：显示窗口、将 Pixmap 复制到窗口
+//!
+//! 双缓冲机制：
+//! - Pixmap: 离屏缓冲区，所有绘图操作都在 Pixmap 上完成
+//! - buf_w, buf_h: Pixmap 的尺寸
+//! - renderer 渲染到 Pixmap
+//! - present() 或 presentPartial() 将 Pixmap 复制到窗口
+//! - 优点：避免闪烁、提高性能
+//!
+//! 窗口大小调整流程：
+//! 1. 用户调整窗口大小 → WM 发送 ConfigureNotify 事件
+//! 2. 计算新的行列数：cols = (width - 2*border) / cell_width
+//! 3. 调整 PTY 大小：pty.resize(new_cols, new_rows)
+//! 4. 调整终端大小：terminal.resize(new_rows, new_cols)
+//! 5. 调整 Pixmap 大小：resizeBuffer(new_width, new_height)
+//! 6. 重新渲染：renderer.render()
+//!
+//! 输入法支持 (XIM/XIC)：
+//! - XIM (Input Method): 输入法上下文，与输入法服务器通信
+//! - XIC (Input Context): 输入法上下文，处理特定窗口的输入
+//! - 支持中文输入法（如 fcitx、ibus）
+//! - 使用 Xutf8LookupString 获取输入的 UTF-8 字符
+//!
+//! 窗口属性：
+//! - 背景色、边框色、光标
+//! - 事件掩码：注册感兴趣的事件类型
+//! - 重力方向：窗口调整时的对齐方式
+//! - Colormap：颜色映射表
+//!
+//! 事件处理：
+//! - KeyPress/KeyRelease: 键盘输入
+//! - ButtonPress/ButtonRelease: 鼠标点击
+//! - MotionNotify: 鼠标移动
+//! - ConfigureNotify: 窗口大小调整
+//! - Expose: 窗口重绘
+//! - FocusIn/FocusOut: 焦点变化
+//! - SelectionRequest/Notify: 剪贴板
+//! - ClientMessage: 窗口管理器消息（如关闭窗口）
+
 const std = @import("std");
 const x11 = @import("x11.zig");
 const config = @import("config.zig");

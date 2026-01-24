@@ -18,3 +18,5 @@ Thumbs.db
 *.swp
 *.swo
 *~
+
+tmp/

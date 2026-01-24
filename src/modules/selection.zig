@@ -1,5 +1,52 @@
 //! 文本选择和复制功能
 //! 支持鼠标拖选文本、复制到剪贴板
+//!
+//! 选择器的核心功能：
+//! - 鼠标拖拽选择：开始选择（ButtonPress）、扩展选择（MotionNotify）、结束选择（ButtonRelease）
+//! - 智能选择边界：单词吸附（双击）、行吸附（三击）
+//! - 选择标准化：始终将选择区域规范化为左上角到右下角
+//! - 复制到剪贴板：X11 PRIMARY 和 CLIPBOARD 选择
+//! - 从剪贴板粘贴：接收 SelectionNotify 事件，粘贴到 PTY
+//!
+//! 选择模式：
+//! - idle: 空闲，没有选择
+//! - empty: 开始了选择但未拖动（单击）
+//! - ready: 选择完成，可以复制
+//!
+//! 选择类型：
+//! - regular: 普通选择（文本选择）
+//! - rectangular: 矩形选择（列选择）
+//!
+//! 选择吸附模式：
+//! - none: 不吸附，精确到字符（单击）
+//! - word: 单词吸附，扩展到单词边界（双击）
+//! - line: 行吸附，扩展到整行（三击）
+//!
+//! 单词边界规则：
+//! - 单词分隔符在 config.zig 的 word_delimiters 中定义
+//! - 默认分隔符：空格、逗号、引号、括号等
+//! - 吸附时会扩展到最近的分隔符
+//!
+//! 选择流程：
+//! 1. ButtonPress: 调用 start()，设置起点（ob, oe）
+//! 2. MotionNotify: 调用 extend()，更新终点（oe），规范化区域（nb, ne）
+//! 3. ButtonRelease: 调用 copy()，复制到 X11 剪贴板
+//!
+//! 选择区域规范化：
+//! - 无论用户从哪个方向拖拽，nb 总是左上角，ne 总是右下角
+//! - 方便处理选择文本和渲染高亮
+//!
+//! X11 选择机制：
+//! - PRIMARY: 鼠标选择（中键粘贴）
+//! - CLIPBOARD: Ctrl+C/Ctrl+V 选择（现代应用）
+//! - SelectionRequest: 其他应用请求选择内容
+//! - SelectionNotify: 其他应用发送选择内容（粘贴）
+//!
+//! 与剪贴板的交互：
+//! - copy(): 将选择的文本编码为 UTF-8，设置到 X11 剪贴板
+//! - requestPaste(): 请求 X11 剪贴板内容（中键粘贴）
+//! - handleSelectionRequest(): 处理其他应用的请求
+//! - handleSelectionNotify(): 处理其他应用发送的内容（粘贴）
 
 const std = @import("std");
 const types = @import("types.zig");

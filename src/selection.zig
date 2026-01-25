@@ -69,8 +69,8 @@ pub const Selector = struct {
     allocator: std.mem.Allocator,
     selected_text: ?[]u8 = null,
     // X11 context (set externally)
-    dpy: ?*x11.Display = null,
-    win: x11.Window = 0,
+    dpy: ?*x11.c.Display = null,
+    win: x11.c.Window = 0,
 
     /// 初始化选择器
     pub fn init(allocator: std.mem.Allocator) Selector {
@@ -80,7 +80,7 @@ pub const Selector = struct {
     }
 
     /// 设置 X11 上下文
-    pub fn setX11Context(self: *Selector, dpy: *x11.Display, win: x11.Window) void {
+    pub fn setX11Context(self: *Selector, dpy: *x11.c.Display, win: x11.c.Window) void {
         self.dpy = dpy;
         self.win = win;
     }
@@ -318,12 +318,12 @@ pub const Selector = struct {
             if ((mask & 2) != 0) {
                 // PRIMARY
                 const primary_atom = x11.getPrimaryAtom(dpy);
-                _ = x11.XSetSelectionOwner(dpy, primary_atom, self.win, x11.CurrentTime);
+                _ = x11.c.XSetSelectionOwner(dpy, primary_atom, self.win, x11.c.CurrentTime);
             }
             if ((mask & 1) != 0) {
                 // CLIPBOARD
-                const clipboard_atom = x11.XInternAtom(dpy, "CLIPBOARD", 0);
-                _ = x11.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.CurrentTime);
+                const clipboard_atom = x11.getClipboardAtom(dpy);
+                _ = x11.c.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.c.CurrentTime);
             }
 
             // 更新 selected_text 以便 SelectionRequest 处理
@@ -333,7 +333,7 @@ pub const Selector = struct {
             self.selected_text = try self.allocator.dupe(u8, text);
 
             // XStoreBytes for legacy
-            _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
+            _ = x11.c.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
             std.log.info("已通过 OSC 52 复制 {d} 字符到剪贴板\n", .{text.len});
         }
@@ -348,19 +348,19 @@ pub const Selector = struct {
             if (self.dpy) |dpy| {
                 // Use XSetSelectionOwner to claim PRIMARY selection
                 const primary_atom = x11.getPrimaryAtom(dpy);
-                _ = x11.XSetSelectionOwner(dpy, primary_atom, self.win, x11.CurrentTime);
+                _ = x11.c.XSetSelectionOwner(dpy, primary_atom, self.win, x11.c.CurrentTime);
 
-                if (x11.XGetSelectionOwner(dpy, primary_atom) != self.win) {
+                if (x11.c.XGetSelectionOwner(dpy, primary_atom) != self.win) {
                     std.log.err("Failed to acquire selection ownership\n", .{});
                     return;
                 }
 
                 // 也顺便更新 CLIPBOARD，方便 Ctrl+V
-                const clipboard_atom = x11.XInternAtom(dpy, "CLIPBOARD", 0);
-                _ = x11.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.CurrentTime);
+                const clipboard_atom = x11.getClipboardAtom(dpy);
+                _ = x11.c.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.c.CurrentTime);
 
                 // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
-                _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
+                _ = x11.c.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
                 std.log.info("已复制 {d} 字符到剪贴板 (PRIMARY & CLIPBOARD)\n", .{text.len});
             } else {
@@ -377,19 +377,19 @@ pub const Selector = struct {
     }
 
     /// 从指定的 Selection (PRIMARY, CLIPBOARD 等) 请求数据
-    pub fn requestSelection(self: *Selector, selection: x11.Atom) !void {
+    pub fn requestSelection(self: *Selector, selection: x11.c.Atom) !void {
         if (self.dpy) |dpy| {
             const utf8_atom = x11.getUtf8Atom(dpy);
             // XConvertSelection: requestor (win), selection, target (UTF8), property (PRIMARY), time
             // 我们使用 PRIMARY 属性名作为临时存储
             const prop_atom = x11.getPrimaryAtom(dpy);
-            _ = x11.XConvertSelection(dpy, selection, utf8_atom, prop_atom, self.win, x11.CurrentTime);
+            _ = x11.c.XConvertSelection(dpy, selection, utf8_atom, prop_atom, self.win, x11.c.CurrentTime);
             std.log.info("请求选区内容...\n", .{});
         }
     }
 
     /// 处理 SelectionClear 事件
-    pub fn handleSelectionClear(self: *Selector, term: *types.Term, event: *const x11.XSelectionClearEvent) void {
+    pub fn handleSelectionClear(self: *Selector, term: *types.Term, event: *const x11.c.XSelectionClearEvent) void {
         _ = event;
         // 如果我们丢失了 PRIMARY 选区的所有权，清除当前选择
         self.clear(term);

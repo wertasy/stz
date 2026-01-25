@@ -60,20 +60,20 @@ pub const WindowError = error{
 };
 
 pub const Window = struct {
-    dpy: *x11.Display,
-    win: x11.Window,
+    dpy: *x11.c.Display,
+    win: x11.c.Window,
     screen: i32,
-    root: x11.Window,
-    vis: *x11.Visual,
-    cmap: x11.Colormap,
-    gc: x11.GC,
-    im: ?x11.XIM = null,
-    ic: ?x11.XIC = null,
-    cursor: x11.Cursor = 0,
-    wm_delete_window: x11.Atom = 0,
+    root: x11.c.Window,
+    vis: *x11.c.Visual,
+    cmap: x11.c.Colormap,
+    gc: x11.c.GC,
+    im: ?x11.c.XIM = null,
+    ic: ?x11.c.XIC = null,
+    cursor: x11.c.Cursor = 0,
+    wm_delete_window: x11.c.Atom = 0,
 
     // Double buffering
-    buf: x11.Pixmap = 0,
+    buf: x11.c.Pixmap = 0,
     buf_w: u32 = 0,
     buf_h: u32 = 0,
 
@@ -92,15 +92,15 @@ pub const Window = struct {
     allocator: std.mem.Allocator,
 
     pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Allocator) !Window {
-        const dpy = x11.XOpenDisplay(null) orelse return error.OpenDisplayFailed;
-        const screen = x11.XDefaultScreen(dpy);
-        const root = x11.XRootWindow(dpy, screen);
-        const vis = x11.XDefaultVisual(dpy, screen);
+        const dpy = x11.c.XOpenDisplay(null) orelse return error.OpenDisplayFailed;
+        const screen = x11.c.XDefaultScreen(dpy);
+        const root = x11.c.XRootWindow(dpy, screen);
+        const vis = x11.c.XDefaultVisual(dpy, screen);
 
         // TODO: Try to find a visual with alpha channel support for transparency?
         // For now use default
 
-        const cmap = x11.XCreateColormap(dpy, root, vis, x11.AllocNone);
+        const cmap = x11.c.XCreateColormap(dpy, root, vis, x11.c.AllocNone);
 
         // Calculate size using estimated cell dimensions
         // Note: These will be updated by renderer.init() after font is loaded
@@ -115,48 +115,48 @@ pub const Window = struct {
         const win_h = rows * cell_h + border * 2;
 
         // Set default mouse cursor (I-beam)
-        const mouse_cursor = x11.XCreateFontCursor(dpy, x11.XC_xterm);
+        const mouse_cursor = x11.c.XCreateFontCursor(dpy, x11.c.XC_xterm);
 
-        var attrs: x11.XSetWindowAttributes = undefined;
+        var attrs: x11.c.XSetWindowAttributes = undefined;
         attrs.background_pixel = 0; // Black
         attrs.border_pixel = 0;
-        attrs.bit_gravity = x11.NorthWestGravity;
+        attrs.bit_gravity = x11.c.NorthWestGravity;
         attrs.colormap = cmap;
         attrs.cursor = mouse_cursor;
-        attrs.event_mask = x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask |
-            x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask |
-            x11.ExposureMask | x11.FocusChangeMask | x11.EnterWindowMask | x11.LeaveWindowMask;
+        attrs.event_mask = x11.c.KeyPressMask | x11.c.KeyReleaseMask | x11.c.ButtonPressMask |
+            x11.c.ButtonReleaseMask | x11.c.PointerMotionMask | x11.c.StructureNotifyMask |
+            x11.c.ExposureMask | x11.c.FocusChangeMask | x11.c.EnterWindowMask | x11.c.LeaveWindowMask;
 
-        const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWBitGravity | x11.CWEventMask | x11.CWColormap | x11.CWCursor, &attrs);
+        const win = x11.c.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.c.XDefaultDepth(dpy, screen), x11.c.InputOutput, vis, x11.c.CWBackPixel | x11.c.CWBorderPixel | x11.c.CWBitGravity | x11.c.CWEventMask | x11.c.CWColormap | x11.c.CWCursor, &attrs);
 
         if (win == 0) return error.CreateWindowFailed;
 
         // Apply cursor
         if (mouse_cursor != 0) {
-            _ = x11.XDefineCursor(dpy, win, mouse_cursor);
+            _ = x11.c.XDefineCursor(dpy, win, mouse_cursor);
         }
 
         // Set title
-        _ = x11.XStoreName(dpy, win, title);
+        _ = x11.c.XStoreName(dpy, win, title);
 
         // Create GC
-        const gc = x11.XCreateGC(dpy, win, 0, null);
+        const gc = x11.c.XCreateGC(dpy, win, 0, null);
         if (gc == null) return error.CreateGCFailed;
 
         // Initialize IME
-        _ = x11.XSetLocaleModifiers("");
-        const im = x11.XOpenIM(dpy, null, null, null);
-        var ic: ?x11.XIC = null;
+        _ = x11.c.XSetLocaleModifiers("");
+        const im = x11.c.XOpenIM(dpy, null, null, null);
+        var ic: ?x11.c.XIC = null;
         if (im) |im_ptr| {
-            ic = x11.XCreateIC(im_ptr, x11.XNInputStyle, x11.XIMPreeditNothing | x11.XIMStatusNothing, x11.XNClientWindow, win, x11.XNFocusWindow, win, @as(?*anyopaque, null));
+            ic = x11.c.XCreateIC(im_ptr, x11.c.XNInputStyle, x11.c.XIMPreeditNothing | x11.c.XIMStatusNothing, x11.c.XNClientWindow, win, x11.c.XNFocusWindow, win, @as(?*anyopaque, null));
         } else {
             std.log.warn("Failed to open X Input Method\n", .{});
         }
 
         // Setup WM_DELETE_WINDOW protocol
-        const wm_delete_window = x11.XInternAtom(dpy, "WM_DELETE_WINDOW", x11.False);
-        var protocols = [_]x11.Atom{wm_delete_window};
-        _ = x11.XSetWMProtocols(dpy, win, &protocols, protocols.len);
+        const wm_delete_window = x11.getDeleteWindowAtom(dpy);
+        var protocols = [_]x11.c.Atom{wm_delete_window};
+        _ = x11.c.XSetWMProtocols(dpy, win, &protocols, protocols.len);
 
         return Window{
             .dpy = dpy,
@@ -184,34 +184,34 @@ pub const Window = struct {
 
     pub fn deinit(self: *Window) void {
         if (self.cursor != 0) {
-            _ = x11.XFreeCursor(self.dpy, self.cursor);
+            _ = x11.c.XFreeCursor(self.dpy, self.cursor);
         }
         if (self.ic) |ic| {
-            _ = x11.XDestroyIC(ic);
+            _ = x11.c.XDestroyIC(ic);
         }
         if (self.im) |im| {
-            _ = x11.XCloseIM(im);
+            _ = x11.c.XCloseIM(im);
         }
         if (self.buf != 0) {
-            _ = x11.XFreePixmap(self.dpy, self.buf);
+            _ = x11.c.XFreePixmap(self.dpy, self.buf);
         }
-        _ = x11.XFreeGC(self.dpy, self.gc);
-        _ = x11.XDestroyWindow(self.dpy, self.win);
-        _ = x11.XCloseDisplay(self.dpy);
+        _ = x11.c.XFreeGC(self.dpy, self.gc);
+        _ = x11.c.XDestroyWindow(self.dpy, self.win);
+        _ = x11.c.XCloseDisplay(self.dpy);
     }
 
     pub fn show(self: *Window) void {
-        _ = x11.XMapWindow(self.dpy, self.win);
+        _ = x11.c.XMapWindow(self.dpy, self.win);
         if (self.cursor != 0) {
-            _ = x11.XDefineCursor(self.dpy, self.win, self.cursor);
+            _ = x11.c.XDefineCursor(self.dpy, self.win, self.cursor);
         }
-        _ = x11.XSync(self.dpy, x11.False);
+        _ = x11.c.XSync(self.dpy, x11.c.False);
     }
 
-    pub fn pollEvent(self: *Window) ?x11.XEvent {
-        if (x11.XPending(self.dpy) > 0) {
-            var event: x11.XEvent = undefined;
-            _ = x11.XNextEvent(self.dpy, &event);
+    pub fn pollEvent(self: *Window) ?x11.c.XEvent {
+        if (x11.c.XPending(self.dpy) > 0) {
+            var event: x11.c.XEvent = undefined;
+            _ = x11.c.XNextEvent(self.dpy, &event);
             return event;
         }
         return null;
@@ -221,10 +221,10 @@ pub const Window = struct {
         if (self.buf != 0 and self.buf_w == w and self.buf_h == h) return;
 
         if (self.buf != 0) {
-            _ = x11.XFreePixmap(self.dpy, self.buf);
+            _ = x11.c.XFreePixmap(self.dpy, self.buf);
         }
 
-        self.buf = x11.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.XDefaultDepth(self.dpy, self.screen)));
+        self.buf = x11.c.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.c.XDefaultDepth(self.dpy, self.screen)));
         self.buf_w = w;
         self.buf_h = h;
     }
@@ -238,27 +238,27 @@ pub const Window = struct {
     // Copy buffer to window
     pub fn present(self: *Window) void {
         if (self.buf != 0) {
-            _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
-            _ = x11.XSync(self.dpy, x11.False); // Or XFlush
+            _ = x11.c.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
+            _ = x11.c.XSync(self.dpy, x11.c.False); // Or XFlush
         }
     }
 
     // Copy partial buffer to window
-    pub fn presentPartial(self: *Window, rect: x11.XRectangle) void {
+    pub fn presentPartial(self: *Window, rect: x11.c.XRectangle) void {
         if (self.buf != 0) {
-            _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
-            _ = x11.XSync(self.dpy, x11.False);
+            _ = x11.c.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
+            _ = x11.c.XSync(self.dpy, x11.c.False);
         }
     }
 
     /// 设置窗口标题
     pub fn setTitle(self: *Window, title: [:0]const u8) void {
-        _ = x11.XStoreName(self.dpy, self.win, title);
+        _ = x11.c.XStoreName(self.dpy, self.win, title);
     }
 
     /// 设置图标标题
     pub fn setIconTitle(self: *Window, title: [:0]const u8) void {
-        _ = x11.XSetIconName(self.dpy, self.win, title);
+        _ = x11.c.XSetIconName(self.dpy, self.win, title);
     }
 
     /// 调整窗口大小以匹配期望的行列数（在加载实际字体后调用）
@@ -268,10 +268,10 @@ pub const Window = struct {
         const new_h = @as(u32, @intCast(rows * self.cell_height + border * 2));
 
         if (new_w != self.width or new_h != self.height) {
-            _ = x11.XResizeWindow(self.dpy, self.win, @intCast(new_w), @intCast(new_h));
+            _ = x11.c.XResizeWindow(self.dpy, self.win, @intCast(new_w), @intCast(new_h));
             self.width = new_w;
             self.height = new_h;
-            _ = x11.XSync(self.dpy, x11.False);
+            _ = x11.c.XSync(self.dpy, x11.c.False);
         }
     }
 };

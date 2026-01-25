@@ -109,14 +109,14 @@ pub const Input = struct {
 
     /// 处理键盘事件
     /// 返回: true 表示按键已被特殊处理，false 表示应由输入法继续处理
-    pub fn handleKey(self: *Input, event: *const x11.XKeyEvent) !bool {
-        var keysym: x11.KeySym = 0;
-        keysym = x11.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.ShiftMask) != 0) 1 else 0);
+    pub fn handleKey(self: *Input, event: *const x11.c.XKeyEvent) !bool {
+        var keysym: x11.c.KeySym = 0;
+        keysym = x11.c.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.c.ShiftMask) != 0) 1 else 0);
 
         const state = event.state;
-        const ctrl = (state & x11.ControlMask) != 0;
-        const alt = (state & x11.Mod1Mask) != 0;
-        const shift = (state & x11.ShiftMask) != 0;
+        const ctrl = (state & x11.c.ControlMask) != 0;
+        const alt = (state & x11.c.Mod1Mask) != 0;
+        const shift = (state & x11.c.ShiftMask) != 0;
 
         // 如果是特殊功能键，拦截并处理
         if (try self.handleSpecialKey(keysym, ctrl, alt, shift)) {
@@ -133,7 +133,7 @@ pub const Input = struct {
         return false;
     }
 
-    fn handleSpecialKey(self: *Input, keysym: x11.KeySym, ctrl: bool, alt: bool, shift: bool) !bool {
+    fn handleSpecialKey(self: *Input, keysym: x11.c.KeySym, ctrl: bool, alt: bool, shift: bool) !bool {
         const XK_BackSpace = 0xFF08;
         const XK_Tab = 0xFF09;
         const XK_Return = 0xFF0D;
@@ -224,7 +224,7 @@ pub const Input = struct {
         return true;
     }
 
-    fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: bool) !bool {
+    fn writeKeypad(self: *Input, keysym: x11.c.KeySym, shift: bool, ctrl: bool, alt: bool) !bool {
         if (self.term.mode.app_keypad) {
             const XK_KP_0 = 0xFFB0;
             const XK_KP_Multiply = 0xFFAA;
@@ -305,9 +305,9 @@ pub const Input = struct {
             }
         }
         if (self.term.mode.mouse_sgr or (x < 223 and y < 223)) {
-            if ((state & x11.ShiftMask) != 0) code += 4;
-            if ((state & x11.Mod1Mask) != 0) code += 8;
-            if ((state & x11.ControlMask) != 0) code += 16;
+            if ((state & x11.c.ShiftMask) != 0) code += 4;
+            if ((state & x11.c.Mod1Mask) != 0) code += 8;
+            if ((state & x11.c.ControlMask) != 0) code += 16;
         }
         if (self.term.mode.mouse_sgr) {
             const ch: u8 = if (event_type == 1) 'm' else 'M';

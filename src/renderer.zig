@@ -67,12 +67,12 @@ pub const RendererError = error{
 pub const Renderer = struct {
     window: *Window,
     allocator: std.mem.Allocator,
-    draw: *x11.XftDraw,
-    font: *x11.XftFont,
-    font_italic: *x11.XftFont,
-    font_bold: *x11.XftFont,
-    font_italic_bold: *x11.XftFont,
-    fallbacks: std.ArrayList(*x11.XftFont),
+    draw: *x11.c.XftDraw,
+    font: *x11.c.XftFont,
+    font_italic: *x11.c.XftFont,
+    font_bold: *x11.c.XftFont,
+    font_italic_bold: *x11.c.XftFont,
+    fallbacks: std.ArrayList(*x11.c.XftFont),
 
     char_width: u32,
     char_height: u32,
@@ -87,15 +87,15 @@ pub const Renderer = struct {
     last_blink_time: i64 = 0,
 
     // Color cache (256 indexed + 4 special + some margin)
-    colors: [300]x11.XftColor,
+    colors: [300]x11.c.XftColor,
     loaded_colors: [300]bool,
-    truecolor_cache: std.AutoArrayHashMap(u32, x11.XftColor),
+    truecolor_cache: std.AutoArrayHashMap(u32, x11.c.XftColor),
 
     pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
         // Initialize buffer in window if not already
         window.resizeBuffer(window.width, window.height);
 
-        const draw = x11.XftDrawCreate(window.dpy, window.buf, window.vis, window.cmap);
+        const draw = x11.c.XftDrawCreate(window.dpy, window.buf, window.vis, window.cmap);
         if (draw == null) return error.XftDrawCreateFailed;
 
         // Load font
@@ -103,17 +103,17 @@ pub const Renderer = struct {
 
         // Try loading configured font
 
-        var font = x11.XftFontOpenName(window.dpy, window.screen, font_name);
+        var font = x11.c.XftFontOpenName(window.dpy, window.screen, font_name);
 
         if (font == null) {
             std.log.warn("Failed to load configured font: {s}, trying default 'Monospace:pixelsize=14'\n", .{font_name});
             font_name = "Monospace:pixelsize=14";
-            font = x11.XftFontOpenName(window.dpy, window.screen, font_name);
+            font = x11.c.XftFontOpenName(window.dpy, window.screen, font_name);
         }
 
         if (font == null) {
             std.log.warn("Failed to load default font, trying backup 'fixed'\n", .{});
-            font = x11.XftFontOpenName(window.dpy, window.screen, "fixed");
+            font = x11.c.XftFontOpenName(window.dpy, window.screen, "fixed");
             if (font == null) return error.FontLoadFailed;
         }
 
@@ -122,9 +122,9 @@ pub const Renderer = struct {
         var count: u32 = 0;
         var ascii_char: u8 = ' ';
         while (ascii_char <= '~') : (ascii_char += 1) {
-            if (x11.XftCharExists(window.dpy, font, ascii_char) != 0) {
-                var extents: x11.XGlyphInfo = undefined;
-                x11.XftTextExtents32(window.dpy, font, &@as(u32, ascii_char), 1, &extents);
+            if (x11.c.XftCharExists(window.dpy, font, ascii_char) != 0) {
+                var extents: x11.c.XGlyphInfo = undefined;
+                x11.c.XftTextExtents32(window.dpy, font, &@as(u32, ascii_char), 1, &extents);
                 width_sum += @intCast(extents.xOff);
                 count += 1;
             }
@@ -137,40 +137,40 @@ pub const Renderer = struct {
         const descent = font.*.descent;
 
         // Load font variants
-        const pattern = x11.FcPatternDuplicate(font.*.pattern);
+        const pattern = x11.c.FcPatternDuplicate(font.*.pattern);
 
         // Italic
-        const italic_pattern = x11.FcPatternDuplicate(pattern);
-        _ = x11.FcPatternDel(italic_pattern, x11.FC_SLANT);
-        _ = x11.FcPatternAddInteger(italic_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
-        var font_italic = x11.XftFontOpenPattern(window.dpy, italic_pattern);
+        const italic_pattern = x11.c.FcPatternDuplicate(pattern);
+        _ = x11.c.FcPatternDel(italic_pattern, x11.c.FC_SLANT);
+        _ = x11.c.FcPatternAddInteger(italic_pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
+        var font_italic = x11.c.XftFontOpenPattern(window.dpy, italic_pattern);
         if (font_italic == null) font_italic = font;
 
         // Bold
-        const bold_pattern = x11.FcPatternDuplicate(pattern);
-        _ = x11.FcPatternDel(bold_pattern, x11.FC_WEIGHT);
-        _ = x11.FcPatternAddInteger(bold_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
-        var font_bold = x11.XftFontOpenPattern(window.dpy, bold_pattern);
+        const bold_pattern = x11.c.FcPatternDuplicate(pattern);
+        _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_WEIGHT);
+        _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        var font_bold = x11.c.XftFontOpenPattern(window.dpy, bold_pattern);
         if (font_bold == null) font_bold = font;
 
         // Italic Bold
-        const ib_pattern = x11.FcPatternDuplicate(pattern);
-        _ = x11.FcPatternDel(ib_pattern, x11.FC_SLANT);
-        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
-        _ = x11.FcPatternDel(ib_pattern, x11.FC_WEIGHT);
-        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
-        var font_italic_bold = x11.XftFontOpenPattern(window.dpy, ib_pattern);
+        const ib_pattern = x11.c.FcPatternDuplicate(pattern);
+        _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_SLANT);
+        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
+        _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_WEIGHT);
+        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        var font_italic_bold = x11.c.XftFontOpenPattern(window.dpy, ib_pattern);
         if (font_italic_bold == null) font_italic_bold = font;
 
-        x11.FcPatternDestroy(pattern);
+        x11.c.FcPatternDestroy(pattern);
 
         // Update window metrics
         window.cell_width = char_width;
         window.cell_height = char_height;
 
-        var fallbacks = try std.ArrayList(*x11.XftFont).initCapacity(allocator, 4);
+        var fallbacks = try std.ArrayList(*x11.c.XftFont).initCapacity(allocator, 4);
         errdefer {
-            for (fallbacks.items) |f| x11.XftFontClose(window.dpy, f);
+            for (fallbacks.items) |f| x11.c.XftFontClose(window.dpy, f);
             fallbacks.deinit(allocator);
         }
 
@@ -184,7 +184,7 @@ pub const Renderer = struct {
         };
 
         for (fallback_names) |name| {
-            if (x11.XftFontOpenName(window.dpy, window.screen, name)) |f| {
+            if (x11.c.XftFontOpenName(window.dpy, window.screen, name)) |f| {
                 try fallbacks.append(allocator, f);
             }
         }
@@ -208,7 +208,7 @@ pub const Renderer = struct {
             .last_blink_time = std.time.milliTimestamp(),
             .colors = undefined,
             .loaded_colors = [_]bool{false} ** 300,
-            .truecolor_cache = std.AutoArrayHashMap(u32, x11.XftColor).init(allocator),
+            .truecolor_cache = std.AutoArrayHashMap(u32, x11.c.XftColor).init(allocator),
         };
     }
 
@@ -239,52 +239,52 @@ pub const Renderer = struct {
         // Simplified: assumes config.font.name format "Name:pixelsize=..."
         // Ideally we should use FcPattern to modify size.
 
-        const pattern = x11.FcPatternDuplicate(self.font.*.pattern);
-        defer x11.FcPatternDestroy(pattern);
+        const pattern = x11.c.FcPatternDuplicate(self.font.*.pattern);
+        defer x11.c.FcPatternDestroy(pattern);
 
         // Remove existing size
-        _ = x11.FcPatternDel(pattern, x11.FC_PIXEL_SIZE);
-        _ = x11.FcPatternDel(pattern, x11.FC_SIZE);
+        _ = x11.c.FcPatternDel(pattern, x11.c.FC_PIXEL_SIZE);
+        _ = x11.c.FcPatternDel(pattern, x11.c.FC_SIZE);
 
         // Add new size
-        _ = x11.FcPatternAddInteger(pattern, x11.FC_PIXEL_SIZE, @intCast(size));
+        _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_PIXEL_SIZE, @intCast(size));
 
-        const new_font = x11.XftFontOpenPattern(self.window.dpy, pattern);
+        const new_font = x11.c.XftFontOpenPattern(self.window.dpy, pattern);
         if (new_font == null) return; // Failed to load
 
         // Update successful, close old fonts and replace
-        x11.XftFontClose(self.window.dpy, self.font);
-        if (self.font_italic != self.font) x11.XftFontClose(self.window.dpy, self.font_italic);
-        if (self.font_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_bold);
-        if (self.font_italic_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_italic_bold);
+        x11.c.XftFontClose(self.window.dpy, self.font);
+        if (self.font_italic != self.font) x11.c.XftFontClose(self.window.dpy, self.font_italic);
+        if (self.font_bold != self.font) x11.c.XftFontClose(self.window.dpy, self.font_bold);
+        if (self.font_italic_bold != self.font) x11.c.XftFontClose(self.window.dpy, self.font_italic_bold);
 
         self.font = new_font.?;
         self.current_font_size = size;
 
         // Reload variants
         // Italic
-        const italic_pattern = x11.FcPatternDuplicate(pattern);
-        _ = x11.FcPatternDel(italic_pattern, x11.FC_SLANT);
-        _ = x11.FcPatternAddInteger(italic_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
-        var font_italic = x11.XftFontOpenPattern(self.window.dpy, italic_pattern);
+        const italic_pattern = x11.c.FcPatternDuplicate(pattern);
+        _ = x11.c.FcPatternDel(italic_pattern, x11.c.FC_SLANT);
+        _ = x11.c.FcPatternAddInteger(italic_pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
+        var font_italic = x11.c.XftFontOpenPattern(self.window.dpy, italic_pattern);
         if (font_italic == null) font_italic = self.font;
         self.font_italic = font_italic.?;
 
         // Bold
-        const bold_pattern = x11.FcPatternDuplicate(pattern);
-        _ = x11.FcPatternDel(bold_pattern, x11.FC_WEIGHT);
-        _ = x11.FcPatternAddInteger(bold_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
-        var font_bold = x11.XftFontOpenPattern(self.window.dpy, bold_pattern);
+        const bold_pattern = x11.c.FcPatternDuplicate(pattern);
+        _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_WEIGHT);
+        _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        var font_bold = x11.c.XftFontOpenPattern(self.window.dpy, bold_pattern);
         if (font_bold == null) font_bold = self.font;
         self.font_bold = font_bold.?;
 
         // Italic Bold
-        const ib_pattern = x11.FcPatternDuplicate(pattern);
-        _ = x11.FcPatternDel(ib_pattern, x11.FC_SLANT);
-        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
-        _ = x11.FcPatternDel(ib_pattern, x11.FC_WEIGHT);
-        _ = x11.FcPatternAddInteger(ib_pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
-        var font_italic_bold = x11.XftFontOpenPattern(self.window.dpy, ib_pattern);
+        const ib_pattern = x11.c.FcPatternDuplicate(pattern);
+        _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_SLANT);
+        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
+        _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_WEIGHT);
+        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        var font_italic_bold = x11.c.XftFontOpenPattern(self.window.dpy, ib_pattern);
         if (font_italic_bold == null) font_italic_bold = self.font;
         self.font_italic_bold = font_italic_bold.?;
 
@@ -293,9 +293,9 @@ pub const Renderer = struct {
         var count: u32 = 0;
         var ascii_char: u8 = ' ';
         while (ascii_char <= '~') : (ascii_char += 1) {
-            if (x11.XftCharExists(self.window.dpy, self.font, ascii_char) != 0) {
-                var extents: x11.XGlyphInfo = undefined;
-                x11.XftTextExtents32(self.window.dpy, self.font, &@as(u32, ascii_char), 1, &extents);
+            if (x11.c.XftCharExists(self.window.dpy, self.font, ascii_char) != 0) {
+                var extents: x11.c.XGlyphInfo = undefined;
+                x11.c.XftTextExtents32(self.window.dpy, self.font, &@as(u32, ascii_char), 1, &extents);
                 width_sum += @intCast(extents.xOff);
                 count += 1;
             }
@@ -313,30 +313,30 @@ pub const Renderer = struct {
     }
 
     pub fn deinit(self: *Renderer) void {
-        x11.XftDrawDestroy(self.draw);
-        if (self.font_italic != self.font) x11.XftFontClose(self.window.dpy, self.font_italic);
-        if (self.font_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_bold);
-        if (self.font_italic_bold != self.font) x11.XftFontClose(self.window.dpy, self.font_italic_bold);
-        x11.XftFontClose(self.window.dpy, self.font);
+        x11.c.XftDrawDestroy(self.draw);
+        if (self.font_italic != self.font) x11.c.XftFontClose(self.window.dpy, self.font_italic);
+        if (self.font_bold != self.font) x11.c.XftFontClose(self.window.dpy, self.font_bold);
+        if (self.font_italic_bold != self.font) x11.c.XftFontClose(self.window.dpy, self.font_italic_bold);
+        x11.c.XftFontClose(self.window.dpy, self.font);
         for (self.fallbacks.items) |f| {
-            x11.XftFontClose(self.window.dpy, f);
+            x11.c.XftFontClose(self.window.dpy, f);
         }
         self.fallbacks.deinit(self.allocator);
         // Free indexed colors
         for (0..300) |i| {
             if (self.loaded_colors[i]) {
-                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &self.colors[i]);
+                x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &self.colors[i]);
             }
         }
         // Free truecolors
         var it = self.truecolor_cache.iterator();
         while (it.next()) |entry| {
-            x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, entry.value_ptr);
+            x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, entry.value_ptr);
         }
         self.truecolor_cache.deinit();
     }
 
-    fn getColor(self: *Renderer, term: *Term, index: u32) !x11.XftColor {
+    fn getColor(self: *Renderer, term: *Term, index: u32) !x11.c.XftColor {
         // 24位真彩色使用缓存
         if (index >= 0x10000000) {
             if (self.truecolor_cache.get(index)) |color| {
@@ -348,18 +348,18 @@ pub const Renderer = struct {
                 // 简单的 FIFO 清理
                 const first_key = self.truecolor_cache.keys()[0];
                 var entry = self.truecolor_cache.fetchOrderedRemove(first_key).?;
-                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &entry.value);
+                x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &entry.value);
             }
 
-            var temp_color: x11.XftColor = undefined;
+            var temp_color: x11.c.XftColor = undefined;
             const rgb = self.getIndexColor(term, index);
-            const render_color = x11.XRenderColor{
+            const render_color = x11.c.XRenderColor{
                 .red = @as(u16, rgb[0]) * 257,
                 .green = @as(u16, rgb[1]) * 257,
                 .blue = @as(u16, rgb[2]) * 257,
                 .alpha = 0xFFFF,
             };
-            if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &temp_color) == 0) {
+            if (x11.c.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &temp_color) == 0) {
                 return error.ColorAllocFailed;
             }
             try self.truecolor_cache.put(index, temp_color);
@@ -375,14 +375,14 @@ pub const Renderer = struct {
         // Allocate color
         // Map index to RGB
         const rgb = self.getIndexColor(term, index);
-        const render_color = x11.XRenderColor{
+        const render_color = x11.c.XRenderColor{
             .red = @as(u16, rgb[0]) * 257,
             .green = @as(u16, rgb[1]) * 257,
             .blue = @as(u16, rgb[2]) * 257,
             .alpha = 0xFFFF,
         };
 
-        if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &self.colors[index]) == 0) {
+        if (x11.c.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &self.colors[index]) == 0) {
             return error.ColorAllocFailed;
         }
 
@@ -421,7 +421,7 @@ pub const Renderer = struct {
         return .{ 0xFF, 0xFF, 0xFF };
     }
 
-    fn getFontForGlyph(self: *Renderer, u: u21, attr: types.GlyphAttr) *x11.XftFont {
+    fn getFontForGlyph(self: *Renderer, u: u21, attr: types.GlyphAttr) *x11.c.XftFont {
         var f = self.font;
         if (attr.bold and attr.italic) {
             f = self.font_italic_bold;
@@ -431,70 +431,70 @@ pub const Renderer = struct {
             f = self.font_italic;
         }
 
-        if (x11.XftCharExists(self.window.dpy, f, u) != 0) {
+        if (x11.c.XftCharExists(self.window.dpy, f, u) != 0) {
             return f;
         }
 
         for (self.fallbacks.items) |fb| {
-            if (x11.XftCharExists(self.window.dpy, fb, u) != 0) {
+            if (x11.c.XftCharExists(self.window.dpy, fb, u) != 0) {
                 return fb;
             }
         }
 
         // Dynamic fallback via FontConfig
-        const fc_charset = x11.FcCharSetCreate();
-        defer x11.FcCharSetDestroy(fc_charset);
-        if (x11.FcCharSetAddChar(fc_charset, u) == 0) return f;
+        const fc_charset = x11.c.FcCharSetCreate();
+        defer x11.c.FcCharSetDestroy(fc_charset);
+        if (x11.c.FcCharSetAddChar(fc_charset, u) == 0) return f;
 
-        const pattern = x11.FcPatternDuplicate(self.font.pattern);
+        const pattern = x11.c.FcPatternDuplicate(self.font.pattern);
         if (pattern == null) return f;
-        defer x11.FcPatternDestroy(pattern);
+        defer x11.c.FcPatternDestroy(pattern);
 
-        _ = x11.FcPatternAddCharSet(pattern, x11.FC_CHARSET, fc_charset);
+        _ = x11.c.FcPatternAddCharSet(pattern, x11.c.FC_CHARSET, fc_charset);
 
         // Add style attributes
         if (attr.italic) {
-            _ = x11.FcPatternDel(pattern, x11.FC_SLANT);
-            _ = x11.FcPatternAddInteger(pattern, x11.FC_SLANT, x11.FC_SLANT_ITALIC);
+            _ = x11.c.FcPatternDel(pattern, x11.c.FC_SLANT);
+            _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
         }
         if (attr.bold) {
-            _ = x11.FcPatternDel(pattern, x11.FC_WEIGHT);
-            _ = x11.FcPatternAddInteger(pattern, x11.FC_WEIGHT, x11.FC_WEIGHT_BOLD);
+            _ = x11.c.FcPatternDel(pattern, x11.c.FC_WEIGHT);
+            _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
         }
 
-        _ = x11.FcConfigSubstitute(null, pattern, x11.FcMatchPattern);
-        _ = x11.XftDefaultSubstitute(self.window.dpy, self.window.screen, pattern);
+        _ = x11.c.FcConfigSubstitute(null, pattern, x11.c.FcMatchPattern);
+        _ = x11.c.XftDefaultSubstitute(self.window.dpy, self.window.screen, pattern);
 
-        var result: x11.FcResult = undefined;
-        const match = x11.FcFontMatch(null, pattern, &result);
+        var result: x11.c.FcResult = undefined;
+        const match = x11.c.FcFontMatch(null, pattern, &result);
 
         if (match) |m| {
             // Check if we already have this font open to avoid duplicates?
             // Ideally yes, but XftFont structure comparison is tricky.
             // For now, just open it.
-            const font_open = x11.XftFontOpenPattern(self.window.dpy, m);
+            const font_open = x11.c.XftFontOpenPattern(self.window.dpy, m);
             if (font_open) |new_font| {
-                if (x11.XftCharExists(self.window.dpy, new_font, u) != 0) {
+                if (x11.c.XftCharExists(self.window.dpy, new_font, u) != 0) {
                     self.fallbacks.append(self.allocator, new_font) catch {
-                        x11.XftFontClose(self.window.dpy, new_font);
+                        x11.c.XftFontClose(self.window.dpy, new_font);
                         return f;
                     };
                     return new_font;
                 }
-                x11.XftFontClose(self.window.dpy, new_font);
+                x11.c.XftFontClose(self.window.dpy, new_font);
             } else {
-                x11.FcPatternDestroy(m);
+                x11.c.FcPatternDestroy(m);
             }
         }
 
         return f;
     }
 
-    fn drawRun(self: *Renderer, term: *Term, buf: []const u32, x: i32, y: i32, font: *x11.XftFont, fg: *x11.XftColor, glyph: Glyph, width_pixels: i32) !void {
+    fn drawRun(self: *Renderer, term: *Term, buf: []const u32, x: i32, y: i32, font: *x11.c.XftFont, fg: *x11.c.XftColor, glyph: Glyph, width_pixels: i32) !void {
         if (buf.len == 0) return;
 
         // Draw string
-        x11.XftDrawString32(self.draw, fg, font, x, y + self.ascent, buf.ptr, @intCast(buf.len));
+        x11.c.XftDrawString32(self.draw, fg, font, x, y + self.ascent, buf.ptr, @intCast(buf.len));
 
         // Draw decorations
         if (glyph.attr.underline) {
@@ -511,27 +511,27 @@ pub const Renderer = struct {
             const underline_y = y + self.ascent + 1;
 
             if (glyph.ustyle <= 0 or glyph.ustyle == 1) { // Single
-                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
+                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
             } else if (glyph.ustyle == 1) { // Single (Duplicate case handled)
-                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
+                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
             } else if (glyph.ustyle == 2) { // Double
-                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
-                x11.XftDrawRect(self.draw, &underline_fg, x, underline_y + thickness * 2, @intCast(width_pixels), thickness);
+                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
+                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y + thickness * 2, @intCast(width_pixels), thickness);
             } else if (glyph.ustyle == 3) { // Curly
                 const amp = @max(1, @as(i32, @intCast(thickness)));
                 const cy = underline_y + amp;
                 const char_w = @as(i32, @intCast(self.char_width));
                 var current_x = x;
                 while (current_x < x + width_pixels) {
-                    var points: [4]x11.XPoint = undefined;
+                    var points: [4]x11.c.XPoint = undefined;
                     points[0] = .{ .x = @intCast(current_x), .y = @intCast(cy) };
                     points[1] = .{ .x = @intCast(current_x + @divTrunc(char_w, 4)), .y = @intCast(cy - amp) };
                     points[2] = .{ .x = @intCast(current_x + @divTrunc(3 * char_w, 4)), .y = @intCast(cy + amp) };
                     points[3] = .{ .x = @intCast(current_x + char_w), .y = @intCast(cy) };
 
-                    _ = x11.XSetForeground(self.window.dpy, self.window.gc, underline_fg.pixel);
-                    _ = x11.XSetLineAttributes(self.window.dpy, self.window.gc, 0, x11.LineSolid, x11.CapButt, x11.JoinMiter);
-                    _ = x11.XDrawLines(self.window.dpy, self.window.buf, self.window.gc, &points, 4, x11.CoordModeOrigin);
+                    _ = x11.c.XSetForeground(self.window.dpy, self.window.gc, underline_fg.pixel);
+                    _ = x11.c.XSetLineAttributes(self.window.dpy, self.window.gc, 0, x11.c.LineSolid, x11.c.CapButt, x11.c.JoinMiter);
+                    _ = x11.c.XDrawLines(self.window.dpy, self.window.buf, self.window.gc, &points, 4, x11.c.CoordModeOrigin);
                     current_x += char_w;
                 }
             } else if (glyph.ustyle == 4) { // Dotted
@@ -541,7 +541,7 @@ pub const Renderer = struct {
                     for (0..2) |k| {
                         const dash_x = cx + @as(i32, @intCast(k * dash_width_u * 2));
                         if (dash_x < x + width_pixels)
-                            x11.XftDrawRect(self.draw, &underline_fg, dash_x, underline_y, dash_width_u, thickness);
+                            x11.c.XftDrawRect(self.draw, &underline_fg, dash_x, underline_y, dash_width_u, thickness);
                     }
                     cx += @intCast(self.char_width);
                 }
@@ -549,11 +549,11 @@ pub const Renderer = struct {
         }
 
         if (glyph.attr.struck) {
-            x11.XftDrawRect(self.draw, fg, x, y + @divTrunc(self.ascent * 2, 3), @intCast(width_pixels), 1);
+            x11.c.XftDrawRect(self.draw, fg, x, y + @divTrunc(self.ascent * 2, 3), @intCast(width_pixels), 1);
         }
     }
 
-    pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !?x11.XRectangle {
+    pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !?x11.c.XRectangle {
         if (term.line == null) return null;
 
         // Default background color
@@ -567,19 +567,19 @@ pub const Renderer = struct {
         // 清除四周多余区域及边框
         // 1. 顶部区域
         if (vborder > 0)
-            x11.XftDrawRect(self.draw, &default_bg, 0, 0, @intCast(self.window.width), @intCast(vborder));
+            x11.c.XftDrawRect(self.draw, &default_bg, 0, 0, @intCast(self.window.width), @intCast(vborder));
         // 2. 底部区域
         const bottom_y = vborder + grid_h;
         if (bottom_y < @as(i32, @intCast(self.window.height))) {
-            x11.XftDrawRect(self.draw, &default_bg, 0, bottom_y, @intCast(self.window.width), @intCast(@as(i32, @intCast(self.window.height)) - bottom_y));
+            x11.c.XftDrawRect(self.draw, &default_bg, 0, bottom_y, @intCast(self.window.width), @intCast(@as(i32, @intCast(self.window.height)) - bottom_y));
         }
         // 3. 左侧区域
         if (hborder > 0)
-            x11.XftDrawRect(self.draw, &default_bg, 0, vborder, @intCast(hborder), @intCast(grid_h));
+            x11.c.XftDrawRect(self.draw, &default_bg, 0, vborder, @intCast(hborder), @intCast(grid_h));
         // 4. 右侧区域
         const right_x = hborder + grid_w;
         if (right_x < @as(i32, @intCast(self.window.width))) {
-            x11.XftDrawRect(self.draw, &default_bg, right_x, vborder, @intCast(@as(i32, @intCast(self.window.width)) - right_x), @intCast(grid_h));
+            x11.c.XftDrawRect(self.draw, &default_bg, right_x, vborder, @intCast(@as(i32, @intCast(self.window.width)) - right_x), @intCast(grid_h));
         }
 
         var min_y: ?usize = null;
@@ -606,7 +606,7 @@ pub const Renderer = struct {
             const y_pos = @as(i32, @intCast(y * self.char_height)) + vborder;
 
             // Clear the dirty grid row with default background
-            x11.XftDrawRect(self.draw, &default_bg, hborder, y_pos, @intCast(grid_w), @intCast(self.char_height));
+            x11.c.XftDrawRect(self.draw, &default_bg, hborder, y_pos, @intCast(grid_w), @intCast(self.char_height));
 
             // 第一阶段：绘制所有非默认背景
             for (0..@min(term.col, line_data.len)) |x| {
@@ -626,7 +626,7 @@ pub const Renderer = struct {
 
                 if (bg_idx != config.Config.colors.default_background) {
                     var bg_col = try self.getColor(term, bg_idx);
-                    x11.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                    x11.c.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 }
             }
 
@@ -634,8 +634,8 @@ pub const Renderer = struct {
             var run_len: usize = 0;
             var run_buf: [1024]u32 = undefined;
             var run_x: i32 = 0;
-            var run_font: *x11.XftFont = undefined;
-            var run_fg: x11.XftColor = undefined;
+            var run_font: *x11.c.XftFont = undefined;
+            var run_fg: x11.c.XftColor = undefined;
             var run_glyph: Glyph = undefined;
             var run_allocated_faint: bool = false;
 
@@ -675,7 +675,7 @@ pub const Renderer = struct {
                             try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
                             run_len = 0;
                             if (run_allocated_faint) {
-                                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                                x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
                                 run_allocated_faint = false;
                             }
                         }
@@ -683,8 +683,8 @@ pub const Renderer = struct {
                     }
                 }
 
-                var font: *x11.XftFont = undefined;
-                var fg: x11.XftColor = undefined;
+                var font: *x11.c.XftFont = undefined;
+                var fg: x11.c.XftColor = undefined;
                 var allocated_faint = false;
 
                 if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
@@ -692,7 +692,7 @@ pub const Renderer = struct {
                         try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
                         run_len = 0;
                         if (run_allocated_faint) {
-                            x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                            x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
                             run_allocated_faint = false;
                         }
                     }
@@ -711,8 +711,8 @@ pub const Renderer = struct {
                     col_faint.red /= 2;
                     col_faint.green /= 2;
                     col_faint.blue /= 2;
-                    var new_fg: x11.XftColor = undefined;
-                    if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &col_faint, &new_fg) != 0) {
+                    var new_fg: x11.c.XftColor = undefined;
+                    if (x11.c.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &col_faint, &new_fg) != 0) {
                         fg = new_fg;
                         allocated_faint = true;
                     }
@@ -737,7 +737,7 @@ pub const Renderer = struct {
                         try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
                         run_len = 0;
                         if (run_allocated_faint) {
-                            x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                            x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
                             run_allocated_faint = false;
                         }
                     }
@@ -749,7 +749,7 @@ pub const Renderer = struct {
                     run_allocated_faint = allocated_faint;
                 } else {
                     if (allocated_faint) {
-                        x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &fg);
+                        x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &fg);
                     }
                 }
 
@@ -770,7 +770,7 @@ pub const Renderer = struct {
             if (run_len > 0) {
                 try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
                 if (run_allocated_faint) {
-                    x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                    x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
                 }
             }
 
@@ -782,7 +782,7 @@ pub const Renderer = struct {
         if (min_y) |min| {
             const max = max_y orelse min;
 
-            var rect = x11.XRectangle{
+            var rect = x11.c.XRectangle{
                 .x = 0,
                 .y = @intCast(@as(i32, @intCast(min * self.char_height)) + vborder),
                 .width = @intCast(self.window.width),
@@ -866,58 +866,58 @@ pub const Renderer = struct {
 
         switch (style) {
             .blinking_block, .blinking_block_default => { // blinking block
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const char = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
+                    x11.c.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
             .steady_block => { // steady block
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const char = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
+                    x11.c.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
             .blinking_underline => { // blinking underline
                 const thickness = config.Config.cursor.thickness;
                 const y_line = y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness));
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
             },
             .steady_underline => { // steady underline
                 const thickness = config.Config.cursor.thickness;
                 const y_line = y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness));
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
             },
             .blinking_bar => { // blinking bar
                 const thickness = config.Config.cursor.thickness;
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
             },
             .steady_bar => { // steady bar
                 const thickness = config.Config.cursor.thickness;
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
             },
             .blinking_st_cursor, .steady_st_cursor => { // st cursor (hollow box)
                 const thickness = config.Config.cursor.thickness;
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), thickness);
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness)), @intCast(self.char_width), thickness);
-                x11.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
-                x11.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(self.char_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness)), @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(self.char_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, 258);
                     const char = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                    x11.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
+                    x11.c.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
                 }
             },
         }
     }
 
-    fn drawBoxChar(self: *Renderer, u: u21, x: i32, y: i32, w: i32, h: i32, color: *x11.XftColor, bg_color: *x11.XftColor, bold: bool) !void {
+    fn drawBoxChar(self: *Renderer, u: u21, x: i32, y: i32, w: i32, h: i32, color: *x11.c.XftColor, bg_color: *x11.c.XftColor, bold: bool) !void {
         const data = boxdraw.BoxDraw.getDrawData(u);
         if (data == 0) return;
         const mwh = @min(w, h);
@@ -941,27 +941,27 @@ pub const Renderer = struct {
             const tx = @as(f32, @floatFromInt(x)) + (@as(f32, @floatFromInt(w)) - target_w) / 2.0;
             const ty = @as(f32, @floatFromInt(y)) + (@as(f32, @floatFromInt(h)) - target_h) / 2.0;
 
-            var points: [3]x11.XPoint = undefined;
+            var points: [3]x11.c.XPoint = undefined;
             switch (type_) {
                 1 => { // Up ▲
-                    points[0] = x11.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty) };
-                    points[1] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
-                    points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
+                    points[0] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty) };
+                    points[1] = x11.c.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
                 },
                 2 => { // Down ▼
-                    points[0] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
-                    points[1] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
-                    points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty + target_h) };
+                    points[0] = x11.c.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
+                    points[1] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
+                    points[2] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w / 2.0), .y = @intFromFloat(ty + target_h) };
                 },
                 3 => { // Left ◀
-                    points[0] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
-                    points[1] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
-                    points[2] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h / 2.0) };
+                    points[0] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty) };
+                    points[1] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.c.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h / 2.0) };
                 },
                 4 => { // Right ▶
-                    points[0] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
-                    points[1] = x11.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
-                    points[2] = x11.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h / 2.0) };
+                    points[0] = x11.c.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty) };
+                    points[1] = x11.c.XPoint{ .x = @intFromFloat(tx), .y = @intFromFloat(ty + target_h) };
+                    points[2] = x11.c.XPoint{ .x = @intFromFloat(tx + target_w), .y = @intFromFloat(ty + target_h / 2.0) };
                 },
                 else => {
                     std.log.debug("未知的三角形绘制类型: {d}", .{type_});
@@ -969,10 +969,10 @@ pub const Renderer = struct {
                 },
             }
 
-            const gc = x11.XCreateGC(self.window.dpy, self.window.buf, 0, null);
-            defer _ = x11.XFreeGC(self.window.dpy, gc);
-            _ = x11.XSetForeground(self.window.dpy, gc, color.pixel);
-            _ = x11.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, 3, x11.Convex, x11.CoordModeOrigin);
+            const gc = x11.c.XCreateGC(self.window.dpy, self.window.buf, 0, null);
+            defer _ = x11.c.XFreeGC(self.window.dpy, gc);
+            _ = x11.c.XSetForeground(self.window.dpy, gc, color.pixel);
+            _ = x11.c.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, 3, x11.c.Convex, x11.c.CoordModeOrigin);
             return;
         }
         if (cat == boxdraw_data.BRL) {
@@ -980,55 +980,55 @@ pub const Renderer = struct {
             const bh1 = @divTrunc(h + 2, 4);
             const bh2 = @divTrunc(h + 1, 2);
             const bh3 = @divTrunc(3 * h + 2, 4);
-            if (data & 1 != 0) x11.XftDrawRect(self.draw, color, x, y, @intCast(bw1), @intCast(bh1));
-            if (data & 2 != 0) x11.XftDrawRect(self.draw, color, x, y + bh1, @intCast(bw1), @intCast(bh2 - bh1));
-            if (data & 4 != 0) x11.XftDrawRect(self.draw, color, x, y + bh2, @intCast(bw1), @intCast(bh3 - bh2));
-            if (data & 8 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y, @intCast(w - bw1), @intCast(bh1));
-            if (data & 16 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1));
-            if (data & 32 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1)); // This was likely a placeholder
-            if (data & 32 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh2, @intCast(w - bw1), @intCast(bh3 - bh2));
-            if (data & 64 != 0) x11.XftDrawRect(self.draw, color, x, y + bh3, @intCast(bw1), @intCast(h - bh3));
-            if (data & 128 != 0) x11.XftDrawRect(self.draw, color, x + bw1, y + bh3, @intCast(w - bw1), @intCast(h - bh3));
+            if (data & 1 != 0) x11.c.XftDrawRect(self.draw, color, x, y, @intCast(bw1), @intCast(bh1));
+            if (data & 2 != 0) x11.c.XftDrawRect(self.draw, color, x, y + bh1, @intCast(bw1), @intCast(bh2 - bh1));
+            if (data & 4 != 0) x11.c.XftDrawRect(self.draw, color, x, y + bh2, @intCast(bw1), @intCast(bh3 - bh2));
+            if (data & 8 != 0) x11.c.XftDrawRect(self.draw, color, x + bw1, y, @intCast(w - bw1), @intCast(bh1));
+            if (data & 16 != 0) x11.c.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1));
+            if (data & 32 != 0) x11.c.XftDrawRect(self.draw, color, x + bw1, y + bh1, @intCast(w - bw1), @intCast(bh2 - bh1)); // This was likely a placeholder
+            if (data & 32 != 0) x11.c.XftDrawRect(self.draw, color, x + bw1, y + bh2, @intCast(w - bw1), @intCast(bh3 - bh2));
+            if (data & 64 != 0) x11.c.XftDrawRect(self.draw, color, x, y + bh3, @intCast(bw1), @intCast(h - bh3));
+            if (data & 128 != 0) x11.c.XftDrawRect(self.draw, color, x + bw1, y + bh3, @intCast(w - bw1), @intCast(h - bh3));
             return;
         }
         if (cat == boxdraw_data.BBD) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
-            x11.XftDrawRect(self.draw, color, x, y + d, @intCast(w), @intCast(h - d));
+            x11.c.XftDrawRect(self.draw, color, x, y + d, @intCast(w), @intCast(h - d));
             return;
         } else if (cat == boxdraw_data.BBU) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
-            x11.XftDrawRect(self.draw, color, x, y, @intCast(w), @intCast(d));
+            x11.c.XftDrawRect(self.draw, color, x, y, @intCast(w), @intCast(d));
             return;
         } else if (cat == boxdraw_data.BBL) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * w + 4, 8);
-            x11.XftDrawRect(self.draw, color, x, y, @intCast(d), @intCast(h));
+            x11.c.XftDrawRect(self.draw, color, x, y, @intCast(d), @intCast(h));
             return;
         } else if (cat == boxdraw_data.BBR) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * w + 4, 8);
-            x11.XftDrawRect(self.draw, color, x + d, y, @intCast(w - d), @intCast(h));
+            x11.c.XftDrawRect(self.draw, color, x + d, y, @intCast(w - d), @intCast(h));
             return;
         }
         if (cat == boxdraw_data.BBQ) {
             const qw = @divTrunc(w + 1, 2);
             const qh = @divTrunc(h + 1, 2);
-            if (data & boxdraw_data.TL != 0) x11.XftDrawRect(self.draw, color, x, y, @intCast(qw), @intCast(qh));
-            if (data & boxdraw_data.TR != 0) x11.XftDrawRect(self.draw, color, x + qw, y, @intCast(w - qw), @intCast(qh));
-            if (data & boxdraw_data.BL != 0) x11.XftDrawRect(self.draw, color, x, y + qh, @intCast(qw), @intCast(h - qh));
-            if (data & boxdraw_data.BR != 0) x11.XftDrawRect(self.draw, color, x + qw, y + qh, @intCast(w - qw), @intCast(h - qh));
+            if (data & boxdraw_data.TL != 0) x11.c.XftDrawRect(self.draw, color, x, y, @intCast(qw), @intCast(qh));
+            if (data & boxdraw_data.TR != 0) x11.c.XftDrawRect(self.draw, color, x + qw, y, @intCast(w - qw), @intCast(qh));
+            if (data & boxdraw_data.BL != 0) x11.c.XftDrawRect(self.draw, color, x, y + qh, @intCast(qw), @intCast(h - qh));
+            if (data & boxdraw_data.BR != 0) x11.c.XftDrawRect(self.draw, color, x + qw, y + qh, @intCast(w - qw), @intCast(h - qh));
             return;
         }
         if (data & boxdraw_data.BBS != 0) {
             const d = @as(u16, @intCast(data & 0xFF));
-            var xrc = x11.XRenderColor{
+            var xrc = x11.c.XRenderColor{
                 .red = @intCast(@divTrunc(@as(u32, color.*.color.red) * d + @as(u32, bg_color.*.color.red) * (4 - d) + 2, 4)),
                 .green = @intCast(@divTrunc(@as(u32, color.*.color.green) * d + @as(u32, bg_color.*.color.green) * (4 - d) + 2, 4)),
                 .blue = @intCast(@divTrunc(@as(u32, color.*.color.blue) * d + @as(u32, bg_color.*.color.blue) * (4 - d) + 2, 4)),
                 .alpha = 0xFFFF,
             };
-            var xfc: x11.XftColor = undefined;
-            if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &xrc, &xfc) != 0) {
-                x11.XftDrawRect(self.draw, &xfc, x, y, @intCast(w), @intCast(h));
-                x11.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &xfc);
+            var xfc: x11.c.XftColor = undefined;
+            if (x11.c.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &xrc, &xfc) != 0) {
+                x11.c.XftDrawRect(self.draw, &xfc, x, y, @intCast(w), @intCast(h));
+                x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &xfc);
             }
             return;
         }
@@ -1040,10 +1040,10 @@ pub const Renderer = struct {
                 const multi_light = light & (light -% 1) != 0;
                 const multi_double = double_ & (double_ -% 1) != 0;
                 const d_len: i32 = if (arc or (multi_double and !multi_light)) -s else 0;
-                if (data & boxdraw_data.LL != 0) x11.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
-                if (data & boxdraw_data.LU != 0) x11.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
-                if (data & boxdraw_data.LR != 0) x11.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
-                if (data & boxdraw_data.LD != 0) x11.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
+                if (data & boxdraw_data.LL != 0) x11.c.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
+                if (data & boxdraw_data.LU != 0) x11.c.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
+                if (data & boxdraw_data.LR != 0) x11.c.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
+                if (data & boxdraw_data.LD != 0) x11.c.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
             }
             if (double_ != 0) {
                 const dl = data & boxdraw_data.DL != 0;
@@ -1053,33 +1053,33 @@ pub const Renderer = struct {
                 if (dl) {
                     const p: i32 = if (dd) -s else 0;
                     const n: i32 = if (du) -s else if (dd) s else 0;
-                    x11.XftDrawRect(self.draw, color, x, midy + s, @intCast(w2_line + s + p), @intCast(s));
-                    x11.XftDrawRect(self.draw, color, x, midy - s, @intCast(w2_line + s + n), @intCast(s));
+                    x11.c.XftDrawRect(self.draw, color, x, midy + s, @intCast(w2_line + s + p), @intCast(s));
+                    x11.c.XftDrawRect(self.draw, color, x, midy - s, @intCast(w2_line + s + n), @intCast(s));
                 }
                 if (du) {
                     const p: i32 = if (dl) -s else 0;
                     const n: i32 = if (dr) -s else if (dl) s else 0;
-                    x11.XftDrawRect(self.draw, color, midx - s, y, @intCast(s), @intCast(h2_line + s + p));
-                    x11.XftDrawRect(self.draw, color, midx + s, y, @intCast(s), @intCast(h2_line + s + n));
+                    x11.c.XftDrawRect(self.draw, color, midx - s, y, @intCast(s), @intCast(h2_line + s + p));
+                    x11.c.XftDrawRect(self.draw, color, midx + s, y, @intCast(s), @intCast(h2_line + s + n));
                 }
                 if (dr) {
                     const p: i32 = if (du) -s else 0;
                     const n: i32 = if (dd) -s else if (du) s else 0;
-                    x11.XftDrawRect(self.draw, color, midx - p, midy - s, @intCast(w - w2_line + p), @intCast(s));
-                    x11.XftDrawRect(self.draw, color, midx - n, midy + s, @intCast(w - w2_line + n), @intCast(s));
+                    x11.c.XftDrawRect(self.draw, color, midx - p, midy - s, @intCast(w - w2_line + p), @intCast(s));
+                    x11.c.XftDrawRect(self.draw, color, midx - n, midy + s, @intCast(w - w2_line + n), @intCast(s));
                 }
                 if (dd) {
                     const p: i32 = if (dr) -s else 0;
                     const n: i32 = if (dl) -s else if (dr) s else 0;
-                    x11.XftDrawRect(self.draw, color, midx + s, midy - p, @intCast(s), @intCast(h - h2_line + p));
-                    x11.XftDrawRect(self.draw, color, midx - s, midy - n, @intCast(s), @intCast(h - h2_line + n));
+                    x11.c.XftDrawRect(self.draw, color, midx + s, midy - p, @intCast(s), @intCast(h - h2_line + p));
+                    x11.c.XftDrawRect(self.draw, color, midx - s, midy - n, @intCast(s), @intCast(h - h2_line + n));
                 }
             }
         }
     }
 
     pub fn resize(self: *Renderer) void {
-        x11.XftDrawChange(self.draw, self.window.buf);
+        x11.c.XftDrawChange(self.draw, self.window.buf);
     }
 
     pub fn resetCursorBlink(self: *Renderer) void {

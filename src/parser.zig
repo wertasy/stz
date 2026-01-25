@@ -163,6 +163,14 @@ pub const Parser = struct {
 
     /// 处理单个字符
     pub fn putc(self: *Parser, c: u21) !void {
+        // 收到任何输入时，如果是正在查看历史，则自动跳回底部 (st 对齐)
+        if (self.term.scr > 0) {
+            self.term.scr = 0;
+            if (self.term.dirty) |dirty| {
+                for (0..dirty.len) |i| dirty[i] = true;
+            }
+        }
+
         const control = (c < 32 or c == 0x7F) or (c >= 0x80 and c <= 0x9F);
 
         // 处理字符串序列（OSC、DCS 等）
@@ -883,6 +891,14 @@ pub const Parser = struct {
         };
     }
 
+    fn setCursor(self: *Parser, x: usize, y: usize) !void {
+        var new_y = y;
+        if (self.term.c.state.origin) {
+            new_y += self.term.top;
+        }
+        try self.moveTo(x, new_y);
+    }
+
     fn moveTo(self: *Parser, x: usize, y: usize) !void {
         // std.log.debug("moveTo: ({d}, {d}) origin={} top={d} bot={d}", .{ x, y, self.term.c.state.origin, self.term.top, self.term.bot });
 
@@ -1273,7 +1289,7 @@ pub const Parser = struct {
             'E' => try self.moveTo(0, @as(usize, @intCast(@as(i32, @intCast(self.term.c.y)) + @as(i32, @intCast(@max(1, self.csi.arg[0])))))),
             'F' => try self.moveTo(0, @as(usize, @intCast(@max(0, @as(i32, @intCast(self.term.c.y)) - @as(i32, @intCast(@max(1, self.csi.arg[0]))))))),
             'G', '`' => try self.moveTo(@as(usize, @intCast(@max(1, self.csi.arg[0]) - 1)), self.term.c.y),
-            'H', 'f' => try self.moveTo(@as(usize, @intCast(@max(1, self.csi.arg[1]) - 1)), @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
+            'H', 'f' => try self.setCursor(@as(usize, @intCast(@max(1, self.csi.arg[1]) - 1)), @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
             'I' => for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| try self.putTab(),
             'J' => try self.eraseDisplay(@truncate(self.csi.arg[0])),
             'K' => try self.eraseLine(@truncate(self.csi.arg[0])),
@@ -1290,7 +1306,7 @@ pub const Parser = struct {
                 }
                 self.term.c.state.wrap_next = false;
             },
-            'd' => try self.moveTo(self.term.c.x, @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
+            'd' => try self.setCursor(self.term.c.x, @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
             'S' => if (self.csi.priv == 0) try self.scrollUp(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'T' => try self.scrollDown(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'h' => try self.setMode(true),
@@ -1385,6 +1401,7 @@ pub const Parser = struct {
         self.term.line = self.term.alt;
         self.term.alt = tmp;
         self.term.mode.alt_screen = !self.term.mode.alt_screen;
+        self.term.scr = 0; // 重置滚动偏移，防止切换屏幕后内容偏移
         if (self.term.dirty) |dirty| for (0..dirty.len) |i| {
             dirty[i] = true;
         };
@@ -1451,6 +1468,10 @@ pub const Parser = struct {
                                 }
                             }
                         }
+                        // 重置滚动区域 (st 对齐: treset)
+                        self.term.top = 0;
+                        self.term.bot = self.term.row - 1;
+
                         try self.swapScreen();
                         // 移除 moveTo(0, 0)，与 st 保持一致，光标位置由应用控制
                     }
@@ -1458,6 +1479,11 @@ pub const Parser = struct {
                     if (self.term.alt != null and self.term.mode.alt_screen) {
                         try self.eraseDisplay(2); // 退出前清除备用屏幕 (匹配 st 行为)
                         try self.swapScreen();
+
+                        // 重置滚动区域 (st 对齐)
+                        self.term.top = 0;
+                        self.term.bot = self.term.row - 1;
+
                         try self.cursorSaveRestore(.load);
                     }
                 }

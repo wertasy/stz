@@ -168,29 +168,29 @@ pub const Config = struct {
 
     pub const KeyBinding = struct {
         mod: u32,
-        key: x11.KeySym,
+        key: x11.c.KeySym,
         action: KeyAction,
         arg: i32 = 0,
     };
 
     // 键盘快捷键配置
     pub const shortcuts = [_]KeyBinding{
-        .{ .mod = x11.ShiftMask, .key = x11.XK_Prior, .action = .ScrollUp, .arg = 0 }, // PageUp
-        .{ .mod = x11.ShiftMask, .key = x11.XK_Next, .action = .ScrollDown, .arg = 0 }, // PageDown
-        .{ .mod = x11.ShiftMask, .key = x11.XK_KP_Prior, .action = .ScrollUp, .arg = 0 },
-        .{ .mod = x11.ShiftMask, .key = x11.XK_KP_Next, .action = .ScrollDown, .arg = 0 },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Prior, .action = .ZoomIn },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Next, .action = .ZoomOut },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Prior, .action = .ZoomIn },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Next, .action = .ZoomOut },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Home, .action = .ZoomReset },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Home, .action = .ZoomReset },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_V, .action = .Paste },
-        .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_v, .action = .Paste },
+        .{ .mod = x11.c.ShiftMask, .key = x11.c.XK_Prior, .action = .ScrollUp, .arg = 0 }, // PageUp
+        .{ .mod = x11.c.ShiftMask, .key = x11.c.XK_Next, .action = .ScrollDown, .arg = 0 }, // PageDown
+        .{ .mod = x11.c.ShiftMask, .key = x11.c.XK_KP_Prior, .action = .ScrollUp, .arg = 0 },
+        .{ .mod = x11.c.ShiftMask, .key = x11.c.XK_KP_Next, .action = .ScrollDown, .arg = 0 },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_Prior, .action = .ZoomIn },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_Next, .action = .ZoomOut },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_KP_Prior, .action = .ZoomIn },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_KP_Next, .action = .ZoomOut },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_Home, .action = .ZoomReset },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_KP_Home, .action = .ZoomReset },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_V, .action = .Paste },
+        .{ .mod = x11.c.ControlMask | x11.c.ShiftMask, .key = x11.c.XK_v, .action = .Paste },
         // Print shortcuts
-        .{ .mod = x11.ControlMask, .key = x11.XK_Print, .action = .PrintToggle },
-        .{ .mod = x11.ShiftMask, .key = x11.XK_Print, .action = .PrintScreen },
-        .{ .mod = 0, .key = x11.XK_Print, .action = .PrintSelection },
+        .{ .mod = x11.c.ControlMask, .key = x11.c.XK_Print, .action = .PrintToggle },
+        .{ .mod = x11.c.ShiftMask, .key = x11.c.XK_Print, .action = .PrintScreen },
+        .{ .mod = 0, .key = x11.c.XK_Print, .action = .PrintSelection },
     };
 };
 

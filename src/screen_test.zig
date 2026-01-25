@@ -9,7 +9,7 @@ const expectEqual = std.testing.expectEqual;
 
 test "Screen initialization" {
     const allocator = std.testing.allocator;
-    var term = types.Term{
+    var term = terminal.Terminal{
         .allocator = allocator,
     };
     try screen.init(&term, 24, 80, allocator);
@@ -23,7 +23,7 @@ test "Screen initialization" {
 
 test "Screen dirty flag" {
     const allocator = std.testing.allocator;
-    var term = types.Term{
+    var term = terminal.Terminal{
         .allocator = allocator,
     };
     try screen.init(&term, 24, 80, allocator);
@@ -43,7 +43,7 @@ test "Screen dirty flag" {
 
 test "Screen full dirty" {
     const allocator = std.testing.allocator;
-    var term = types.Term{
+    var term = terminal.Terminal{
         .allocator = allocator,
     };
     try screen.init(&term, 24, 80, allocator);
@@ -63,7 +63,7 @@ test "Screen full dirty" {
 
 test "Clear dirty flags" {
     const allocator = std.testing.allocator;
-    var term = types.Term{
+    var term = terminal.Terminal{
         .allocator = allocator,
     };
     try screen.init(&term, 24, 80, allocator);
@@ -90,7 +90,7 @@ test "Clear dirty flags" {
 
 test "Screen scroll" {
     const allocator = std.testing.allocator;
-    var term = types.Term{
+    var term = terminal.Terminal{
         .allocator = allocator,
     };
     try screen.init(&term, 24, 80, allocator);

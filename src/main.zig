@@ -46,7 +46,7 @@
 //!
 //!     // 3. 如果需要渲染，更新屏幕
 //!     if (pending_render) {
-//!         renderer.render(&terminal.term);  // 渲染屏幕到 Pixmap
+//!         renderer.render(&terminal);  // 渲染屏幕到 Pixmap
 //!         window.present();                  // 显示 Pixmap 到窗口
 //!         pending_render = false;
 //!     }
@@ -109,6 +109,7 @@ const c = @cImport({
 const x11 = @import("x11.zig");
 
 const Terminal = @import("terminal.zig").Terminal;
+const Parser = @import("parser.zig").Parser;
 const PTY = @import("pty.zig").PTY;
 const Window = @import("window.zig").Window;
 const Renderer = @import("renderer.zig").Renderer;
@@ -207,6 +208,42 @@ pub fn main() !u8 {
     // 但此时窗口内容为空（PTY 还未初始化，还没有输出）。
     window.show();
 
+    // ========== 等待窗口映射完成（与原版 st 对齐）==========
+    //
+    // 原版 st 在 run() 函数中等待 MapNotify 事件，确保窗口完全映射后再继续。
+    // 同时处理可能的 ConfigureNotify 事件，以获取准确的窗口尺寸。
+    var mapped = false;
+    while (!mapped) {
+        var event: x11.c.XEvent = undefined;
+        _ = x11.c.XNextEvent(window.dpy, &event);
+        if (x11.c.XFilterEvent(&event, x11.c.None) != 0) continue;
+
+        switch (event.type) {
+            x11.c.MapNotify => {
+                mapped = true;
+            },
+            x11.c.ConfigureNotify => {
+                // 窗口管理器可能已经调整了窗口尺寸
+                const width = @as(u32, @intCast(event.xconfigure.width));
+                const height = @as(u32, @intCast(event.xconfigure.height));
+                if (width != window.width or height != window.height) {
+                    window.width = width;
+                    window.height = height;
+                    const b = config.Config.window.border_pixels;
+                    const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
+                    const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
+                    const new_cols = @max(1, avail_w / window.cell_width);
+                    const new_rows = @max(1, avail_h / window.cell_height);
+                    window.hborder_px = (window.width - @as(u32, @intCast(new_cols)) * window.cell_width) / 2;
+                    window.vborder_px = (window.height - @as(u32, @intCast(new_rows)) * window.cell_height) / 2;
+                    // 此时终端和 PTY 尚未初始化，暂不调整它们
+                    // 后续的 ConfigureNotify 事件会处理调整
+                }
+            },
+            else => {},
+        }
+    }
+
     // ========== 设置 TERM 环境变量 ==========
     //
     // TERM 环境变量告诉 shell 程序终端的类型。
@@ -246,15 +283,15 @@ pub fn main() !u8 {
     //
     // 初始化后，屏幕缓冲区被填充为空格字符。
     var terminal = try Terminal.init(rows, cols, allocator);
+    defer terminal.deinit();
 
-    // ========== 修复 Parser 中的 Term 和 PTY 指针 ==========
+    // ========== 设置 Parser ==========
     //
     // Parser 需要 Term 和 PTY 的引用：
     // - Term: 解析转义序列后，需要更新 Term 的屏幕缓冲区
     // - PTY: 某些转义序列需要向 PTY 发送响应（如终端标识查询）
-    terminal.parser.term = &terminal.term;
-    terminal.parser.pty = &pty;
-    defer terminal.deinit();
+    var parser = try Parser.init(&terminal, &pty, allocator);
+    defer parser.deinit();
 
     // ========== 设置 PTY 为非阻塞模式 ==========
     //
@@ -274,7 +311,7 @@ pub fn main() !u8 {
     // 1. 处理键盘输入（KeyPress 事件）
     // 2. 将特殊键转换为转义序列（如方向键 → ESC [ A）
     // 3. 发送给 PTY
-    var input = Input.init(&pty, &terminal.term);
+    var input = Input.init(&pty, &terminal);
 
     // ========== 初始化选择器 ==========
     //
@@ -291,7 +328,7 @@ pub fn main() !u8 {
     // URL 检测器负责：
     // 1. 识别屏幕上的 URL（http://、https://、ftp://）
     // 2. Ctrl+点击打开 URL（使用 xdg-open）
-    var url_detector = UrlDetector.init(&terminal.term, allocator);
+    var url_detector = UrlDetector.init(&terminal, allocator);
 
     // ========== 初始化打印器 ==========
     //
@@ -355,14 +392,14 @@ pub fn main() !u8 {
     //
     // 渲染初始屏幕（全空格），然后显示窗口。
     // 此时 PTY 还未输出任何内容，所以屏幕是空的。
-    if (try renderer.render(&terminal.term, &selector)) |_| {
+    if (try renderer.render(&terminal, &selector)) |_| {
         window.present();
     }
 
     // ========== 主循环 ==========
     while (!quit) {
         // Alias term for easy access
-        const term = &terminal.term;
+        const term = &terminal;
 
         // ========== 步骤 1：处理所有挂起的 X11 事件 ==========
         //
@@ -441,13 +478,13 @@ pub fn main() !u8 {
                         // Print key handling
                         if (ctrl) {
                             // Ctrl+Print: toggle printer mode
-                            try printer.toggle(&terminal.term);
+                            try printer.toggle(&terminal);
                         } else if (shift) {
                             // Shift+Print: print screen
-                            try printer.printScreen(&terminal.term);
+                            try printer.printScreen(&terminal);
                         } else {
                             // Print: print selection
-                            try printer.printSelection(&terminal.term, &selector);
+                            try printer.printSelection(&terminal, &selector);
                         }
                     } else {
                         // 开始输入时清除选择高亮
@@ -464,9 +501,23 @@ pub fn main() !u8 {
                             var status: x11.c.Status = undefined;
                             var kbuf: [32]u8 = undefined;
                             const n = x11.c.Xutf8LookupString(ic, &ev.xkey, &kbuf, kbuf.len, null, &status);
-                            if (status == x11.c.XLookupChars or status == x11.c.XLookupBoth) {
-                                if (n > 0) {
-                                    _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+
+                            // Debug logging for input troubleshooting
+                            // std.log.debug("XIM Input: n={d}, status={d}", .{n, status});
+
+                            // 宽松的输入检查：只要有返回数据且未溢出缓冲区，就写入 PTY
+                            // 移除对 status 的严格检查，因为某些环境下 status 可能不符合预期 (如 XLookupKeySym)
+                            // 这与原版 st 的行为一致 (st 忽略 status，仅检查 len)
+                            if (n > 0 and n <= kbuf.len) {
+                                _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+                            } else if (n == 0) {
+                                // Fallback: If XIM returns nothing (e.g. broken locale), try raw XLookupString
+                                // This ensures basic ASCII input works even if IME is misconfigured
+                                var buf: [32]u8 = undefined;
+                                const len = x11.c.XLookupString(&ev.xkey, &buf, buf.len, null, null);
+                                if (len > 0) {
+                                    std.log.info("XIM fallback used for keycode {d}: '{s}'\n", .{ ev.xkey.keycode, buf[0..@as(usize, @intCast(len))] });
+                                    _ = try pty.write(buf[0..@as(usize, @intCast(len))]);
                                 }
                             }
                         } else {
@@ -498,12 +549,12 @@ pub fn main() !u8 {
                         window.vborder_px = (window.height - @as(u32, @intCast(new_rows)) * window.cell_height) / 2;
 
                         if (new_cols > 0 and new_rows > 0) {
-                            if (new_cols != terminal.term.col or new_rows != terminal.term.row) {
+                            if (new_cols != terminal.col or new_rows != terminal.row) {
                                 try terminal.resize(new_rows, new_cols);
                                 try pty.resize(new_cols, new_rows);
                                 window.resizeBuffer(window.width, window.height);
                                 renderer.resize();
-                                if (try renderer.render(&terminal.term, &selector)) |_| {
+                                if (try renderer.render(&terminal, &selector)) |_| {
                                     window.present(); // Resize always needs full present
                                 }
                             }
@@ -511,9 +562,9 @@ pub fn main() !u8 {
                     }
                 },
                 x11.c.Expose => {
-                    if (!terminal.term.mode.sync_update) {
-                        if (try renderer.render(&terminal.term, &selector)) |_| {
-                            try renderer.renderCursor(&terminal.term);
+                    if (!terminal.mode.sync_update) {
+                        if (try renderer.render(&terminal, &selector)) |_| {
+                            try renderer.renderCursor(&terminal);
                             window.present();
                         } else {
                             // Expose should always refresh window from pixmap at least
@@ -533,8 +584,8 @@ pub fn main() !u8 {
                     var mx = e.x - border_x;
                     var my = e.y - border_y;
 
-                    const term_w = @as(c_int, @intCast(terminal.term.col)) * cell_w;
-                    const term_h = @as(c_int, @intCast(terminal.term.row)) * cell_h;
+                    const term_w = @as(c_int, @intCast(terminal.col)) * cell_w;
+                    const term_h = @as(c_int, @intCast(terminal.row)) * cell_h;
 
                     mx = @max(0, @min(mx, term_w - 1));
                     my = @max(0, @min(my, term_h - 1));
@@ -654,8 +705,8 @@ pub fn main() !u8 {
                     var mx = e.x - border_x;
                     var my = e.y - border_y;
 
-                    const term_w = @as(c_int, @intCast(terminal.term.col)) * cell_w;
-                    const term_h = @as(c_int, @intCast(terminal.term.row)) * cell_h;
+                    const term_w = @as(c_int, @intCast(terminal.col)) * cell_w;
+                    const term_h = @as(c_int, @intCast(terminal.row)) * cell_h;
 
                     mx = @max(0, @min(mx, term_w - 1));
                     my = @max(0, @min(my, term_h - 1));
@@ -663,7 +714,7 @@ pub fn main() !u8 {
                     const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
                     const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
-                    if (terminal.term.mode.mouse and !shift) {
+                    if (terminal.mode.mouse and !shift) {
                         try input.sendMouseReport(cx, cy, e.button, e.state, 1);
                         mouse_pressed = false;
                         pressed_button = 0;
@@ -694,8 +745,8 @@ pub fn main() !u8 {
                     var mx = e.x - border_x;
                     var my = e.y - border_y;
 
-                    const term_w = @as(c_int, @intCast(terminal.term.col)) * cell_w;
-                    const term_h = @as(c_int, @intCast(terminal.term.row)) * cell_h;
+                    const term_w = @as(c_int, @intCast(terminal.col)) * cell_w;
+                    const term_h = @as(c_int, @intCast(terminal.row)) * cell_h;
 
                     mx = @max(0, @min(mx, term_w - 1));
                     my = @max(0, @min(my, term_h - 1));
@@ -703,10 +754,10 @@ pub fn main() !u8 {
                     const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
                     const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
-                    if (terminal.term.mode.mouse and !shift) {
+                    if (terminal.mode.mouse and !shift) {
                         // Only send motion if button is pressed or mouse_many/mouse_motion is set
-                        const send_motion = terminal.term.mode.mouse_many or
-                            (terminal.term.mode.mouse_motion and mouse_pressed);
+                        const send_motion = terminal.mode.mouse_many or
+                            (terminal.mode.mouse_motion and mouse_pressed);
                         if (send_motion) {
                             try input.sendMouseReport(cx, cy, 0, e.state, 2);
                         }
@@ -852,9 +903,9 @@ pub fn main() !u8 {
 
         // 渲染检查: 如果有待处理的渲染请求且时间间隔已到，则渲染
         if (pending_render and (now - last_render_time >= min_frame_time_ms)) {
-            if (!terminal.term.mode.sync_update) {
-                const rect = try renderer.render(&terminal.term, &selector);
-                try renderer.renderCursor(&terminal.term);
+            if (!terminal.mode.sync_update) {
+                const rect = try renderer.render(&terminal, &selector);
+                try renderer.renderCursor(&terminal);
 
                 if (rect) |r| {
                     window.presentPartial(r);
@@ -942,7 +993,7 @@ pub fn main() !u8 {
             };
 
             if (n > 0) {
-                try terminal.processBytes(read_buffer[0..n]);
+                try parser.processBytes(read_buffer[0..n]);
                 pending_render = true;
             }
         }

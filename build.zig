@@ -40,7 +40,7 @@ pub fn build(b: *std.Build) void {
     // 测试步骤
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/modules/parser_test.zig"),
+            .root_source_file = b.path("src/parser_test.zig"),
             .target = target,
             .optimize = optimize,
         }),
@@ -55,7 +55,7 @@ pub fn build(b: *std.Build) void {
 
     const selection_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/modules/selection_test.zig"),
+            .root_source_file = b.path("src/selection_test.zig"),
             .target = target,
             .optimize = optimize,
         }),

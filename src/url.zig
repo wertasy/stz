@@ -4,8 +4,9 @@
 const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
+const terminal = @import("terminal.zig");
 
-const Term = types.Term;
+const Terminal = terminal.Terminal;
 const Glyph = types.Glyph;
 
 pub const UrlError = error{
@@ -14,11 +15,11 @@ pub const UrlError = error{
 
 /// URL 检测器
 pub const UrlDetector = struct {
-    term: *Term,
+    term: *Terminal,
     allocator: std.mem.Allocator,
 
     /// 初始化 URL 检测器
-    pub fn init(term: *Term, allocator: std.mem.Allocator) UrlDetector {
+    pub fn init(term: *Terminal, allocator: std.mem.Allocator) UrlDetector {
         return UrlDetector{
             .term = term,
             .allocator = allocator,

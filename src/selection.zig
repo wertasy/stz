@@ -50,6 +50,7 @@
 
 const std = @import("std");
 const types = @import("types.zig");
+const Terminal = @import("terminal.zig").Terminal;
 const config = @import("config.zig");
 const x11 = @import("x11.zig");
 const scr_mod = @import("screen.zig");
@@ -93,7 +94,7 @@ pub const Selector = struct {
     }
 
     /// 开始选择
-    pub fn start(self: *Selector, term: *types.Term, col: usize, row: usize, snap_mode: SelectionSnap) void {
+    pub fn start(self: *Selector, term: *Terminal, col: usize, row: usize, snap_mode: SelectionSnap) void {
         _ = self;
         const sel = &term.selection;
         sel.mode = .empty; // 已点击，但还没有拖动扩展
@@ -112,7 +113,7 @@ pub const Selector = struct {
     }
 
     /// 扩展选择
-    pub fn extend(self: *Selector, term: *types.Term, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
+    pub fn extend(self: *Selector, term: *Terminal, col: usize, row: usize, sel_type: SelectionType, done: bool) void {
         const sel = &term.selection;
         // idle 表示完全空闲（未开始或已清除），不能扩展
         if (sel.mode == .idle) {
@@ -142,7 +143,7 @@ pub const Selector = struct {
     }
 
     /// 标准化选择
-    pub fn normalize(self: *Selector, term: *types.Term) void {
+    pub fn normalize(self: *Selector, term: *Terminal) void {
         const sel = &term.selection;
         // 只有在 ready 模式下才计算有效范围，支持单字符（ob == oe）
         if (sel.mode != .ready and sel.mode != .empty) return;
@@ -170,7 +171,7 @@ pub const Selector = struct {
     }
 
     /// 吸附到单词或行
-    pub fn snap(self: *Selector, term: *const types.Term, point: *Point, direction: i8) void {
+    pub fn snap(self: *Selector, term: *const Terminal, point: *Point, direction: i8) void {
         _ = self;
         const sel = &term.selection;
         switch (sel.snap) {
@@ -215,13 +216,13 @@ pub const Selector = struct {
     }
 
     /// 检查是否选中
-    pub fn isSelected(self: *Selector, term: *const types.Term, x: usize, y: usize) bool {
+    pub fn isSelected(self: *Selector, term: *const Terminal, x: usize, y: usize) bool {
         _ = self;
         return scr_mod.isInsideSelection(term, x, y);
     }
 
     /// 获取选中的文本
-    pub fn getText(self: *Selector, term: *const types.Term) ![]u8 {
+    pub fn getText(self: *Selector, term: *const Terminal) ![]u8 {
         const sel = &term.selection;
         // nb.x 为 maxInt 表示没有有效选择范围
         if (sel.nb.x == std.math.maxInt(usize)) {
@@ -292,19 +293,19 @@ pub const Selector = struct {
     }
 
     /// 复制当前选中的文本
-    pub fn copy(self: *Selector, term: *const types.Term) !void {
+    pub fn copy(self: *Selector, term: *const Terminal) !void {
         _ = try self.getText(term);
         try self.copyToClipboard();
     }
 
     /// 清除选择
-    pub fn clear(self: *Selector, term: *types.Term) void {
+    pub fn clear(self: *Selector, term: *Terminal) void {
         _ = self;
         scr_mod.selClear(term);
     }
 
     /// 清除高亮标记
-    pub fn clearHighlights(self: *Selector, term: *types.Term) void {
+    pub fn clearHighlights(self: *Selector, term: *Terminal) void {
         _ = self;
         _ = term;
         // TODO: 清除脏标记或重绘选择区域
@@ -389,7 +390,7 @@ pub const Selector = struct {
     }
 
     /// 处理 SelectionClear 事件
-    pub fn handleSelectionClear(self: *Selector, term: *types.Term, event: *const x11.c.XSelectionClearEvent) void {
+    pub fn handleSelectionClear(self: *Selector, term: *Terminal, event: *const x11.c.XSelectionClearEvent) void {
         _ = event;
         // 如果我们丢失了 PRIMARY 选区的所有权，清除当前选择
         self.clear(term);

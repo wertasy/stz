@@ -82,25 +82,24 @@ stz/
 ├── TODO.md               # 待完成任务清单
 └── src/
     ├── main.zig          # 主程序入口和事件循环
-    └── modules/
-        ├── config.zig    # 配置管理
-        ├── types.zig     # 核心数据类型
-        ├── x11.zig       # X11 C API 绑定
-        ├── window.zig    # X11 窗口管理
-        ├── renderer.zig  # Xft 字符渲染
-        ├── input.zig     # 键盘输入处理
-        ├── terminal.zig  # 终端逻辑核心
-        ├── screen.zig    # 屏幕缓冲区
-        ├── parser.zig    # ANSI 转义序列解析
-        ├── pty.zig       # PTY 管理
-        ├── unicode.zig   # UTF-8 工具
-        ├── selection.zig # 文本选择
-        └── printer.zig  # 打印/导出功能
+    ├── config.zig       # 配置管理
+    ├── types.zig        # 核心数据类型
+    ├── x11.zig          # X11 C API 绑定
+    ├── window.zig       # X11 窗口管理
+    ├── renderer.zig     # Xft 字符渲染
+    ├── input.zig        # 键盘输入处理
+    ├── terminal.zig     # 终端逻辑核心
+    ├── screen.zig       # 屏幕缓冲区
+    ├── parser.zig       # ANSI 转义序列解析
+    ├── pty.zig          # PTY 管理
+    ├── unicode.zig      # UTF-8 工具
+    ├── selection.zig    # 文本选择
+    └── printer.zig      # 打印/导出功能
 ```
 
 ## ⚙️ 配置
 
-配置选项在 `src/modules/config.zig` 中定义：
+配置选项在 `src/config.zig` 中定义：
 
 - **字体**: 默认 "Monospace:pixelsize=20"
 - **窗口**: 默认 120x35

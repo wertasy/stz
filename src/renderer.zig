@@ -53,10 +53,11 @@ const selection = @import("selection.zig");
 const boxdraw = @import("boxdraw.zig");
 const boxdraw_data = @import("boxdraw_data.zig");
 const screen_mod = @import("screen.zig");
-const Window = @import("window.zig").Window;
+const terminal = @import("terminal.zig");
 
+const Window = @import("window.zig").Window;
 const Glyph = types.Glyph;
-const Term = types.Term;
+const Terminal = terminal.Terminal;
 
 pub const RendererError = error{
     XftDrawCreateFailed,
@@ -117,22 +118,21 @@ pub const Renderer = struct {
             if (font == null) return error.FontLoadFailed;
         }
 
-        // Calculate average character width from ASCII printable characters
-        var width_sum: u32 = 0;
-        var count: u32 = 0;
-        var ascii_char: u8 = ' ';
-        while (ascii_char <= '~') : (ascii_char += 1) {
-            if (x11.c.XftCharExists(window.dpy, font, ascii_char) != 0) {
-                var extents: x11.c.XGlyphInfo = undefined;
-                x11.c.XftTextExtents32(window.dpy, font, &@as(u32, ascii_char), 1, &extents);
-                width_sum += @intCast(extents.xOff);
-                count += 1;
-            }
-        }
+        // Calculate character width using the same method as st:
+        // Measure all ASCII printable characters together to account for kerning
+        // This matches st's approach: entire string is measured together,
+        // then divided by length to get average width per character
+        const ascii_printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        var extents: x11.c.XGlyphInfo = undefined;
+        x11.c.XftTextExtents8(window.dpy, font, ascii_printable, @intCast(ascii_printable.len), &extents);
 
-        const avg_width = if (count > 0) @as(f32, @floatFromInt(width_sum)) / @as(f32, @floatFromInt(count)) else @as(f32, @floatFromInt(font.*.max_advance_width));
-        const char_width = @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale)));
-        const char_height = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.ascent + font.*.descent)) * config.Config.font.chscale)));
+        // Divide by string length to get average width (accounts for kerning/ligatures)
+        const avg_width = if (ascii_printable.len > 0) @as(f32, @floatFromInt(extents.xOff)) / @as(f32, @floatFromInt(ascii_printable.len)) else @as(f32, @floatFromInt(font.*.max_advance_width));
+        const char_width = @max(1, @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale))));
+        const char_height = @max(1, @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.ascent + font.*.descent)) * config.Config.font.chscale))));
+
+        std.log.info("Font loaded. Metrics: avg_width={d:.2}, char_width={d}, char_height={d}, ascent={d}, descent={d}", .{ avg_width, char_width, char_height, font.*.ascent, font.*.descent });
+
         const ascent = font.*.ascent;
         const descent = font.*.descent;
 
@@ -288,22 +288,14 @@ pub const Renderer = struct {
         if (font_italic_bold == null) font_italic_bold = self.font;
         self.font_italic_bold = font_italic_bold.?;
 
-        // Recalculate metrics
-        var width_sum: u32 = 0;
-        var count: u32 = 0;
-        var ascii_char: u8 = ' ';
-        while (ascii_char <= '~') : (ascii_char += 1) {
-            if (x11.c.XftCharExists(self.window.dpy, self.font, ascii_char) != 0) {
-                var extents: x11.c.XGlyphInfo = undefined;
-                x11.c.XftTextExtents32(self.window.dpy, self.font, &@as(u32, ascii_char), 1, &extents);
-                width_sum += @intCast(extents.xOff);
-                count += 1;
-            }
-        }
+        // Recalculate metrics using the same method as init()
+        const ascii_printable = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+        var extents: x11.c.XGlyphInfo = undefined;
+        x11.c.XftTextExtents8(self.window.dpy, self.font, ascii_printable, @intCast(ascii_printable.len), &extents);
 
-        const avg_width = if (count > 0) @as(f32, @floatFromInt(width_sum)) / @as(f32, @floatFromInt(count)) else @as(f32, @floatFromInt(self.font.*.max_advance_width));
-        self.char_width = @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale)));
-        self.char_height = @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(self.font.*.ascent + self.font.*.descent)) * config.Config.font.chscale)));
+        const avg_width = if (ascii_printable.len > 0) @as(f32, @floatFromInt(extents.xOff)) / @as(f32, @floatFromInt(ascii_printable.len)) else @as(f32, @floatFromInt(self.font.*.max_advance_width));
+        self.char_width = @max(1, @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale))));
+        self.char_height = @max(1, @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(self.font.*.ascent + self.font.*.descent)) * config.Config.font.chscale))));
         self.ascent = self.font.*.ascent;
         self.descent = self.font.*.descent;
 
@@ -336,7 +328,7 @@ pub const Renderer = struct {
         self.truecolor_cache.deinit();
     }
 
-    fn getColor(self: *Renderer, term: *Term, index: u32) !x11.c.XftColor {
+    fn getColor(self: *Renderer, term: *Terminal, index: u32) !x11.c.XftColor {
         // 24位真彩色使用缓存
         if (index >= 0x10000000) {
             if (self.truecolor_cache.get(index)) |color| {
@@ -390,7 +382,7 @@ pub const Renderer = struct {
         return self.colors[index];
     }
 
-    fn getIndexColor(self: *Renderer, term: *Term, index: u32) [3]u8 {
+    fn getIndexColor(self: *Renderer, term: *Terminal, index: u32) [3]u8 {
         _ = self;
 
         // 24 位真彩色 (0xFFRRGGBB 格式)
@@ -490,11 +482,23 @@ pub const Renderer = struct {
         return f;
     }
 
-    fn drawRun(self: *Renderer, term: *Term, buf: []const u32, x: i32, y: i32, font: *x11.c.XftFont, fg: *x11.c.XftColor, glyph: Glyph, width_pixels: i32) !void {
+    fn drawRun(self: *Renderer, term: *Terminal, buf: []const u32, x: i32, y: i32, font: *x11.c.XftFont, fg: *x11.c.XftColor, glyph: Glyph, width_pixels: i32) !void {
         if (buf.len == 0) return;
 
+        // Convert u32 run to UTF-8
+        // XftDrawString32 has issues with some fonts/emojis, using Utf8 is more robust (aligns with st)
+        var utf8_buf: [4096]u8 = undefined;
+        var utf8_len: usize = 0;
+        const unicode = @import("unicode.zig");
+
+        for (buf) |codepoint| {
+            if (utf8_len + 4 > utf8_buf.len) break;
+            const len = try unicode.encode(@intCast(codepoint), utf8_buf[utf8_len..]);
+            utf8_len += len;
+        }
+
         // Draw string
-        x11.c.XftDrawString32(self.draw, fg, font, x, y + self.ascent, buf.ptr, @intCast(buf.len));
+        x11.c.XftDrawStringUtf8(self.draw, fg, font, x, y + self.ascent, &utf8_buf, @intCast(utf8_len));
 
         // Draw decorations
         if (glyph.attr.underline) {
@@ -553,7 +557,7 @@ pub const Renderer = struct {
         }
     }
 
-    pub fn render(self: *Renderer, term: *Term, selector: *selection.Selector) !?x11.c.XRectangle {
+    pub fn render(self: *Renderer, term: *Terminal, selector: *selection.Selector) !?x11.c.XRectangle {
         if (term.line == null) return null;
 
         // Default background color
@@ -586,6 +590,7 @@ pub const Renderer = struct {
         var max_y: ?usize = null;
 
         // Iterate over rows
+        // std.log.debug("Rendering... rows={d} cols={d}", .{term.row, term.col});
         for (0..term.row) |y| {
             // Determine which line to draw
             const line_data = screen_mod.getVisibleLine(term, y);
@@ -593,11 +598,12 @@ pub const Renderer = struct {
             // 脏标记检查逻辑优化：
             // 只有在非滚动查看状态且没有活动的文本选择时，才通过脏标记跳过渲染。
             // 在备用屏幕 (vi/btop) 下，脏标记仍然是有效的，因为 Parser 同样会正确设置 dirty 标志。
-            if (term.scr == 0 and term.selection.mode == .idle) {
-                if (term.dirty) |dirty| {
-                    if (y < dirty.len and !dirty[y]) continue;
-                }
-            }
+            // DEBUG: 暂时禁用脏标记检查，强制重绘以排查显示问题
+            // if (term.scr == 0 and term.selection.mode == .idle) {
+            //     if (term.dirty) |dirty| {
+            //         if (y < dirty.len and !dirty[y]) continue;
+            //     }
+            // }
 
             // Update dirty range
             if (min_y == null) min_y = y;
@@ -810,7 +816,7 @@ pub const Renderer = struct {
         return null;
     }
 
-    pub fn renderCursor(self: *Renderer, term: *Term) !void {
+    pub fn renderCursor(self: *Renderer, term: *Terminal) !void {
         if (term.mode.hide_cursor) return;
 
         const cx = term.c.x;
@@ -869,18 +875,28 @@ pub const Renderer = struct {
                 x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
-                    const char = @as(u32, glyph.u);
+                    const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                    x11.c.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
+
+                    var utf8_buf: [4]u8 = undefined;
+                    const unicode = @import("unicode.zig");
+                    const len = try unicode.encode(@intCast(codepoint), &utf8_buf);
+
+                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos, y_pos + self.ascent, &utf8_buf, @intCast(len));
                 }
             },
             .steady_block => { // steady block
                 x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
-                    const char = @as(u32, glyph.u);
+                    const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                    x11.c.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
+
+                    var utf8_buf: [4]u8 = undefined;
+                    const unicode = @import("unicode.zig");
+                    const len = try unicode.encode(@intCast(codepoint), &utf8_buf);
+
+                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos, y_pos + self.ascent, &utf8_buf, @intCast(len));
                 }
             },
             .blinking_underline => { // blinking underline
@@ -909,9 +925,14 @@ pub const Renderer = struct {
                 x11.c.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(self.char_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, 258);
-                    const char = @as(u32, glyph.u);
+                    const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                    x11.c.XftDrawString32(self.draw, &fg, font, x_pos, y_pos + self.ascent, &char, 1);
+
+                    var utf8_buf: [4]u8 = undefined;
+                    const unicode = @import("unicode.zig");
+                    const len = try unicode.encode(@intCast(codepoint), &utf8_buf);
+
+                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos, y_pos + self.ascent, &utf8_buf, @intCast(len));
                 }
             },
         }

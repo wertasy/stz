@@ -18,15 +18,28 @@
 //! - 当内容超出屏幕顶部时，会被推入历史缓冲区
 //! - 滚动区域由 term.top 和 term.bot 限定
 //! - 滚动操作只在 [top, bot] 范围内有效
+//!
+//! 屏幕缓冲区结构：
+//! - 主屏幕 (line): 普通的命令行界面
+//! - 备用屏幕 (alt): TUI 程序专用（如 vim）
+//! - 历史缓冲区 (hist): 循环缓冲区，存储滚出的内容
+//! - 脏标记 (dirty): dirty[i]=true 表示第 i 行需要重新渲染
+//!
+//! 滚动机制：
+//! - 当内容超出屏幕顶部时，会被推入历史缓冲区
+//! - 滚动区域由 term.top 和 term.bot 限定
+//! - 滚动操作只在 [top, bot] 范围内有效
 
 const std = @import("std");
 const types = @import("types.zig");
+const config = @import("config.zig");
 
 const Glyph = types.Glyph;
-const Term = types.Term;
+const Terminal = @import("terminal.zig").Terminal;
 const GlyphAttr = types.GlyphAttr;
 const TCursor = types.TCursor;
 const Selection = types.Selection;
+const Charset = types.Charset;
 
 pub const ScreenError = error{
     InvalidPosition,
@@ -34,11 +47,13 @@ pub const ScreenError = error{
 };
 
 /// 初始化终端屏幕
-pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !void {
+pub fn init(term: *Terminal, row: usize, col: usize, allocator: std.mem.Allocator) !void {
+    // ========== 屏幕尺寸 ==========
     term.row = row;
     term.col = col;
     term.allocator = allocator;
 
+    // ========== 分配内存 ==========
     // 分配主屏幕
     const line_buf = try allocator.alloc([]Glyph, row);
     errdefer allocator.free(line_buf);
@@ -50,7 +65,7 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
     term.alt = alt_buf;
 
     // 分配历史缓冲区
-    const hist_rows = @import("config.zig").Config.scroll.history_lines;
+    const hist_rows = config.Config.scroll.history_lines;
     const hist_buf = try allocator.alloc([]Glyph, hist_rows);
     errdefer allocator.free(hist_buf);
     term.hist = hist_buf;
@@ -69,6 +84,7 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
     errdefer allocator.free(tabs_buf);
     term.tabs = tabs_buf;
 
+    // ========== 初始化屏幕内容 ==========
     // 初始化每一行
     for (0..row) |y| {
         term.line.?[y] = try allocator.alloc(Glyph, col);
@@ -90,7 +106,7 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
         }
     }
 
-    // 初始化制表符
+    // ========== 初始化制表符 ==========
     for (term.tabs.?) |*tab| {
         tab.* = false;
     }
@@ -102,12 +118,39 @@ pub fn init(term: *Term, row: usize, col: usize, allocator: std.mem.Allocator) !
         }
     }
 
-    // 初始化光标
+    // ========== 初始化字符集 ==========
+    term.trantbl = [_]Charset{.usa} ** 4;
+    term.charset = 0;
+    term.icharset = 0;
+
+    // ========== 初始化光标 ==========
     term.c = TCursor{};
+
+    // ========== 初始化保存的光标状态 ==========
+    term.cursor_style = config.Config.cursor.style;
+    for (0..2) |i| {
+        term.saved_cursor[i] = types.SavedCursor{
+            .attr = term.c.attr,
+            .x = 0,
+            .y = 0,
+            .state = .default,
+            .style = .blinking_bar,
+            .trantbl = [_]Charset{.usa} ** 4,
+            .charset = 0,
+        };
+    }
+
+    // ========== 设置默认模式 ==========
+    term.mode.utf8 = true;
+    term.mode.wrap = true;
+
+    // ========== 初始化滚动区域 ==========
+    term.top = 0;
+    term.bot = row - 1;
 }
 
 /// 清理终端屏幕资源
-pub fn deinit(term: *Term) void {
+pub fn deinit(term: *Terminal) void {
     const allocator = term.allocator;
 
     if (term.line) |lines| {
@@ -147,7 +190,7 @@ pub fn deinit(term: *Term) void {
 }
 
 /// 获取当前可见的行数据（考虑滚动偏移）
-pub fn getVisibleLine(term: *const Term, y: usize) []Glyph {
+pub fn getVisibleLine(term: *const Terminal, y: usize) []Glyph {
     // 如果处于备用屏幕模式，直接返回当前行（因为 line/alt 已经交换过了）
     // 此时 term.line 指向的是备用屏幕缓冲区
     if (term.mode.alt_screen) {
@@ -178,7 +221,7 @@ pub fn getVisibleLine(term: *const Term, y: usize) []Glyph {
 
 /// 调整终端大小
 /// 参考 st 的 tresize 实现，滑动屏幕以保持光标位置
-pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
+pub fn resize(term: *Terminal, new_row: usize, new_col: usize) !void {
     const allocator = term.allocator;
 
     if (new_row < 1 or new_col < 1) {
@@ -352,7 +395,7 @@ pub fn resize(term: *Term, new_row: usize, new_col: usize) !void {
 }
 
 /// 清除区域
-pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !void {
+pub fn clearRegion(term: *Terminal, x1: usize, y1: usize, x2: usize, y2: usize) !void {
     const gx1 = @min(x1, x2);
     const gx2 = @max(x1, x2);
     const gy1 = @min(y1, y2);
@@ -391,13 +434,13 @@ pub fn clearRegion(term: *Term, x1: usize, y1: usize, x2: usize, y2: usize) !voi
 }
 
 /// 屏幕向上滚动
-pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
+pub fn scrollUp(term: *Terminal, orig: usize, n: usize) !void {
     if (orig > term.bot) return;
     const limit_n = @min(n, term.bot - orig + 1);
     if (limit_n == 0) return;
 
     // Log scroll event
-    std.log.debug("SCROLL_UP: orig={d}, n={d}, bot={d}, cursor=({d},{d})", .{ orig, n, term.bot, term.c.x, term.c.y });
+    // std.log.debug("SCROLL_UP: orig={d}, n={d}, bot={d}, cursor=({d},{d})", .{ orig, n, term.bot, term.c.x, term.c.y });
 
     const screen = term.line;
 
@@ -448,7 +491,7 @@ pub fn scrollUp(term: *Term, orig: usize, n: usize) !void {
 }
 
 /// 屏幕向下滚动
-pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
+pub fn scrollDown(term: *Terminal, orig: usize, n: usize) !void {
     if (orig > term.bot) return;
     const limit_n = @min(n, term.bot - orig + 1);
     if (limit_n == 0) return;
@@ -485,7 +528,7 @@ pub fn scrollDown(term: *Term, orig: usize, n: usize) !void {
 }
 
 /// 设置所有行为脏
-pub fn setFullDirty(term: *Term) void {
+pub fn setFullDirty(term: *Terminal) void {
     if (term.dirty) |dirty| {
         for (dirty) |*d| {
             d.* = true;
@@ -494,7 +537,7 @@ pub fn setFullDirty(term: *Term) void {
 }
 
 /// 设置行为脏
-pub fn setDirty(term: *Term, top: usize, bot: usize) void {
+pub fn setDirty(term: *Terminal, top: usize, bot: usize) void {
     const t = @min(top, term.row - 1);
     const b = @min(bot, term.row - 1);
 
@@ -508,7 +551,7 @@ pub fn setDirty(term: *Term, top: usize, bot: usize) void {
 }
 
 /// 将包含特定属性的所有行标记为脏
-pub fn setDirtyAttr(term: *Term, attr_mask: types.GlyphAttr) void {
+pub fn setDirtyAttr(term: *Terminal, attr_mask: types.GlyphAttr) void {
     const screen = term.line orelse return;
     const dirty = term.dirty orelse return;
 
@@ -527,7 +570,7 @@ pub fn setDirtyAttr(term: *Term, attr_mask: types.GlyphAttr) void {
 }
 
 /// 检查屏幕上是否存在带有特定属性的字符
-pub fn isAttrSet(term: *Term, attr_mask: types.GlyphAttr) bool {
+pub fn isAttrSet(term: *Terminal, attr_mask: types.GlyphAttr) bool {
     const screen = term.line orelse return false;
 
     for (0..term.row) |y| {
@@ -554,7 +597,7 @@ fn attrMatches(a: types.GlyphAttr, mask: types.GlyphAttr) bool {
 }
 
 /// 获取行长度（忽略尾部空格）
-pub fn lineLength(term: *Term, y: usize) usize {
+pub fn lineLength(term: *Terminal, y: usize) usize {
     const screen = term.line;
     if (screen) |scr| {
         // 检查是否换行到下一行
@@ -573,14 +616,14 @@ pub fn lineLength(term: *Term, y: usize) usize {
 }
 
 /// 清除当前选择 (st 对齐)
-pub fn selClear(term: *Term) void {
+pub fn selClear(term: *Terminal) void {
     term.selection.mode = .idle;
     term.selection.ob.x = std.math.maxInt(usize);
     term.selection.nb.x = std.math.maxInt(usize);
 }
 
 /// 检查坐标是否在选择区域内 (st 对齐)
-pub fn isInsideSelection(term: *const Term, x: usize, y: usize) bool {
+pub fn isInsideSelection(term: *const Terminal, x: usize, y: usize) bool {
     const sel = term.selection;
     if (sel.mode == .idle or sel.nb.x == std.math.maxInt(usize)) return false;
 
@@ -595,7 +638,7 @@ pub fn isInsideSelection(term: *const Term, x: usize, y: usize) bool {
 }
 
 /// 处理屏幕滚动导致的选择区域偏移 (st 对齐)
-pub fn selScroll(term: *Term, orig: usize, n: i32) void {
+pub fn selScroll(term: *Terminal, orig: usize, n: i32) void {
     const sel = &term.selection;
     if (sel.mode == .idle) return;
 

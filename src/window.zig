@@ -246,6 +246,7 @@ pub const Window = struct {
     // Copy partial buffer to window
     pub fn presentPartial(self: *Window, rect: x11.c.XRectangle) void {
         if (self.buf != 0) {
+            // st-style: always sync to ensure consistency
             _ = x11.c.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
             _ = x11.c.XSync(self.dpy, x11.c.False);
         }
@@ -263,9 +264,11 @@ pub const Window = struct {
 
     /// 调整窗口大小以匹配期望的行列数（在加载实际字体后调用）
     pub fn resizeToGrid(self: *Window, cols: usize, rows: usize) void {
-        const border = config.Config.window.border_pixels;
-        const new_w = @as(u32, @intCast(cols * self.cell_width + border * 2));
-        const new_h = @as(u32, @intCast(rows * self.cell_height + border * 2));
+        // Note: st 在 xinit() 中计算窗口时不添加 border（因为 hborderpx/vborderpx = 0）
+        // 窗口管理器可能会稍后调整窗口，那时才在 cresize() 中计算实际的边框
+        // 因此这里也不添加 border * 2，与 st 的行为对齐
+        const new_w = @as(u32, @intCast(cols * self.cell_width));
+        const new_h = @as(u32, @intCast(rows * self.cell_height));
 
         if (new_w != self.width or new_h != self.height) {
             _ = x11.c.XResizeWindow(self.dpy, self.win, @intCast(new_w), @intCast(new_h));

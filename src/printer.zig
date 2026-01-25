@@ -6,6 +6,7 @@ const posix = std.posix;
 const types = @import("types.zig");
 const selection = @import("selection.zig");
 const unicode = @import("unicode.zig");
+const terminal = @import("terminal.zig");
 
 /// 打印器配置
 pub const Config = struct {
@@ -37,7 +38,7 @@ pub const Printer = struct {
     }
 
     /// 切换打印模式
-    pub fn toggle(self: *Printer, term: *types.Term) !void {
+    pub fn toggle(self: *Printer, term: *terminal.Terminal) !void {
         self.config.enabled = !self.config.enabled;
         if (self.config.enabled) {
             std.log.info("打印模式已启用\n", .{});
@@ -48,7 +49,7 @@ pub const Printer = struct {
     }
 
     /// 打印当前屏幕内容（printscreen）
-    pub fn printScreen(self: *Printer, term: *types.Term) !void {
+    pub fn printScreen(self: *Printer, term: *terminal.Terminal) !void {
         const screen = if (term.mode.alt_screen) term.alt else term.line;
         if (screen == null) return;
 
@@ -61,7 +62,7 @@ pub const Printer = struct {
     }
 
     /// 打印选择内容（printsel）
-    pub fn printSelection(self: *Printer, term: *types.Term, sel: *selection.Selector) !void {
+    pub fn printSelection(self: *Printer, term: *terminal.Terminal, sel: *selection.Selector) !void {
         const text = try sel.getText(term);
 
         try self.write(text);

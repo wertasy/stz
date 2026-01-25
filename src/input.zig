@@ -39,6 +39,7 @@
 const std = @import("std");
 const x11 = @import("x11.zig");
 const PTY = @import("pty.zig").PTY;
+const Terminal = @import("terminal.zig").Terminal;
 
 pub const InputError = error{
     InvalidKey,
@@ -48,12 +49,12 @@ pub const InputError = error{
 /// 输入处理器
 pub const Input = struct {
     pty: *PTY,
-    term: *const @import("types.zig").Term,
+    term: *Terminal,
     bracketed_paste_buffer: std.ArrayList(u8) = .empty,
     in_bracketed_paste: bool = false,
 
     /// 初始化输入处理器
-    pub fn init(pty: *PTY, term: *const @import("types.zig").Term) Input {
+    pub fn init(pty: *PTY, term: *Terminal) Input {
         return Input{
             .pty = pty,
             .term = term,

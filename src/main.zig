@@ -606,7 +606,7 @@ pub fn main() !u8 {
                     }
 
                     // 鼠标报告优先，除非按下 Shift 键强制进行终端选择
-                    if (term.mode.mouse and !shift) {
+                    if (term.mode.isMouseEnabled() and !shift) {
                         // 如果当前有本地选择，点击时清除它
                         if (term.selection.mode != .idle) {
                             selector.clear(term);
@@ -663,7 +663,7 @@ pub fn main() !u8 {
                         pressed_button = e.button;
                         selector.start(term, cx, cy, .none);
                     } else if (e.button == x11.c.Button4) { // Scroll Up
-                        if (term.mode.mouse and !shift) {
+                        if (term.mode.isMouseEnabled() and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
                             if (term.mode.alt_screen) {
@@ -679,7 +679,7 @@ pub fn main() !u8 {
                             }
                         }
                     } else if (e.button == x11.c.Button5) { // Scroll Down
-                        if (term.mode.mouse and !shift) {
+                        if (term.mode.isMouseEnabled() and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
                             if (term.mode.alt_screen) {
@@ -717,7 +717,7 @@ pub fn main() !u8 {
                     const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
                     const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
-                    if (terminal.mode.mouse and !shift) {
+                    if (terminal.mode.isMouseEnabled() and !shift) {
                         try input.sendMouseReport(cx, cy, e.button, e.state, 1);
                         mouse_pressed = false;
                         pressed_button = 0;
@@ -757,7 +757,7 @@ pub fn main() !u8 {
                     const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
                     const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
-                    if (terminal.mode.mouse and !shift) {
+                    if (terminal.mode.isMouseEnabled() and !shift) {
                         // Only send motion if button is pressed or mouse_many/mouse_motion is set
                         const send_motion = terminal.mode.mouse_many or
                             (terminal.mode.mouse_motion and mouse_pressed);

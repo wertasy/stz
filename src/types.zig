@@ -291,6 +291,11 @@ pub const TermMode = packed struct(u32) {
     focused_report: bool = false, // 焦点报告：通知程序焦点变化（CSI ? 1004 h/l）
     sync_update: bool = false, // 同步更新：批量更新模式（CSI ? 2026 h/l）
     _padding: u8 = 0, // 填充位：确保对齐到32位边界
+
+    /// 检查是否启用了任意鼠标模式
+    pub fn isMouseEnabled(self: TermMode) bool {
+        return self.mouse or self.mouse_btn or self.mouse_motion or self.mouse_many;
+    }
 };
 
 /// 字符集

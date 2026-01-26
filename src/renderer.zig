@@ -1075,7 +1075,8 @@ pub const Renderer = struct {
         } else {
             // 使用 HarfBuzz 进行文本整形（支持 ligatures）
             const font = self.getFontForGlyph(base.u, base.attr);
-            x11.hbtransform(&self.hb_data, font, line[x1 .. x1 + len], 0, len);
+            // 传递完整切片（包含 dummy），长度由 x - x1 决定
+            x11.hbtransform(&self.hb_data, font, line[x1..x], 0, len);
 
             const winx = @as(f32, @floatFromInt(hborder_x));
             const yp = @as(f32, @floatFromInt(winy + self.ascent));

@@ -285,7 +285,7 @@ pub const Input = struct {
     }
 
     pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, event_type: u8) !void {
-        if (!self.term.mode.mouse) return;
+        if (!self.term.mode.isMouseEnabled()) return;
         var code: u32 = 0;
         if (event_type == 2) {
             if (!self.term.mode.mouse_many and !self.term.mode.mouse_btn) return;

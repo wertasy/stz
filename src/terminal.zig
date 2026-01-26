@@ -685,7 +685,7 @@ pub const Terminal = struct {
         self.top = @min(min_top, min_bot);
         self.bot = @max(min_top, min_bot);
 
-        std.log.debug("setScrollRegion top={}, bot={}", .{ self.top, self.bot });
+        // std.log.debug("setScrollRegion top={}, bot={}", .{ self.top, self.bot });
 
         // 移动光标到区域原点
         try self.moveTo(0, 0);

@@ -1112,6 +1112,20 @@ pub const Renderer = struct {
 
                         cluster_xp += x_advance;
                         cluster_yp += y_advance;
+                    } else {
+                        // HarfBuzz 无法在当前字体中找到字形，尝试回退字体
+                        const glyph = line[x1 + idx];
+                        const fallback_font = self.getFontForGlyph(glyph.u, glyph.attr);
+                        const glyph_index = x11.c.XftCharIndex(self.window.dpy, fallback_font, glyph.u);
+
+                        if (glyph_index != 0) {
+                            self.specs_buffer.appendAssumeCapacity(.{
+                                .font = fallback_font,
+                                .glyph = glyph_index,
+                                .x = @as(i16, @intFromFloat(cluster_xp)),
+                                .y = @as(i16, @intFromFloat(cluster_yp)),
+                            });
+                        }
                     }
                 }
             }

@@ -23,6 +23,7 @@ pub fn build(b: *std.Build) void {
     exe.linkSystemLibrary("Xft");
     exe.linkSystemLibrary("fontconfig");
     exe.linkSystemLibrary("freetype");
+    exe.linkSystemLibrary("harfbuzz");
 
     b.installArtifact(exe);
 
@@ -50,6 +51,7 @@ pub fn build(b: *std.Build) void {
     unit_tests.linkSystemLibrary("Xft");
     unit_tests.linkSystemLibrary("fontconfig");
     unit_tests.linkSystemLibrary("freetype");
+    unit_tests.linkSystemLibrary("harfbuzz");
 
     const run_unit_tests = b.addRunArtifact(unit_tests);
 
@@ -65,6 +67,7 @@ pub fn build(b: *std.Build) void {
     selection_tests.linkSystemLibrary("Xft");
     selection_tests.linkSystemLibrary("fontconfig");
     selection_tests.linkSystemLibrary("freetype");
+    selection_tests.linkSystemLibrary("harfbuzz");
     const run_selection_tests = b.addRunArtifact(selection_tests);
 
     const test_step = b.step("test", "Run unit tests");

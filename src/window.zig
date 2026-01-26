@@ -104,12 +104,12 @@ pub const Window = struct {
 
         // Calculate size using estimated cell dimensions
         // Note: These will be updated by renderer.init() after font is loaded
-        const font_size = config.Config.font.size;
+        const font_size = config.font.size;
         // Conservative estimates to ensure window is large enough
         // Actual font metrics will be loaded and cell_* will be updated
         const cell_w = @max(@as(u32, font_size / 2), 1);
         const cell_h = @as(u32, font_size);
-        const border = config.Config.window.border_pixels;
+        const border = config.window.border_pixels;
 
         const win_w = cols * cell_w + border * 2;
         const win_h = rows * cell_h + border * 2;

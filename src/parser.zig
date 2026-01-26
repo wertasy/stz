@@ -522,8 +522,8 @@ pub const Parser = struct {
                     self.term.c.attr.attr.reverse = false;
                     self.term.c.attr.attr.hidden = false;
                     self.term.c.attr.attr.struck = false;
-                    self.term.c.attr.fg = config.Config.colors.default_foreground;
-                    self.term.c.attr.bg = config.Config.colors.default_background;
+                    self.term.c.attr.fg = config.colors.default_foreground;
+                    self.term.c.attr.bg = config.colors.default_background;
                     self.term.c.attr.ustyle = -1;
                     for (0..3) |j| self.term.c.attr.ucolor[j] = -1;
                 },
@@ -590,7 +590,7 @@ pub const Parser = struct {
                     }
                     if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.fg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.fg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
-                39 => self.term.c.attr.fg = config.Config.colors.default_foreground,
+                39 => self.term.c.attr.fg = config.colors.default_foreground,
                 40...47 => self.term.c.attr.bg = @as(u32, @intCast(arg - 40)),
                 48 => {
                     var color_submode: i64 = -1;
@@ -624,7 +624,7 @@ pub const Parser = struct {
                     }
                     if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.bg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.bg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
-                49 => self.term.c.attr.bg = config.Config.colors.default_background,
+                49 => self.term.c.attr.bg = config.colors.default_background,
                 58 => {
                     var color_submode: i64 = -1;
                     var r: i64 = -1;
@@ -729,8 +729,8 @@ pub const Parser = struct {
         try self.term.moveTo(0, 0);
         self.term.c.state = .{};
         self.term.c.attr = .{};
-        self.term.c.attr.fg = config.Config.colors.default_foreground;
-        self.term.c.attr.bg = config.Config.colors.default_background;
+        self.term.c.attr.fg = config.colors.default_foreground;
+        self.term.c.attr.bg = config.colors.default_background;
         self.term.top = 0;
         self.term.bot = self.term.row - 1;
         self.term.mode = .{ .utf8 = true, .wrap = true };
@@ -993,7 +993,7 @@ pub const Parser = struct {
                     // DECSCUSR - Set Cursor Style
                     const style = self.csi.arg[0];
                     if (style == 0) {
-                        self.term.cursor_style = config.Config.cursor.style;
+                        self.term.cursor_style = config.cursor.style;
                     } else if (style >= 1 and style <= 8) {
                         self.term.cursor_style = @as(types.CursorStyle, @enumFromInt(@as(u8, @intCast(style))));
                     }
@@ -1178,8 +1178,8 @@ pub const Parser = struct {
                         if (self.term.alt) |alt| {
                             var g = self.term.c.attr;
                             g.u = ' ';
-                            g.fg = config.Config.colors.default_foreground;
-                            g.bg = config.Config.colors.default_background;
+                            g.fg = config.colors.default_foreground;
+                            g.bg = config.colors.default_background;
                             g.attr = .{};
                             for (alt) |l| {
                                 for (l) |*cell| {
@@ -1297,9 +1297,9 @@ pub const Parser = struct {
                         if (idx < 256) {
                             if (idx < 16) {
                                 if (idx < 8) {
-                                    self.term.palette[idx] = config.Config.colors.normal[idx];
+                                    self.term.palette[idx] = config.colors.normal[idx];
                                 } else {
-                                    self.term.palette[idx] = config.Config.colors.bright[idx - 8];
+                                    self.term.palette[idx] = config.colors.bright[idx - 8];
                                 }
                             } else {
                                 // For 256 colors, we don't have a "default" beyond 16 stored in config.
@@ -1350,8 +1350,8 @@ pub const Parser = struct {
     }
 
     fn resetPalette(self: *Parser) void {
-        for (0..8) |i| self.term.palette[i] = config.Config.colors.normal[i];
-        for (8..16) |i| self.term.palette[i] = config.Config.colors.bright[i - 8];
+        for (0..8) |i| self.term.palette[i] = config.colors.normal[i];
+        for (8..16) |i| self.term.palette[i] = config.colors.bright[i - 8];
         var color_idx: u32 = 16;
         while (color_idx < 232) : (color_idx += 1) {
             const c = color_idx - 16;

@@ -65,7 +65,7 @@ pub fn init(term: *Terminal, row: usize, col: usize, allocator: std.mem.Allocato
     term.alt = alt_buf;
 
     // 分配历史缓冲区
-    const hist_rows = config.Config.scroll.history_lines;
+    const hist_rows = config.scroll.history_lines;
     const hist_buf = try allocator.alloc([]Glyph, hist_rows);
     errdefer allocator.free(hist_buf);
     term.hist = hist_buf;
@@ -127,7 +127,7 @@ pub fn init(term: *Terminal, row: usize, col: usize, allocator: std.mem.Allocato
     term.c = TCursor{};
 
     // ========== 初始化保存的光标状态 ==========
-    term.cursor_style = config.Config.cursor.style;
+    term.cursor_style = config.cursor.style;
     for (0..2) |i| {
         term.saved_cursor[i] = types.SavedCursor{
             .attr = term.c.attr,
@@ -343,7 +343,7 @@ pub fn resize(term: *Terminal, new_row: usize, new_col: usize) !void {
     }
 
     // 调整制表符
-    const tab_spaces = @import("config.zig").Config.tab_spaces;
+    const tab_spaces = config.tab_spaces;
     term.tabs = try allocator.realloc(term.tabs.?, new_col);
     if (new_col > old_col) {
         // 从旧边界开始，按步进设置新的制表位

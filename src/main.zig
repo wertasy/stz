@@ -159,9 +159,9 @@ pub fn main() !u8 {
     //
     // 当前实现：从配置文件读取行列数
     // 未来扩展：可以添加命令行参数支持（如 --cols 120 --rows 35）
-    const cols = config.Config.window.cols;
-    const rows = config.Config.window.rows;
-    const shell_path = config.Config.shell;
+    const cols = config.window.cols;
+    const rows = config.window.rows;
+    const shell_path = config.shell;
 
     std.log.info("stz - Zig 终端模拟器 v0.1.0", .{});
     std.log.info("配置尺寸: {d}x{d}", .{ cols, rows });
@@ -229,7 +229,7 @@ pub fn main() !u8 {
                 if (width != window.width or height != window.height) {
                     window.width = width;
                     window.height = height;
-                    const b = config.Config.window.border_pixels;
+                    const b = config.window.border_pixels;
                     const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
                     const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
                     const new_cols = @max(1, avail_w / window.cell_width);
@@ -253,7 +253,7 @@ pub fn main() !u8 {
     // 为什么需要？
     // - 程序根据 TERM 值决定发送哪些转义序列
     // - 例如：vim 会根据 TERM 值决定是否使用 256 色
-    _ = c.setenv("TERM", config.Config.term_type, 1);
+    _ = c.setenv("TERM", config.term_type, 1);
 
     // ========== 初始化 PTY（伪终端）==========
     //
@@ -537,7 +537,7 @@ pub fn main() !u8 {
                         window.width = width;
                         window.height = height;
 
-                        const b = config.Config.window.border_pixels;
+                        const b = config.window.border_pixels;
                         // remove fudge factor to match st behavior (strict truncation)
                         const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
                         const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
@@ -623,7 +623,7 @@ pub fn main() !u8 {
                     if (e.button == x11.c.Button1) {
                         // 检测双击/三击
                         const now = std.time.milliTimestamp();
-                        if (e.button == last_button and now - last_click_time < config.Config.selection.double_click_timeout_ms) {
+                        if (e.button == last_button and now - last_click_time < config.selection.double_click_timeout_ms) {
                             click_count = (click_count % 3) + 1;
                         } else {
                             click_count = 1;
@@ -926,8 +926,8 @@ pub fn main() !u8 {
             }
         }
 
-        if (config.Config.cursor.blink_interval_ms > 0) {
-            const next_blink = renderer.last_blink_time + config.Config.cursor.blink_interval_ms;
+        if (config.cursor.blink_interval_ms > 0) {
+            const next_blink = renderer.last_blink_time + config.cursor.blink_interval_ms;
             if (now >= next_blink) {
                 // Time to toggle blink state
                 term.mode.blink = !term.mode.blink;

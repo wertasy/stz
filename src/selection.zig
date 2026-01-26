@@ -177,7 +177,7 @@ pub const Selector = struct {
         switch (sel.snap) {
             .none => {},
             .word => {
-                const delimiters = config.Config.selection.word_delimiters;
+                const delimiters = config.selection.word_delimiters;
                 var x = point.x;
                 const y = point.y;
                 const line = scr_mod.getVisibleLine(term, y);

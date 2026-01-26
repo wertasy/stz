@@ -48,7 +48,7 @@ pub const UrlDetector = struct {
             // 检测 URL
             var url_start: ?usize = null;
             for (0..line_len - 1) |i| {
-                for (config.Config.url.prefixes) |prefix| {
+                for (config.url.prefixes) |prefix| {
                     if (std.mem.startsWith(u8, line_buffer[i..], prefix)) {
                         url_start = i;
                         break;
@@ -66,7 +66,7 @@ pub const UrlDetector = struct {
                 var url_end: usize = start;
                 while (url_end < line_len) {
                     const c = line_buffer[url_end];
-                    const is_url_char = for (config.Config.url.chars) |ch| {
+                    const is_url_char = for (config.url.chars) |ch| {
                         if (c == ch) {
                             break true;
                         }
@@ -196,7 +196,7 @@ pub const UrlDetector = struct {
         if (pid == 0) {
             // 子进程
             // 获取 URL handler
-            const handler = config.Config.url.handler;
+            const handler = config.url.handler;
 
             // 准备参数（使用临时分配器）
             var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);

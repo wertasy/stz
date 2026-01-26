@@ -189,9 +189,9 @@ pub const Terminal = struct {
 
     // ========== 颜色调色板 ==========
     palette: [256]u32 = undefined, // 颜色调色板：256种颜色的 RGB 值
-    default_fg: u32 = config.Config.colors.foreground, // 默认前景色 (RGB)
-    default_bg: u32 = config.Config.colors.background, // 默认背景色 (RGB)
-    default_cs: u32 = config.Config.colors.cursor, // 默认光标颜色 (RGB)
+    default_fg: u32 = config.colors.foreground, // 默认前景色 (RGB)
+    default_bg: u32 = config.colors.background, // 默认背景色 (RGB)
+    default_cs: u32 = config.colors.cursor, // 默认光标颜色 (RGB)
 
     // ========== 光标样式 ==========
     cursor_style: CursorStyle = .blinking_bar, // 光标样式：闪烁竖线（默认）

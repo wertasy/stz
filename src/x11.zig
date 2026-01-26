@@ -21,8 +21,8 @@ pub fn getClipboardAtom(dpy: *c.Display) c.Atom {
 }
 
 // HarfBuzz 辅助数据结构
-pub const HbTransformData = extern struct {
-    buffer: *c.hb_buffer_t,
+pub const HbTransformData = struct {
+    buffer: ?*c.hb_buffer_t,
     glyphs: [*c]c.hb_glyph_info_t,
     positions: [*c]c.hb_glyph_position_t,
     count: c_uint,
@@ -34,13 +34,21 @@ const HbFontEntry = struct {
     hbfont: *c.hb_font_t,
 };
 
+// 包装类型以处理可选字段
+const HbFontEntryOpt = struct {
+    xfont: *c.XftFont,
+    hbfont: ?*c.hb_font_t,
+};
+
 var hb_font_cache: std.ArrayList(HbFontEntry) = undefined;
+var hb_cache_allocator: ?std.mem.Allocator = null;
 var hb_cache_initialized = false;
 
 // 初始化 HarfBuzz 字体缓存
 pub fn initHbCache(allocator: std.mem.Allocator) void {
     if (!hb_cache_initialized) {
-        hb_font_cache = std.ArrayList(HbFontEntry).init(allocator);
+        hb_cache_allocator = allocator;
+        hb_font_cache = std.ArrayList(HbFontEntry).initCapacity(allocator, 16) catch return;
         hb_cache_initialized = true;
     }
 }
@@ -52,8 +60,10 @@ pub fn deinitHbCache() void {
             _ = c.hb_font_destroy(entry.hbfont);
             c.XftUnlockFace(entry.xfont);
         }
-        hb_font_cache.deinit();
+        const allocator = hb_cache_allocator orelse return;
+        hb_font_cache.deinit(allocator);
         hb_cache_initialized = false;
+        hb_cache_allocator = null;
     }
 }
 
@@ -77,13 +87,25 @@ pub fn hbfindfont(xfont: *c.XftFont) ?*c.hb_font_t {
         return null;
     }
 
-    hb_font_cache.append(.{ .xfont = xfont, .hbfont = hbfont }) catch {
+    // 获取 allocator
+    const allocator = hb_cache_allocator orelse {
         c.hb_font_destroy(hbfont);
         c.XftUnlockFace(xfont);
         return null;
     };
 
-    return hbfont;
+    const hbfont_nonnull = hbfont orelse {
+        c.XftUnlockFace(xfont);
+        return null;
+    };
+
+    hb_font_cache.append(allocator, .{ .xfont = xfont, .hbfont = hbfont_nonnull }) catch {
+        c.hb_font_destroy(hbfont_nonnull);
+        c.XftUnlockFace(xfont);
+        return null;
+    };
+
+    return hbfont_nonnull;
 }
 
 // HarfBuzz 形状转换
@@ -91,7 +113,7 @@ pub fn hbtransform(data: *HbTransformData, xfont: *c.XftFont, glyphs: []const ty
     const hbfont = hbfindfont(xfont) orelse return;
 
     const buffer = c.hb_buffer_create();
-    defer c.hb_buffer_destroy(buffer);
+    if (buffer == null) return;
 
     c.hb_buffer_set_direction(buffer, c.HB_DIRECTION_LTR);
     c.hb_buffer_set_cluster_level(buffer, c.HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
@@ -108,10 +130,22 @@ pub fn hbtransform(data: *HbTransformData, xfont: *c.XftFont, glyphs: []const ty
     const info = c.hb_buffer_get_glyph_infos(buffer, &glyph_count);
     const pos = c.hb_buffer_get_glyph_positions(buffer, &glyph_count);
 
+    // 保存 buffer 指针，不销毁它（调用者负责调用 hbcleanup）
     data.buffer = buffer;
     data.glyphs = info;
     data.positions = pos;
     data.count = glyph_count;
+}
+
+// 清理 HarfBuzz 变换数据
+pub fn hbcleanup(data: *HbTransformData) void {
+    if (data.buffer) |buf| {
+        c.hb_buffer_destroy(buf);
+        data.buffer = null;
+    }
+    data.glyphs = null;
+    data.positions = null;
+    data.count = 0;
 }
 
 pub fn getPrimaryAtom(dpy: *c.Display) c.Atom {

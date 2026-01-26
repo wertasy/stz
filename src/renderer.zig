@@ -96,6 +96,9 @@ pub const Renderer = struct {
     // Glyph specs buffer for batch drawing
     specs_buffer: std.ArrayList(x11.c.XftGlyphFontSpec),
 
+    // HarfBuzz transform data for ligatures
+    hb_data: x11.HbTransformData,
+
     pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
         // Initialize buffer in window if not already
         window.resizeBuffer(window.width, window.height);
@@ -229,6 +232,9 @@ pub const Renderer = struct {
         var specs_buffer = try std.ArrayList(x11.c.XftGlyphFontSpec).initCapacity(allocator, 256);
         errdefer specs_buffer.deinit();
 
+        // 初始化 HarfBuzz 缓存
+        x11.initHbCache(allocator);
+
         return Renderer{
             .window = window,
             .allocator = allocator,
@@ -250,6 +256,7 @@ pub const Renderer = struct {
             .loaded_colors = [_]bool{false} ** 300,
             .truecolor_cache = std.AutoArrayHashMap(u32, x11.c.XftColor).init(allocator),
             .specs_buffer = specs_buffer,
+            .hb_data = .{ .buffer = null, .glyphs = null, .positions = null, .count = 0 },
         };
     }
 
@@ -368,6 +375,10 @@ pub const Renderer = struct {
             x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, entry.value_ptr);
         }
         self.truecolor_cache.deinit();
+
+        // 清理 HarfBuzz 数据和缓存
+        x11.hbcleanup(&self.hb_data);
+        x11.deinitHbCache();
     }
 
     fn getColor(self: *Renderer, term: *Terminal, index: u32) !x11.c.XftColor {
@@ -1051,39 +1062,74 @@ pub const Renderer = struct {
 
         const hborder_x = @as(i32, @intCast(x1 * self.char_width)) + hborder;
 
-        // 构建字形规格数组
-        x = x1;
-        i = 0;
-        while (i < len and x < line.len) {
-            const glyph = line[x];
-            if (glyph.attr.wide_dummy) {
+        // boxdraw 使用特殊绘制，跳过 HarfBuzz
+        if (base.attr.boxdraw) {
+            x = x1;
+            i = 0;
+            while (i < len and x < line.len) {
+                const glyph = line[x];
+                if (glyph.attr.wide_dummy) {
+                    x += 1;
+                    continue;
+                }
+
+                const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
+                const y_pos = winy + self.ascent;
+                const font = self.getFontForGlyph(glyph.u, glyph.attr);
+                const glyph_index = x11.c.XftCharIndex(self.window.dpy, font, glyph.u);
+
+                self.specs_buffer.appendAssumeCapacity(.{
+                    .font = font,
+                    .glyph = glyph_index,
+                    .x = @as(i16, @intCast(x_pos)),
+                    .y = @as(i16, @intCast(y_pos)),
+                });
+
                 x += 1;
-                continue;
+                i += 1;
             }
+        } else {
+            // 使用 HarfBuzz 进行文本整形（支持 ligatures）
+            const font = self.getFontForGlyph(base.u, base.attr);
+            x11.hbtransform(&self.hb_data, font, line[x1 .. x1 + len], 0, len);
 
-            const glyph_u = glyph.u;
-            const font = self.getFontForGlyph(glyph_u, glyph.attr);
+            const winx = @as(f32, @floatFromInt(hborder_x));
+            const yp = @as(f32, @floatFromInt(winy + self.ascent));
+            var xp = winx;
+            var cluster_xp = xp;
+            var cluster_yp = yp;
+            const runewidth = if (base.attr.wide) @as(f32, @floatFromInt(self.char_width)) * 2.0 else @as(f32, @floatFromInt(self.char_width));
 
-            var utf8_buf: [4]u8 = undefined;
-            const utf8_len = try unicode.encode(glyph_u, &utf8_buf);
+            if (self.hb_data.count > 0) {
+                for (0..self.hb_data.count) |code_idx| {
+                    const idx = self.hb_data.glyphs[code_idx].cluster;
 
-            var glyph_extents: x11.c.XGlyphInfo = undefined;
-            x11.c.XftTextExtentsUtf8(self.window.dpy, font, &utf8_buf, @intCast(utf8_len), &glyph_extents);
+                    if (line[x1 + idx].attr.wide_dummy) continue;
 
-            const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
-            const y_pos = winy + self.ascent;
+                    if (code_idx > 0 and idx != self.hb_data.glyphs[code_idx - 1].cluster) {
+                        xp += runewidth;
+                        cluster_xp = xp;
+                        cluster_yp = yp;
+                    }
 
-            const glyph_index = x11.c.XftCharIndex(self.window.dpy, font, glyph_u);
+                    if (self.hb_data.glyphs[code_idx].codepoint != 0) {
+                        const x_offset = @as(f32, @floatFromInt(self.hb_data.positions[code_idx].x_offset)) / 64.0;
+                        const y_offset = -@as(f32, @floatFromInt(self.hb_data.positions[code_idx].y_offset)) / 64.0;
+                        const x_advance = @as(f32, @floatFromInt(self.hb_data.positions[code_idx].x_advance)) / 64.0;
+                        const y_advance = @as(f32, @floatFromInt(self.hb_data.positions[code_idx].y_advance)) / 64.0;
 
-            self.specs_buffer.appendAssumeCapacity(.{
-                .font = font,
-                .glyph = glyph_index,
-                .x = @intCast(x_pos),
-                .y = @intCast(y_pos),
-            });
+                        self.specs_buffer.appendAssumeCapacity(.{
+                            .font = font,
+                            .glyph = self.hb_data.glyphs[code_idx].codepoint,
+                            .x = @as(i16, @intFromFloat(cluster_xp + x_offset)),
+                            .y = @as(i16, @intFromFloat(cluster_yp + y_offset)),
+                        });
 
-            x += 1;
-            i += 1;
+                        cluster_xp += x_advance;
+                        cluster_yp += y_advance;
+                    }
+                }
+            }
         }
 
         // 批量绘制字形
@@ -1108,6 +1154,9 @@ pub const Renderer = struct {
         if (base.attr.struck) {
             x11.c.XftDrawRect(self.draw, &fg_col, hborder_x, winy + @divTrunc(self.ascent * 2, 3), @intCast(total_width * self.char_width), 1);
         }
+
+        // 清理 HarfBuzz 数据
+        x11.hbcleanup(&self.hb_data);
     }
 };
 

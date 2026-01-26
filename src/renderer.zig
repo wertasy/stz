@@ -590,31 +590,7 @@ pub const Renderer = struct {
             // Clear the dirty grid row with default background
             x11.c.XftDrawRect(self.draw, &default_bg, hborder, y_pos, @intCast(grid_w), @intCast(self.char_height));
 
-            // 第一阶段：绘制所有非默认背景
-            for (0..@min(term.col, line_data.len)) |x| {
-                const glyph = line_data[x];
-                const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
-
-                var bg_idx = glyph.bg;
-
-                var reverse = glyph.attr.reverse != term.mode.reverse;
-                if (selector.isSelected(term, x, y)) {
-                    reverse = !reverse;
-                }
-
-                if (reverse) {
-                    bg_idx = glyph.fg;
-                }
-
-                if (bg_idx != config.colors.default_background) {
-                    var bg_col = try self.getColor(term, bg_idx);
-
-                    const bg_width = if (glyph.attr.wide) self.char_width * 2 else self.char_width;
-                    x11.c.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(bg_width), @intCast(self.char_height));
-                }
-            }
-
-            // 第二阶段：使用批量绘制提高性能
+            // 绘制所有字符
             try self.drawLine(line_data[0..@min(term.col, line_data.len)], 0, y, @min(term.col, line_data.len), term, selector);
 
             if (term.dirty) |dirty| {
@@ -978,35 +954,36 @@ pub const Renderer = struct {
 
         var i: usize = 0;
         var ox: usize = x1;
-        var base: Glyph = line[x1];
-        if (selector.isSelected(term, x1, y1)) {
-            base.attr.reverse = !base.attr.reverse;
-        }
+        var base = line[x1];
+        var current_reverse = false;
 
         for (x1..x2) |x| {
             if (x >= line.len) break;
             var new = line[x];
             if (new.attr.wide_dummy) continue;
-            if (selector.isSelected(term, x, y1)) {
+
+            const selected = selector.isSelected(term, x, y1);
+            if (selected) {
                 new.attr.reverse = !new.attr.reverse;
             }
 
-            if (i > 0 and self.attrsCmp(base, new)) {
-                try self.drawGlyphFontSpecs(line, ox, y1, term, x - ox);
+            const effective_reverse = new.attr.reverse != term.mode.reverse;
+
+            if (i > 0 and (current_reverse != effective_reverse or self.attrsCmp(base, new))) {
+                try self.drawGlyphFontSpecs(line, ox, y1, term, i, current_reverse);
                 i = 0;
-                ox = x;
-                base = new;
             }
 
             if (i == 0) {
                 ox = x;
                 base = new;
+                current_reverse = effective_reverse;
             }
             i += 1;
         }
 
         if (i > 0) {
-            try self.drawGlyphFontSpecs(line, ox, y1, term, x2 - ox);
+            try self.drawGlyphFontSpecs(line, ox, y1, term, x2 - ox, current_reverse);
         }
     }
 
@@ -1017,7 +994,7 @@ pub const Renderer = struct {
     }
 
     // 绘制一批相同属性的字符
-    fn drawGlyphFontSpecs(self: *Renderer, line: []Glyph, x1: usize, y: usize, term: *Terminal, len: usize) !void {
+    fn drawGlyphFontSpecs(self: *Renderer, line: []Glyph, x1: usize, y: usize, term: *Terminal, len: usize, reverse: bool) !void {
         if (len == 0) return;
 
         self.specs_buffer.clearRetainingCapacity();
@@ -1029,6 +1006,7 @@ pub const Renderer = struct {
 
         const base = line[x1];
         var fg_idx = base.fg;
+        var bg_idx = base.bg;
 
         if (base.attr.bold) {
             if (fg_idx < 8) {
@@ -1038,13 +1016,16 @@ pub const Renderer = struct {
             }
         }
 
-        if (base.attr.reverse) {
-            fg_idx = base.bg;
+        if (reverse) {
+            const temp = fg_idx;
+            fg_idx = bg_idx;
+            bg_idx = temp;
         }
 
         const fg_col = try self.getColor(term, fg_idx);
+        const bg_col = try self.getColor(term, bg_idx);
 
-        // 计算总宽度用于绘制下划线和删除线
+        // 计算总宽度用于绘制背景、下划线和删除线
         var total_width: usize = 0;
         var x: usize = x1;
         var i: usize = 0;
@@ -1061,6 +1042,9 @@ pub const Renderer = struct {
         }
 
         const hborder_x = @as(i32, @intCast(x1 * self.char_width)) + hborder;
+
+        // 绘制背景
+        x11.c.XftDrawRect(self.draw, &bg_col, hborder_x, winy, @intCast(total_width * self.char_width), @intCast(self.char_height));
 
         // boxdraw 使用特殊绘制，跳过 HarfBuzz
         if (base.attr.boxdraw) {

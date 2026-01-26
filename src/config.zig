@@ -32,12 +32,12 @@ pub const font = struct {
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等
     pub const fallback_fonts = [_][:0]const u8{
-        "FreeMono",
-        "FreeSans",
-        "FreeSerif",
-        "Noto Sans Mono",
-        "Noto Sans CJK SC:pixelsize=20",
-        "Noto Color Emoji",
+        "FreeMono:pixelsize=20:antialias=true",
+        "FreeSans:pixelsize=20:antialias=true",
+        "FreeSerif:pixelsize=20:antialias=true",
+        "Noto Sans Mono:pixelsize=20:antialias=true",
+        "Noto Sans CJK SC:pixelsize=20:antialias=true",
+        "Noto Color Emoji:pixelsize=20:antialias=true",
     };
 };
 

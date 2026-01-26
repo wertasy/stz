@@ -649,6 +649,9 @@ pub fn main() !u8 {
                             selector.extend(term, cx, cy, .regular, false);
                         }
                         screen.setFullDirty(term);
+                        if (try renderer.render(term, &selector)) |rect| {
+                            window.presentPartial(rect);
+                        }
                     } else if (e.button == x11.c.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {

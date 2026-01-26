@@ -140,7 +140,7 @@ pub fn main() !u8 {
     defer {
         const deinit_status = gpa.deinit();
         if (deinit_status == .leak) {
-            std.log.err("内存泄漏\n", .{});
+            std.log.err("内存泄漏", .{});
         }
     }
     const allocator = gpa.allocator();
@@ -163,8 +163,8 @@ pub fn main() !u8 {
     const rows = config.Config.window.rows;
     const shell_path = config.Config.shell;
 
-    std.log.info("stz - Zig 终端模拟器 v0.1.0\n", .{});
-    std.log.info("配置尺寸: {d}x{d}\n", .{ cols, rows });
+    std.log.info("stz - Zig 终端模拟器 v0.1.0", .{});
+    std.log.info("配置尺寸: {d}x{d}", .{ cols, rows });
 
     // ========== 初始化窗口 ==========
     //
@@ -472,7 +472,7 @@ pub fn main() !u8 {
                         const dpy = window.dpy;
                         const clipboard = x11.getClipboardAtom(dpy);
                         selector.requestSelection(clipboard) catch |err| {
-                            std.log.err("Clipboard paste request failed: {}\n", .{err});
+                            std.log.err("Clipboard paste request failed: {}", .{err});
                         };
                     } else if (keysym == XK_Print) {
                         // Print key handling
@@ -516,7 +516,7 @@ pub fn main() !u8 {
                                 var buf: [32]u8 = undefined;
                                 const len = x11.c.XLookupString(&ev.xkey, &buf, buf.len, null, null);
                                 if (len > 0) {
-                                    std.log.info("XIM fallback used for keycode {d}: '{s}'\n", .{ ev.xkey.keycode, buf[0..@as(usize, @intCast(len))] });
+                                    std.log.info("XIM fallback used for keycode {d}: '{s}'", .{ ev.xkey.keycode, buf[0..@as(usize, @intCast(len))] });
                                     _ = try pty.write(buf[0..@as(usize, @intCast(len))]);
                                 }
                             }
@@ -599,7 +599,7 @@ pub fn main() !u8 {
                     {
                         if (url_detector.isUrlAt(cx, cy)) {
                             url_detector.openUrlAt(cx, cy) catch |err| {
-                                std.log.err("打开 URL 失败: {}\n", .{err});
+                                std.log.err("打开 URL 失败: {}", .{err});
                             };
                         }
                         continue; // 跳到下一个事件，不处理选择
@@ -652,7 +652,7 @@ pub fn main() !u8 {
                     } else if (e.button == x11.c.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {
-                            std.log.err("Paste request failed: {}\n", .{err});
+                            std.log.err("Paste request failed: {}", .{err});
                         };
                     } else if (e.button == x11.c.Button3) {
                         // Right click: extend selection or copy
@@ -728,7 +728,7 @@ pub fn main() !u8 {
                         if (e.button == x11.c.Button1) {
                             // Copy on release
                             selector.copy(term) catch |err| {
-                                std.log.err("Copy failed: {}\n", .{err});
+                                std.log.err("Copy failed: {}", .{err});
                             };
                         }
                     }
@@ -775,7 +775,7 @@ pub fn main() !u8 {
                 },
                 x11.c.SelectionRequest => {
                     const e = ev.xselectionrequest;
-                    std.log.info("SelectionRequest received (target={d})\n", .{e.target});
+                    std.log.info("SelectionRequest received (target={d})", .{e.target});
 
                     var notify: x11.c.XEvent = undefined;
                     notify.type = x11.c.SelectionNotify;
@@ -809,7 +809,7 @@ pub fn main() !u8 {
                 },
                 x11.c.SelectionNotify => {
                     const e = ev.xselection;
-                    std.log.info("SelectionNotify received\n", .{});
+                    std.log.info("SelectionNotify received", .{});
 
                     if (e.property != 0) {
                         var text_prop: x11.c.XTextProperty = undefined;
@@ -831,12 +831,12 @@ pub fn main() !u8 {
 
                                 // Send to PTY
                                 const written = try pty.write(paste_text);
-                                std.log.info("已将 {d} 字节写入 PTY: {s}\n", .{ written, paste_text });
+                                std.log.info("已将 {d} 字节写入 PTY: {s}", .{ written, paste_text });
 
                                 // Also add to paste buffer
                                 try paste_buffer.appendSlice(allocator, paste_text);
 
-                                std.log.info("粘贴: {s}\n", .{paste_text});
+                                std.log.info("粘贴: {s}", .{paste_text});
                             }
                         }
                     }
@@ -851,7 +851,7 @@ pub fn main() !u8 {
                 },
                 x11.c.SelectionClear => {
                     const e = ev.xselectionclear;
-                    std.log.info("SelectionClear received\n", .{});
+                    std.log.info("SelectionClear received", .{});
                     selector.handleSelectionClear(term, &e);
                     // Redraw to clear highlight
                     if (try renderer.render(term, &selector)) |rect| {
@@ -859,7 +859,7 @@ pub fn main() !u8 {
                     }
                 },
                 x11.c.FocusIn => {
-                    std.log.info("FocusIn\n", .{});
+                    // std.log.info("FocusIn", .{});
                     term.mode.focused = true;
                     if (window.ic) |ic| x11.c.XSetICFocus(ic);
                     if (term.mode.focused_report) {
@@ -873,7 +873,7 @@ pub fn main() !u8 {
                     }
                 },
                 x11.c.FocusOut => {
-                    std.log.info("FocusOut\n", .{});
+                    // std.log.info("FocusOut", .{});
                     term.mode.focused = false;
                     if (window.ic) |ic| x11.c.XUnsetICFocus(ic);
                     if (term.mode.focused_report) {
@@ -886,11 +886,17 @@ pub fn main() !u8 {
                         try renderer.renderCursor(term);
                     }
                 },
-                x11.c.EnterNotify, x11.c.LeaveNotify, x11.c.ReparentNotify, x11.c.MapNotify, x11.c.NoExpose, x11.c.KeyRelease => {
+                x11.c.EnterNotify,
+                x11.c.LeaveNotify,
+                x11.c.ReparentNotify,
+                x11.c.MapNotify,
+                x11.c.NoExpose,
+                x11.c.KeyRelease,
+                => {
                     // 忽略这些常见但当前无需处理的事件，避免日志刷屏
                 },
                 else => {
-                    std.log.debug("未处理的 X11 事件: {d}\n", .{ev.type});
+                    std.log.debug("未处理的 X11 事件: {d}", .{ev.type});
                 },
             }
         }
@@ -961,18 +967,26 @@ pub fn main() !u8 {
 
         // 2. Poll 等待新数据
         var fds = [_]std.posix.pollfd{
-            .{ .fd = pty.master, .events = std.posix.POLL.IN, .revents = 0 },
-            .{ .fd = x11.c.XConnectionNumber(window.dpy), .events = std.posix.POLL.IN, .revents = 0 },
+            .{
+                .fd = pty.master,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
+            .{
+                .fd = x11.c.XConnectionNumber(window.dpy),
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            },
         };
 
         _ = std.posix.poll(&fds, timeout_ms) catch |err| {
-            std.log.err("Poll failed: {}\n", .{err});
+            std.log.err("Poll failed: {}", .{err});
             continue;
         };
 
         // 3. 检查子进程是否还活着
         if (!pty.isChildAlive()) {
-            std.log.info("子进程已退出\n", .{});
+            std.log.info("子进程已退出", .{});
             quit = true;
             break;
         }

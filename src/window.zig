@@ -150,7 +150,7 @@ pub const Window = struct {
         if (im) |im_ptr| {
             ic = x11.c.XCreateIC(im_ptr, x11.c.XNInputStyle, x11.c.XIMPreeditNothing | x11.c.XIMStatusNothing, x11.c.XNClientWindow, win, x11.c.XNFocusWindow, win, @as(?*anyopaque, null));
         } else {
-            std.log.warn("Failed to open X Input Method\n", .{});
+            std.log.warn("Failed to open X Input Method", .{});
         }
 
         // Setup WM_DELETE_WINDOW protocol

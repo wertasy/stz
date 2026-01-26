@@ -189,7 +189,7 @@ pub const UrlDetector = struct {
         // 使用 fork + exec 来打开 URL
         const pid = std.os.linux.fork();
         if (pid < 0) {
-            std.log.err("Fork failed\n", .{});
+            std.log.err("Fork failed", .{});
             return;
         }
 
@@ -209,7 +209,7 @@ pub const UrlDetector = struct {
 
             // 执行（成功则不会返回，失败则返回错误）
             const err = std.posix.execvpeZ(argv[0].?, argv.ptr, std.c.environ);
-            std.log.err("Exec failed: {}\n", .{err});
+            std.log.err("Exec failed: {}", .{err});
             std.posix.exit(1);
         }
     }

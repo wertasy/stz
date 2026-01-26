@@ -99,3 +99,10 @@ test "Braille characters should have width 1" {
     try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x2800));
     try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x28FF));
 }
+
+test "Arrow characters should have width 1" {
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x21E0)); // ⇠
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x21E1)); // ⇡
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x21E2)); // ⇢
+    try std.testing.expectEqual(@as(u8, 1), unicode.runeWidth(0x21E3)); // ⇣
+}

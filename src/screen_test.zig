@@ -3,6 +3,7 @@
 const std = @import("std");
 const screen = @import("screen.zig");
 const types = @import("types.zig");
+const terminal = @import("terminal.zig");
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;

@@ -54,6 +54,7 @@ const boxdraw = @import("boxdraw.zig");
 const boxdraw_data = @import("boxdraw_data.zig");
 const screen_mod = @import("screen.zig");
 const terminal = @import("terminal.zig");
+const unicode = @import("unicode.zig");
 
 const Window = @import("window.zig").Window;
 const Glyph = types.Glyph;
@@ -100,20 +101,20 @@ pub const Renderer = struct {
         if (draw == null) return error.XftDrawCreateFailed;
 
         // Load font
-        var font_name: [:0]const u8 = config.Config.font.name; // e.g., "Monospace:size=12"
+        var configured_font_name: [:0]const u8 = config.Config.font.name; // e.g., "Monospace:size=12"
 
         // Try loading configured font
 
-        var font = x11.c.XftFontOpenName(window.dpy, window.screen, font_name);
+        var font = x11.c.XftFontOpenName(window.dpy, window.screen, configured_font_name);
 
         if (font == null) {
-            std.log.warn("Failed to load configured font: {s}, trying default 'Monospace:pixelsize=14'\n", .{font_name});
-            font_name = "Monospace:pixelsize=14";
-            font = x11.c.XftFontOpenName(window.dpy, window.screen, font_name);
+            std.log.warn("Failed to load configured font: {s}, trying default 'Monospace:pixelsize=14'", .{configured_font_name});
+            configured_font_name = "Monospace:pixelsize=14";
+            font = x11.c.XftFontOpenName(window.dpy, window.screen, configured_font_name);
         }
 
         if (font == null) {
-            std.log.warn("Failed to load default font, trying backup 'fixed'\n", .{});
+            std.log.warn("Failed to load default font, trying backup 'fixed'", .{});
             font = x11.c.XftFontOpenName(window.dpy, window.screen, "fixed");
             if (font == null) return error.FontLoadFailed;
         }
@@ -131,7 +132,7 @@ pub const Renderer = struct {
         const char_width = @max(1, @as(u32, @intFromFloat(@ceil(avg_width * config.Config.font.cwscale))));
         const char_height = @max(1, @as(u32, @intFromFloat(@ceil(@as(f32, @floatFromInt(font.*.ascent + font.*.descent)) * config.Config.font.chscale))));
 
-        std.log.info("Font loaded. Metrics: avg_width={d:.2}, char_width={d}, char_height={d}, ascent={d}, descent={d}", .{ avg_width, char_width, char_height, font.*.ascent, font.*.descent });
+        // std.log.info("Font loaded. Metrics: avg_width={d:.2}, char_width={d}, char_height={d}, ascent={d}, descent={d}", .{ avg_width, char_width, char_height, font.*.ascent, font.*.descent });
 
         const ascent = font.*.ascent;
         const descent = font.*.descent;
@@ -168,24 +169,57 @@ pub const Renderer = struct {
         window.cell_width = char_width;
         window.cell_height = char_height;
 
+        // 加载回退字体，使用与 st 相同的算法
         var fallbacks = try std.ArrayList(*x11.c.XftFont).initCapacity(allocator, 4);
         errdefer {
             for (fallbacks.items) |f| x11.c.XftFontClose(window.dpy, f);
             fallbacks.deinit(allocator);
         }
 
-        // 加载常见备用字体 (CJK, Emoji, Symbols)
-        const fallback_names = [_][:0]const u8{
-            "DejaVu Sans Mono:pixelsize=20",
-            "Noto Sans Mono CJK SC:pixelsize=20",
-            "WenQuanYi Micro Hei:pixelsize=20",
-            "Noto Color Emoji:pixelsize=20",
-            "Symbola:pixelsize=20",
-        };
+        for (config.Config.font.fallback_fonts) |font_name| {
+            // 解析字体名称
+            var fb_pattern: ?*x11.c.FcPattern = undefined;
+            if (font_name[0] == '-') {
+                fb_pattern = x11.c.XftXlfdParse(@ptrCast(font_name), 0, 0);
+            } else {
+                fb_pattern = x11.c.FcNameParse(@ptrCast(font_name));
+            }
 
-        for (fallback_names) |name| {
-            if (x11.c.XftFontOpenName(window.dpy, window.screen, name)) |f| {
-                try fallbacks.append(allocator, f);
+            if (fb_pattern == null) {
+                std.log.warn("无法解析回退字体: {s}", .{font_name});
+                continue;
+            }
+
+            defer x11.c.FcPatternDestroy(fb_pattern.?);
+
+            // 调整字体大小：usedfontsize - defaultfontsize
+            var fontval: f64 = 0;
+            if (x11.c.FcPatternGetDouble(fb_pattern.?, x11.c.FC_PIXEL_SIZE, 0, &fontval) == x11.c.FcResultMatch) {
+                var pixel_size: c_int = undefined;
+                if (x11.c.FcPatternGetInteger(font.?.*.pattern, x11.c.FC_PIXEL_SIZE, 0, &pixel_size) == x11.c.FcResultMatch) {
+                    const sizeshift = @as(f64, @floatFromInt(pixel_size)) - @as(f64, @floatFromInt(config.Config.font.size));
+                    if (sizeshift != 0) {
+                        fontval += sizeshift;
+                        _ = x11.c.FcPatternDel(fb_pattern.?, x11.c.FC_PIXEL_SIZE);
+                        _ = x11.c.FcPatternDel(fb_pattern.?, x11.c.FC_SIZE);
+                        _ = x11.c.FcPatternAddDouble(fb_pattern.?, x11.c.FC_PIXEL_SIZE, fontval);
+                    }
+                }
+            }
+
+            _ = x11.c.FcPatternAddBool(fb_pattern.?, x11.c.FC_SCALABLE, 1);
+            _ = x11.c.FcConfigSubstitute(null, fb_pattern.?, x11.c.FcMatchPattern);
+            _ = x11.c.XftDefaultSubstitute(window.dpy, window.screen, fb_pattern.?);
+
+            var result: x11.c.FcResult = undefined;
+            const match = x11.c.FcFontMatch(null, fb_pattern.?, &result);
+
+            if (match) |m| {
+                if (x11.c.XftFontOpenPattern(window.dpy, m)) |f| {
+                    try fallbacks.append(allocator, f);
+                } else {
+                    x11.c.FcPatternDestroy(m);
+                }
             }
         }
 
@@ -442,7 +476,8 @@ pub const Renderer = struct {
         if (pattern == null) return f;
         defer x11.c.FcPatternDestroy(pattern);
 
-        _ = x11.c.FcPatternAddCharSet(pattern, x11.c.FC_CHARSET, fc_charset);
+        _ = x11.c.FcPatternDel(pattern, x11.c.FC_CHARSET);
+        if (x11.c.FcPatternAddCharSet(pattern, x11.c.FC_CHARSET, fc_charset) == 0) return f;
 
         // Add style attributes
         if (attr.italic) {
@@ -461,9 +496,6 @@ pub const Renderer = struct {
         const match = x11.c.FcFontMatch(null, pattern, &result);
 
         if (match) |m| {
-            // Check if we already have this font open to avoid duplicates?
-            // Ideally yes, but XftFont structure comparison is tricky.
-            // For now, just open it.
             const font_open = x11.c.XftFontOpenPattern(self.window.dpy, m);
             if (font_open) |new_font| {
                 if (x11.c.XftCharExists(self.window.dpy, new_font, u) != 0) {
@@ -480,81 +512,6 @@ pub const Renderer = struct {
         }
 
         return f;
-    }
-
-    fn drawRun(self: *Renderer, term: *Terminal, buf: []const u32, x: i32, y: i32, font: *x11.c.XftFont, fg: *x11.c.XftColor, glyph: Glyph, width_pixels: i32) !void {
-        if (buf.len == 0) return;
-
-        // Convert u32 run to UTF-8
-        // XftDrawString32 has issues with some fonts/emojis, using Utf8 is more robust (aligns with st)
-        var utf8_buf: [4096]u8 = undefined;
-        var utf8_len: usize = 0;
-        const unicode = @import("unicode.zig");
-
-        for (buf) |codepoint| {
-            if (utf8_len + 4 > utf8_buf.len) break;
-            const len = try unicode.encode(@intCast(codepoint), utf8_buf[utf8_len..]);
-            utf8_len += len;
-        }
-
-        // Draw string
-        x11.c.XftDrawStringUtf8(self.draw, fg, font, x, y + self.ascent, &utf8_buf, @intCast(utf8_len));
-
-        // Draw decorations
-        if (glyph.attr.underline) {
-            const underline_fg_idx = if (glyph.ucolor[0] >= 0) custom: {
-                const r = @as(u8, @intCast(@max(0, glyph.ucolor[0])));
-                const g = @as(u8, @intCast(@max(0, glyph.ucolor[1])));
-                const b = @as(u8, @intCast(@max(0, glyph.ucolor[2])));
-                break :custom 0xFF000000 | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
-            } else glyph.fg;
-
-            var underline_fg = try self.getColor(term, underline_fg_idx);
-
-            const thickness = config.Config.cursor.thickness;
-            const underline_y = y + self.ascent + 1;
-
-            if (glyph.ustyle <= 0 or glyph.ustyle == 1) { // Single
-                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
-            } else if (glyph.ustyle == 1) { // Single (Duplicate case handled)
-                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
-            } else if (glyph.ustyle == 2) { // Double
-                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y, @intCast(width_pixels), thickness);
-                x11.c.XftDrawRect(self.draw, &underline_fg, x, underline_y + thickness * 2, @intCast(width_pixels), thickness);
-            } else if (glyph.ustyle == 3) { // Curly
-                const amp = @max(1, @as(i32, @intCast(thickness)));
-                const cy = underline_y + amp;
-                const char_w = @as(i32, @intCast(self.char_width));
-                var current_x = x;
-                while (current_x < x + width_pixels) {
-                    var points: [4]x11.c.XPoint = undefined;
-                    points[0] = .{ .x = @intCast(current_x), .y = @intCast(cy) };
-                    points[1] = .{ .x = @intCast(current_x + @divTrunc(char_w, 4)), .y = @intCast(cy - amp) };
-                    points[2] = .{ .x = @intCast(current_x + @divTrunc(3 * char_w, 4)), .y = @intCast(cy + amp) };
-                    points[3] = .{ .x = @intCast(current_x + char_w), .y = @intCast(cy) };
-
-                    _ = x11.c.XSetForeground(self.window.dpy, self.window.gc, underline_fg.pixel);
-                    _ = x11.c.XSetLineAttributes(self.window.dpy, self.window.gc, 0, x11.c.LineSolid, x11.c.CapButt, x11.c.JoinMiter);
-                    _ = x11.c.XDrawLines(self.window.dpy, self.window.buf, self.window.gc, &points, 4, x11.c.CoordModeOrigin);
-                    current_x += char_w;
-                }
-            } else if (glyph.ustyle == 4) { // Dotted
-                const dash_width_u = @divTrunc(self.char_width, 4);
-                var cx: i32 = x;
-                while (cx < x + width_pixels) {
-                    for (0..2) |k| {
-                        const dash_x = cx + @as(i32, @intCast(k * dash_width_u * 2));
-                        if (dash_x < x + width_pixels)
-                            x11.c.XftDrawRect(self.draw, &underline_fg, dash_x, underline_y, dash_width_u, thickness);
-                    }
-                    cx += @intCast(self.char_width);
-                }
-            }
-        }
-
-        if (glyph.attr.struck) {
-            x11.c.XftDrawRect(self.draw, fg, x, y + @divTrunc(self.ascent * 2, 3), @intCast(width_pixels), 1);
-        }
     }
 
     pub fn render(self: *Renderer, term: *Terminal, selector: *selection.Selector) !?x11.c.XRectangle {
@@ -632,19 +589,13 @@ pub const Renderer = struct {
 
                 if (bg_idx != config.Config.colors.default_background) {
                     var bg_col = try self.getColor(term, bg_idx);
-                    x11.c.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+
+                    const bg_width = if (glyph.attr.wide) self.char_width * 2 else self.char_width;
+                    x11.c.XftDrawRect(self.draw, &bg_col, x_pos, y_pos, @intCast(bg_width), @intCast(self.char_height));
                 }
             }
 
-            // 第二阶段：绘制所有字符 (批量绘制优化)
-            var run_len: usize = 0;
-            var run_buf: [1024]u32 = undefined;
-            var run_x: i32 = 0;
-            var run_font: *x11.c.XftFont = undefined;
-            var run_fg: x11.c.XftColor = undefined;
-            var run_glyph: Glyph = undefined;
-            var run_allocated_faint: bool = false;
-
+            // 第二阶段：逐个字符绘制并居中对齐
             for (0..@min(term.col, line_data.len)) |x| {
                 const glyph = line_data[x];
                 const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
@@ -675,18 +626,7 @@ pub const Renderer = struct {
 
                 if (glyph.attr.blink and config.Config.cursor.blink_interval_ms > 0) {
                     const blink_state = @mod(@divFloor(std.time.milliTimestamp(), config.Config.cursor.blink_interval_ms), 2) == 0;
-                    if (!blink_state) {
-                        // Skip invisible blinking text, but must flush current run first
-                        if (run_len > 0) {
-                            try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
-                            run_len = 0;
-                            if (run_allocated_faint) {
-                                x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
-                                run_allocated_faint = false;
-                            }
-                        }
-                        continue;
-                    }
+                    if (!blink_state) continue;
                 }
 
                 var font: *x11.c.XftFont = undefined;
@@ -694,15 +634,6 @@ pub const Renderer = struct {
                 var allocated_faint = false;
 
                 if (boxdraw.BoxDraw.isBoxDraw(glyph.u)) {
-                    if (run_len > 0) {
-                        try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
-                        run_len = 0;
-                        if (run_allocated_faint) {
-                            x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
-                            run_allocated_faint = false;
-                        }
-                    }
-
                     var b_fg = try self.getColor(term, fg_idx);
                     var b_bg = try self.getColor(term, bg_idx);
                     try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &b_fg, &b_bg, glyph.attr.bold);
@@ -724,59 +655,64 @@ pub const Renderer = struct {
                     }
                 }
 
-                var compatible = true;
-                if (run_len == 0) {
-                    compatible = false;
-                } else {
-                    if (run_font != font) compatible = false;
-                    if (run_fg.pixel != fg.pixel) compatible = false;
-                    if (run_glyph.attr.underline != glyph.attr.underline) compatible = false;
-                    if (glyph.attr.underline) {
-                        if (run_glyph.ustyle != glyph.ustyle) compatible = false;
-                        if (!std.meta.eql(run_glyph.ucolor, glyph.ucolor)) compatible = false;
-                    }
-                    if (run_glyph.attr.struck != glyph.attr.struck) compatible = false;
-                }
+                const char_cols = unicode.runeWidth(glyph.u);
 
-                if (!compatible) {
-                    if (run_len > 0) {
-                        try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
-                        run_len = 0;
-                        if (run_allocated_faint) {
-                            x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
-                            run_allocated_faint = false;
+                // 计算单元格的像素宽度
+                const cell_width_pixels = if (char_cols == 2) self.char_width * 2 else self.char_width;
+
+                // 测量字符的实际宽度
+                var glyph_extents: x11.c.XGlyphInfo = undefined;
+                var utf8_buf: [4]u8 = undefined;
+                const utf8_len = try unicode.encode(glyph.u, &utf8_buf);
+                x11.c.XftTextExtentsUtf8(self.window.dpy, font, &utf8_buf, @intCast(utf8_len), &glyph_extents);
+
+                // 计算居中偏移
+                const glyph_width = @as(i32, glyph_extents.xOff);
+                const offset_x = @divTrunc(@as(i32, @intCast(cell_width_pixels)) - glyph_width, 2);
+
+                // 转换为 UTF-8 并绘制
+                x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos + offset_x, y_pos + self.ascent, &utf8_buf, @intCast(utf8_len));
+
+                // 绘制下划线
+                if (glyph.attr.underline) {
+                    const underline_fg_idx = if (glyph.ucolor[0] >= 0) custom: {
+                        const r = @as(u8, @intCast(@max(0, glyph.ucolor[0])));
+                        const g = @as(u8, @intCast(@max(0, glyph.ucolor[1])));
+                        const b = @as(u8, @intCast(@max(0, glyph.ucolor[2])));
+                        break :custom 0xFF000000 | (@as(u32, r) << 16) | (@as(u32, g) << 8) | @as(u32, b);
+                    } else fg_idx;
+
+                    var underline_fg = try self.getColor(term, underline_fg_idx);
+                    const thickness = config.Config.cursor.thickness;
+                    const underline_y = y_pos + self.ascent + 1;
+
+                    if (glyph.ustyle <= 0 or glyph.ustyle == 1) {
+                        x11.c.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y, @intCast(cell_width_pixels), thickness);
+                    } else if (glyph.ustyle == 2) {
+                        x11.c.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y, @intCast(cell_width_pixels), thickness);
+                        x11.c.XftDrawRect(self.draw, &underline_fg, x_pos, underline_y + thickness * 2, @intCast(cell_width_pixels), thickness);
+                    } else if (glyph.ustyle == 4) {
+                        const dash_width_u = @divTrunc(self.char_width, 4);
+                        var cx: i32 = x_pos;
+                        while (cx < x_pos + @as(i32, @intCast(cell_width_pixels))) {
+                            for (0..2) |k| {
+                                const dash_x = cx + @as(i32, @intCast(k * dash_width_u * 2));
+                                if (dash_x < x_pos + @as(i32, @intCast(cell_width_pixels)))
+                                    x11.c.XftDrawRect(self.draw, &underline_fg, dash_x, underline_y, dash_width_u, thickness);
+                            }
+                            cx += @intCast(self.char_width);
                         }
                     }
-
-                    run_x = x_pos;
-                    run_font = font;
-                    run_fg = fg;
-                    run_glyph = glyph;
-                    run_allocated_faint = allocated_faint;
-                } else {
-                    if (allocated_faint) {
-                        x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &fg);
-                    }
                 }
 
-                if (glyph.u != ' ' and glyph.u != 0) {
-                    run_buf[run_len] = @as(u32, glyph.u);
-                } else {
-                    run_buf[run_len] = ' '; // Draw space for empty/space cells
+                // 绘制删除线
+                if (glyph.attr.struck) {
+                    x11.c.XftDrawRect(self.draw, &fg, x_pos, y_pos + @divTrunc(self.ascent * 2, 3), @intCast(cell_width_pixels), 1);
                 }
-                run_len += 1;
 
-                if (run_len >= run_buf.len) {
-                    try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
-                    run_x += @as(i32, @intCast(run_len * self.char_width));
-                    run_len = 0;
-                }
-            }
-
-            if (run_len > 0) {
-                try self.drawRun(term, run_buf[0..run_len], run_x, y_pos, run_font, &run_fg, run_glyph, @intCast(run_len * self.char_width));
-                if (run_allocated_faint) {
-                    x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &run_fg);
+                // 释放 faint 颜色
+                if (allocated_faint) {
+                    x11.c.XftColorFree(self.window.dpy, self.window.vis, self.window.cmap, &fg);
                 }
             }
 
@@ -870,44 +806,61 @@ pub const Renderer = struct {
 
         var draw_col = try self.getColor(term, cursor_bg_idx);
 
+        const is_wide = glyph.attr.wide;
+        const cursor_width = if (is_wide) self.char_width * 2 else self.char_width;
+
         switch (style) {
             .blinking_block, .blinking_block_default => { // blinking block
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(cursor_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
 
                     var utf8_buf: [4]u8 = undefined;
-                    const unicode = @import("unicode.zig");
                     const len = try unicode.encode(@intCast(codepoint), &utf8_buf);
 
-                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos, y_pos + self.ascent, &utf8_buf, @intCast(len));
+                    var char_x = x_pos;
+                    if (is_wide) {
+                        var glyph_extents: x11.c.XGlyphInfo = undefined;
+                        x11.c.XftTextExtentsUtf8(self.window.dpy, font, &utf8_buf, @intCast(len), &glyph_extents);
+                        const glyph_width = @as(i32, glyph_extents.xOff);
+                        const offset_x = @divTrunc(@as(i32, @intCast(cursor_width)) - glyph_width, 2);
+                        char_x += offset_x;
+                    }
+                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, char_x, y_pos + self.ascent, &utf8_buf, @intCast(len));
                 }
             },
             .steady_block => { // steady block
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(cursor_width), @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, cursor_fg_idx);
                     const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
 
                     var utf8_buf: [4]u8 = undefined;
-                    const unicode = @import("unicode.zig");
                     const len = try unicode.encode(@intCast(codepoint), &utf8_buf);
 
-                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos, y_pos + self.ascent, &utf8_buf, @intCast(len));
+                    var char_x = x_pos;
+                    if (is_wide) {
+                        var glyph_extents: x11.c.XGlyphInfo = undefined;
+                        x11.c.XftTextExtentsUtf8(self.window.dpy, font, &utf8_buf, @intCast(len), &glyph_extents);
+                        const glyph_width = @as(i32, glyph_extents.xOff);
+                        const offset_x = @divTrunc(@as(i32, @intCast(cursor_width)) - glyph_width, 2);
+                        char_x += offset_x;
+                    }
+                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, char_x, y_pos + self.ascent, &utf8_buf, @intCast(len));
                 }
             },
             .blinking_underline => { // blinking underline
                 const thickness = config.Config.cursor.thickness;
                 const y_line = y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness));
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(cursor_width), thickness);
             },
             .steady_underline => { // steady underline
                 const thickness = config.Config.cursor.thickness;
                 const y_line = y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness));
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_line, @intCast(cursor_width), thickness);
             },
             .blinking_bar => { // blinking bar
                 const thickness = config.Config.cursor.thickness;
@@ -919,20 +872,27 @@ pub const Renderer = struct {
             },
             .blinking_st_cursor, .steady_st_cursor => { // st cursor (hollow box)
                 const thickness = config.Config.cursor.thickness;
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(self.char_width), thickness);
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness)), @intCast(self.char_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, @intCast(cursor_width), thickness);
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos + @as(i32, @intCast(self.char_height)) - @as(i32, @intCast(thickness)), @intCast(cursor_width), thickness);
                 x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
-                x11.c.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(self.char_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
+                x11.c.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(cursor_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
                     var fg = try self.getColor(term, 258);
                     const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
 
                     var utf8_buf: [4]u8 = undefined;
-                    const unicode = @import("unicode.zig");
                     const len = try unicode.encode(@intCast(codepoint), &utf8_buf);
 
-                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, x_pos, y_pos + self.ascent, &utf8_buf, @intCast(len));
+                    var char_x = x_pos;
+                    if (is_wide) {
+                        var glyph_extents: x11.c.XGlyphInfo = undefined;
+                        x11.c.XftTextExtentsUtf8(self.window.dpy, font, &utf8_buf, @intCast(len), &glyph_extents);
+                        const glyph_width = @as(i32, glyph_extents.xOff);
+                        const offset_x = @divTrunc(@as(i32, @intCast(cursor_width)) - glyph_width, 2);
+                        char_x += offset_x;
+                    }
+                    x11.c.XftDrawStringUtf8(self.draw, &fg, font, char_x, y_pos + self.ascent, &utf8_buf, @intCast(len));
                 }
             },
         }

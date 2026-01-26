@@ -336,7 +336,7 @@ pub const Selector = struct {
             // XStoreBytes for legacy
             _ = x11.c.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
-            std.log.info("已通过 OSC 52 复制 {d} 字符到剪贴板\n", .{text.len});
+            std.log.info("已通过 OSC 52 复制 {d} 字符到剪贴板", .{text.len});
         }
     }
 
@@ -352,7 +352,7 @@ pub const Selector = struct {
                 _ = x11.c.XSetSelectionOwner(dpy, primary_atom, self.win, x11.c.CurrentTime);
 
                 if (x11.c.XGetSelectionOwner(dpy, primary_atom) != self.win) {
-                    std.log.err("Failed to acquire selection ownership\n", .{});
+                    std.log.err("Failed to acquire selection ownership", .{});
                     return;
                 }
 
@@ -363,9 +363,9 @@ pub const Selector = struct {
                 // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
                 _ = x11.c.XStoreBytes(dpy, text.ptr, @intCast(text.len));
 
-                std.log.info("已复制 {d} 字符到剪贴板 (PRIMARY & CLIPBOARD)\n", .{text.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (PRIMARY & CLIPBOARD)", .{text.len});
             } else {
-                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)\n", .{text.len});
+                std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)", .{text.len});
             }
         }
     }
@@ -385,7 +385,7 @@ pub const Selector = struct {
             // 我们使用 PRIMARY 属性名作为临时存储
             const prop_atom = x11.getPrimaryAtom(dpy);
             _ = x11.c.XConvertSelection(dpy, selection, utf8_atom, prop_atom, self.win, x11.c.CurrentTime);
-            std.log.info("请求选区内容...\n", .{});
+            std.log.info("请求选区内容...", .{});
         }
     }
 

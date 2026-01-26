@@ -112,7 +112,7 @@ pub const PTY = struct {
         // 获取控制终端
         if (c.ioctl(self.slave, c.TIOCSCTTY, @as(c_int, 0)) < 0) {
             // 这通常不致命，但值得注意
-            // std.log.warn("ioctl TIOCSCTTY failed\n", .{});
+            // std.log.warn("ioctl TIOCSCTTY failed", .{});
         }
 
         _ = c.dup2(self.slave, c.STDIN_FILENO);
@@ -160,7 +160,7 @@ pub const PTY = struct {
         _ = c.execvp(shell_path, @ptrCast(&argv));
 
         // 如果 execvp 失败
-        std.log.err("execvp failed for {s}: {d}\n", .{ shell_path, std.posix.errno(0) });
+        std.log.err("execvp failed for {s}: {d}", .{ shell_path, std.posix.errno(0) });
         c.exit(1);
     }
 

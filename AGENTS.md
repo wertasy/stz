@@ -61,7 +61,7 @@ const terminal = @import("terminal.zig");
 - **错误捕获**：使用 `try` 向上传递，或 `catch` 处理并记录中文错误日志。
 ```zig
 const result = someFunction() catch |err| {
-    std.log.err("操作失败: {}\n", .{err});
+    std.log.err("操作失败: {}", .{err});
     return err;
 };
 ```

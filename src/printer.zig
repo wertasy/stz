@@ -41,9 +41,9 @@ pub const Printer = struct {
     pub fn toggle(self: *Printer, term: *terminal.Terminal) !void {
         self.config.enabled = !self.config.enabled;
         if (self.config.enabled) {
-            std.log.info("打印模式已启用\n", .{});
+            std.log.info("打印模式已启用", .{});
         } else {
-            std.log.info("打印模式已禁用\n", .{});
+            std.log.info("打印模式已禁用", .{});
         }
         term.mode.print = self.config.enabled;
     }
@@ -58,7 +58,7 @@ pub const Printer = struct {
             try self.write("\n");
         }
 
-        std.log.info("已打印屏幕内容\n", .{});
+        std.log.info("已打印屏幕内容", .{});
     }
 
     /// 打印选择内容（printsel）
@@ -68,7 +68,7 @@ pub const Printer = struct {
         try self.write(text);
         try self.write("\n");
 
-        std.log.info("已打印选择内容\n", .{});
+        std.log.info("已打印选择内容", .{});
     }
 
     /// 打印单行内容
@@ -93,7 +93,7 @@ pub const Printer = struct {
             }
 
             const len = unicode.encode(glyph.u, &buf) catch |err| {
-                std.log.err("UTF-8 编码失败: {}\n", .{err});
+                std.log.err("UTF-8 编码失败: {}", .{err});
                 continue;
             };
 
@@ -111,7 +111,7 @@ pub const Printer = struct {
     /// 写入数据到输出
     fn write(self: *Printer, data: []const u8) !void {
         const bytes_written = posix.write(self.config.fd, data) catch |err| {
-            std.log.err("写入输出失败: {}\n", .{err});
+            std.log.err("写入输出失败: {}", .{err});
             if (self.config.fd != posix.STDOUT_FILENO and self.config.fd != posix.STDERR_FILENO) {
                 posix.close(self.config.fd);
                 self.config.fd = posix.STDOUT_FILENO;
@@ -120,7 +120,7 @@ pub const Printer = struct {
         };
 
         if (bytes_written != data.len) {
-            std.log.err("写入不完整: {} / {}\n", .{ bytes_written, data.len });
+            std.log.err("写入不完整: {} / {}", .{ bytes_written, data.len });
             return error.WriteIncomplete;
         }
     }
@@ -131,7 +131,7 @@ pub const Printer = struct {
 
         var buf: [4]u8 = undefined;
         const len = unicode.encode(c, &buf) catch |err| {
-            std.log.err("UTF-8 编码失败: {}\n", .{err});
+            std.log.err("UTF-8 编码失败: {}", .{err});
             return err;
         };
 

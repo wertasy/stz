@@ -22,7 +22,7 @@ const CursorStyle = types.CursorStyle;
 
 // 字体配置
 pub const font = struct {
-    pub const name = "Maple Mono NF:pixelsize=20:antialias=true:autohint=false";
+    pub const name = "Maple Mono NF CN:pixelsize=20:antialias=true:autohint=false";
     pub const size: u32 = 20; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;

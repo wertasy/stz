@@ -775,6 +775,77 @@ pub const Renderer = struct {
         }
     }
 
+    // Helper to draw a filled arc for boxdraw corners using XFillPolygon
+    fn drawBoxArc(self: *Renderer, x: i32, y: i32, w: i32, h: i32, s: i32, color: *x11.c.XftColor, corner_radius: i32, quadrant: u2) !void {
+        const s_f = @as(f32, @floatFromInt(s));
+        const r_f = @as(f32, @floatFromInt(corner_radius));
+        const cx = @as(f32, @floatFromInt(x)) + @as(f32, @floatFromInt(w)) / 2.0;
+        const cy = @as(f32, @floatFromInt(y)) + @as(f32, @floatFromInt(h)) / 2.0;
+
+        const r_out = r_f + s_f / 2.0;
+        const r_in = @max(0.0, r_f - s_f / 2.0);
+
+        var xc: f32 = 0;
+        var yc: f32 = 0;
+        var start_angle: f32 = 0;
+
+        // Quadrant 0: ╭ (LD+LR) -> Center @ Bottom Right (Relative to arc center), Arc is Top-Left
+        // Quadrant 1: ╮ (LD+LL) -> Center @ Bottom Left, Arc is Top-Right
+        // Quadrant 2: ╯ (LU+LL) -> Center @ Top Left, Arc is Bottom-Right
+        // Quadrant 3: ╰ (LU+LR) -> Center @ Top Right, Arc is Bottom-Left
+        switch (quadrant) {
+            0 => { // ╭
+                xc = cx + r_f;
+                yc = cy + r_f;
+                start_angle = 90;
+            },
+            1 => { // ╮
+                xc = cx - r_f;
+                yc = cy + r_f;
+                start_angle = 0;
+            },
+            2 => { // ╯
+                xc = cx - r_f;
+                yc = cy - r_f;
+                start_angle = 270;
+            },
+            3 => { // ╰
+                xc = cx + r_f;
+                yc = cy - r_f;
+                start_angle = 180;
+            },
+        }
+
+        const steps = 16;
+        var points: [32]x11.c.XPoint = undefined;
+        const angle_step = 90.0 / @as(f32, @floatFromInt(steps - 1));
+
+        // Outer arc
+        for (0..steps) |i| {
+            const theta_deg = start_angle + @as(f32, @floatFromInt(i)) * angle_step;
+            const theta = theta_deg * std.math.pi / 180.0;
+            points[i] = .{
+                .x = @intFromFloat(xc + r_out * @cos(theta)),
+                .y = @intFromFloat(yc - r_out * @sin(theta)), // Y is down
+            };
+        }
+
+        // Inner arc (reverse)
+        for (0..steps) |i| {
+            const theta_deg = start_angle + (90.0 - @as(f32, @floatFromInt(i)) * angle_step);
+            const theta = theta_deg * std.math.pi / 180.0;
+            points[steps + i] = .{
+                .x = @intFromFloat(xc + r_in * @cos(theta)),
+                .y = @intFromFloat(yc - r_in * @sin(theta)),
+            };
+        }
+
+        const gc = x11.c.XCreateGC(self.window.dpy, self.window.buf, 0, null);
+        defer _ = x11.c.XFreeGC(self.window.dpy, gc);
+        _ = x11.c.XSetForeground(self.window.dpy, gc, color.pixel);
+        _ = x11.c.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, points.len, x11.c.Nonconvex, x11.c.CoordModeOrigin);
+    }
+
     fn drawBoxChar(self: *Renderer, u: u21, x: i32, y: i32, w: i32, h: i32, color: *x11.c.XftColor, bg_color: *x11.c.XftColor, bold: bool) !void {
         const data = boxdraw.BoxDraw.getDrawData(u);
         if (data == 0) return;
@@ -897,11 +968,37 @@ pub const Renderer = struct {
                 const arc = data & boxdraw_data.BDA != 0;
                 const multi_light = light & (light -% 1) != 0;
                 const multi_double = double_ & (double_ -% 1) != 0;
+
+                // // 圆角半径：尽可能大，最大为 min(w,h)/2
+                // const corner_radius: i32 = @divTrunc(@min(w, h), 2);
+                // const d_len: i32 = if (arc) -(@as(i32, @intFromFloat(@as(f32, @floatFromInt(corner_radius)) + @as(f32, @floatFromInt(s)) / 2.0))) else if (multi_double and !multi_light) -s else 0;
                 const d_len: i32 = if (arc or (multi_double and !multi_light)) -s else 0;
+
+                // // 先绘制直线（如果有）
                 if (data & boxdraw_data.LL != 0) x11.c.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
                 if (data & boxdraw_data.LU != 0) x11.c.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
                 if (data & boxdraw_data.LR != 0) x11.c.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
                 if (data & boxdraw_data.LD != 0) x11.c.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
+
+                // // 绘制圆角弧
+                // if (arc and corner_radius > 0) {
+                //     // ╭ (U+256D, BDA+LD+LR): 左上圆角，边线向下和向右
+                //     if ((data & boxdraw_data.LD) != 0 and (data & boxdraw_data.LR) != 0) {
+                //         try self.drawBoxArc(x, y, w, h, s, color, corner_radius, 0);
+                //     }
+                //     // ╮ (U+256E, BDA+LD+LL): 右上圆角，边线向下和向左
+                //     if ((data & boxdraw_data.LD) != 0 and (data & boxdraw_data.LL) != 0) {
+                //         try self.drawBoxArc(x, y, w, h, s, color, corner_radius, 1);
+                //     }
+                //     // ╯ (U+256F, BDA+LU+LL): 右下圆角，边线向上和向左
+                //     if ((data & boxdraw_data.LU) != 0 and (data & boxdraw_data.LL) != 0) {
+                //         try self.drawBoxArc(x, y, w, h, s, color, corner_radius, 2);
+                //     }
+                //     // ╰ (U+2570, BDA+LU+LR): 左下圆角，边线向上和向右
+                //     if ((data & boxdraw_data.LU) != 0 and (data & boxdraw_data.LR) != 0) {
+                //         try self.drawBoxArc(x, y, w, h, s, color, corner_radius, 3);
+                //     }
+                // }
             }
             if (double_ != 0) {
                 const dl = data & boxdraw_data.DL != 0;

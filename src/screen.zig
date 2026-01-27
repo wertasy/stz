@@ -414,7 +414,11 @@ pub fn clearRegion(term: *Terminal, x1: usize, y1: usize, x2: usize, y2: usize) 
             dirty[y] = true;
         }
         for (sx1..sx2 + 1) |x| {
+            // 清理宽字符
+            term.clearWide(x, y);
+
             // 如果清除的单元格在选择范围内，清除选择 (st 对齐)
+
             if (term.selection.mode != .idle) {
                 if (isInsideSelection(term, x, y)) {
                     selClear(term);

@@ -233,6 +233,29 @@ pub const Terminal = struct {
         self.printer = printer;
     }
 
+    /// 清理可能被破坏的宽字符 (st 对齐: tsetchar 中的清理逻辑)
+    /// 如果 (x, y) 是 wide_dummy，则清理 (x-1, y) 的 wide 标志
+    /// 如果 (x, y) 是 wide，则清理 (x+1, y) 的 wide_dummy 标志
+    pub fn clearWide(self: *Terminal, x: usize, y: usize) void {
+        const lines = self.line orelse return;
+        if (y >= lines.len) return;
+        const row = lines[y];
+        if (x >= row.len) return;
+
+        const glyph = row[x];
+        if (glyph.attr.wide) {
+            if (x + 1 < row.len) {
+                row[x + 1].u = ' ';
+                row[x + 1].attr.wide_dummy = false;
+            }
+        } else if (glyph.attr.wide_dummy) {
+            if (x > 0) {
+                row[x - 1].u = ' ';
+                row[x - 1].attr.wide = false;
+            }
+        }
+    }
+
     /// 写入字符到终端（带字符集转换）
     pub fn writeChar(self: *Terminal, u: u21) !void {
         var codepoint = u;
@@ -393,26 +416,10 @@ pub const Terminal = struct {
         if (self.line) |lines| {
             if (self.c.y < lines.len and self.c.x < lines[self.c.y].len) {
                 // 清理被覆盖的宽字符 (st 对齐: tsetchar)
-                const old_glyph = lines[self.c.y][self.c.x];
-                if (old_glyph.attr.wide) {
-                    if (self.c.x + 1 < self.col) {
-                        lines[self.c.y][self.c.x + 1] = Glyph{
-                            .u = ' ',
-                            .fg = self.c.attr.fg,
-                            .bg = self.c.attr.bg,
-                        };
-                    }
-                } else if (old_glyph.attr.wide_dummy) {
-                    if (self.c.x > 0) {
-                        lines[self.c.y][self.c.x - 1] = Glyph{
-                            .u = ' ',
-                            .fg = self.c.attr.fg,
-                            .bg = self.c.attr.bg,
-                        };
-                    }
-                }
+                self.clearWide(self.c.x, self.c.y);
 
                 // 设置字符属性（如果宽字符则设置 wide 标志）
+
                 var glyph_attr = self.c.attr.attr;
                 if (width == 2) {
                     glyph_attr.wide = true;
@@ -625,6 +632,21 @@ pub const Terminal = struct {
         if (screen_buf) |scr| {
             if (self.c.y < scr.len) {
                 const row = scr[self.c.y];
+
+                // 宽字符清理：检查删除起始位置
+                if (self.c.x > 0 and row[self.c.x].attr.wide_dummy) {
+                    row[self.c.x - 1].u = ' ';
+                    row[self.c.x - 1].attr.wide = false;
+                }
+                // 检查删除范围的末尾
+                const last_deleted_idx = self.c.x + count - 1;
+                if (row[last_deleted_idx].attr.wide) {
+                    if (last_deleted_idx + 1 < self.col) {
+                        row[last_deleted_idx + 1].u = ' ';
+                        row[last_deleted_idx + 1].attr.wide_dummy = false;
+                    }
+                }
+
                 // 移动字符
                 for (self.c.x..self.col - count) |i| {
                     row[i] = row[i + count];
@@ -657,6 +679,13 @@ pub const Terminal = struct {
         if (screen_buf) |scr| {
             if (self.c.y < scr.len) {
                 const row = scr[self.c.y];
+
+                // 宽字符清理：如果插入点是 wide_dummy，清理其前面的 wide 头
+                if (self.c.x > 0 and row[self.c.x].attr.wide_dummy) {
+                    row[self.c.x - 1].u = ' ';
+                    row[self.c.x - 1].attr.wide = false;
+                }
+
                 // 移动字符
                 var i: usize = self.col - 1;
                 while (i >= self.c.x + count) : (i -= 1) {
@@ -671,6 +700,13 @@ pub const Terminal = struct {
                         .bg = self.c.attr.bg,
                         .attr = .{},
                     };
+                }
+
+                // 宽字符清理：检查移动后的末尾边界是否破坏了宽字符
+                const last_moved_idx = self.col - 1;
+                if (row[last_moved_idx].attr.wide) {
+                    row[last_moved_idx].u = ' ';
+                    row[last_moved_idx].attr.wide = false;
                 }
 
                 if (self.dirty) |dirty| {
@@ -809,22 +845,16 @@ pub const Terminal = struct {
                 const line = lines[self.c.y];
                 const clear_glyph = Glyph{ .u = ' ', .fg = self.c.attr.fg, .bg = self.c.attr.bg };
 
-                // 检查起始位置是否切断了宽字符
-                if (self.c.x > 0 and line[self.c.x].attr.wide_dummy) {
-                    line[self.c.x - 1].u = ' ';
-                    line[self.c.x - 1].attr.wide = false;
+                // 检查起始位置和结束位置是否切断了宽字符
+                self.clearWide(self.c.x, self.c.y);
+                const end_idx = self.c.x + erase_count;
+                if (end_idx < line.len) {
+                    self.clearWide(end_idx, self.c.y);
                 }
 
                 var i: usize = 0;
                 while (i < erase_count and self.c.x + i < line.len) : (i += 1) {
                     line[self.c.x + i] = clear_glyph;
-                }
-
-                // 检查结束位置是否切断了宽字符
-                const end_idx = self.c.x + erase_count;
-                if (end_idx < line.len and line[end_idx].attr.wide_dummy) {
-                    line[end_idx].u = ' ';
-                    line[end_idx].attr.wide_dummy = false;
                 }
             }
         }

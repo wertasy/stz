@@ -189,14 +189,14 @@ pub const Input = struct {
             XK_KP_Down => try self.writeArrow(alt, 'B', ctrl, shift),
             XK_KP_Left => try self.writeArrow(alt, 'D', ctrl, shift),
             XK_KP_Right => try self.writeArrow(alt, 'C', ctrl, shift),
-            XK_Home => try self.writeHome(alt, ctrl),
-            XK_KP_Home => try self.writeHome(alt, ctrl),
-            XK_End => try self.writeEnd(alt, ctrl),
-            XK_KP_End => try self.writeEnd(alt, ctrl),
-            XK_Prior => try self.writePageUp(alt, ctrl),
-            XK_KP_Prior => try self.writePageUp(alt, ctrl),
-            XK_Next => try self.writePageDown(alt, ctrl),
-            XK_KP_Next => try self.writePageDown(alt, ctrl),
+            XK_Home => try self.writeHome(alt, ctrl, shift),
+            XK_KP_Home => try self.writeHome(alt, ctrl, shift),
+            XK_End => try self.writeEnd(alt, ctrl, shift),
+            XK_KP_End => try self.writeEnd(alt, ctrl, shift),
+            XK_Prior => try self.writePageUp(alt, ctrl, shift),
+            XK_KP_Prior => try self.writePageUp(alt, ctrl, shift),
+            XK_Next => try self.writePageDown(alt, ctrl, shift),
+            XK_KP_Next => try self.writePageDown(alt, ctrl, shift),
             XK_Insert => {},
             XK_KP_Insert => {},
             else => {
@@ -359,113 +359,92 @@ pub const Input = struct {
     }
 
     pub fn writeArrow(self: *Input, alt: bool, direction: u8, ctrl: bool, shift: bool) !void {
-        var seq: []const u8 = "";
-        if (ctrl) {
-            seq = switch (direction) {
-                'A' => "\x1B[1;5A",
-                'B' => "\x1B[1;5B",
-                'C' => "\x1B[1;5C",
-                'D' => "\x1B[1;5D",
-                else => {
-                    std.log.debug("未知的方向键 (Ctrl): {c}", .{direction});
-                    return;
-                },
-            };
-        } else if (shift) {
-            seq = switch (direction) {
-                'A' => "\x1B[1;2A",
-                'B' => "\x1B[1;2B",
-                'C' => "\x1B[1;2C",
-                'D' => "\x1B[1;2D",
-                else => {
-                    std.log.debug("未知的方向键 (Shift): {c}", .{direction});
-                    return;
-                },
-            };
-        } else if (alt) {
-            seq = switch (direction) {
-                'A' => "\x1B[1;3A",
-                'B' => "\x1B[1;3B",
-                'C' => "\x1B[1;3C",
-                'D' => "\x1B[1;3D",
-                else => {
-                    std.log.debug("未知的方向键 (Alt): {c}", .{direction});
-                    return;
-                },
-            };
-        } else {
-            if (self.term.mode.app_cursor) {
-                seq = switch (direction) {
-                    'A' => "\x1BOA",
-                    'B' => "\x1BOB",
-                    'C' => "\x1BOC",
-                    'D' => "\x1BOD",
-                    else => {
-                        std.log.debug("未知的方向键 (AppCursor): {c}", .{direction});
-                        return;
-                    },
-                };
-            } else {
-                seq = switch (direction) {
-                    'A' => "\x1B[A",
-                    'B' => "\x1B[B",
-                    'C' => "\x1B[C",
-                    'D' => "\x1B[D",
-                    else => {
-                        std.log.debug("未知的方向键 (Default): {c}", .{direction});
-                        return;
-                    },
-                };
-            }
+        const mod = @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4;
+        var seq: [16]u8 = undefined;
+
+        if (mod > 0) {
+            const s = try std.fmt.bufPrint(&seq, "\x1B[1;{d}{c}", .{ mod + 1, direction });
+            _ = try self.pty.write(s);
+            return;
         }
-        _ = try self.pty.write(seq);
+
+        const s = if (self.term.mode.app_cursor)
+            try std.fmt.bufPrint(&seq, "\x1BO{c}", .{direction})
+        else
+            try std.fmt.bufPrint(&seq, "\x1B[{c}", .{direction});
+        _ = try self.pty.write(s);
     }
 
-    fn writeHome(self: *Input, alt: bool, ctrl: bool) !void {
-        const seq = if (alt) "\x1B[1;3H" else if (ctrl) "\x1B[1;5H" else "\x1B[H";
-        _ = try self.pty.write(seq);
+    fn writeHome(self: *Input, alt: bool, ctrl: bool, shift: bool) !void {
+        const mod = @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4;
+        var seq: [16]u8 = undefined;
+        const s = if (mod > 0)
+            try std.fmt.bufPrint(&seq, "\x1B[1;{d}H", .{mod + 1})
+        else
+            "\x1B[H";
+        _ = try self.pty.write(s);
     }
 
-    fn writeEnd(self: *Input, alt: bool, ctrl: bool) !void {
-        const seq = if (alt) "\x1B[1;3F" else if (ctrl) "\x1B[1;5F" else "\x1B[F";
-        _ = try self.pty.write(seq);
+    fn writeEnd(self: *Input, alt: bool, ctrl: bool, shift: bool) !void {
+        const mod = @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4;
+        var seq: [16]u8 = undefined;
+        const s = if (mod > 0)
+            try std.fmt.bufPrint(&seq, "\x1B[1;{d}F", .{mod + 1})
+        else
+            "\x1B[F";
+        _ = try self.pty.write(s);
     }
 
-    fn writePageUp(self: *Input, alt: bool, ctrl: bool) !void {
-        const seq = if (alt) "\x1B[5;3~" else if (ctrl) "\x1B[5;5~" else "\x1B[5~";
-        _ = try self.pty.write(seq);
+    fn writePageUp(self: *Input, alt: bool, ctrl: bool, shift: bool) !void {
+        const mod = @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4;
+        var seq: [16]u8 = undefined;
+        const s = if (mod > 0)
+            try std.fmt.bufPrint(&seq, "\x1B[5;{d}~", .{mod + 1})
+        else
+            "\x1B[5~";
+        _ = try self.pty.write(s);
     }
 
-    fn writePageDown(self: *Input, alt: bool, ctrl: bool) !void {
-        const seq = if (alt) "\x1B[6;3~" else if (ctrl) "\x1B[6;5~" else "\x1B[6~";
-        _ = try self.pty.write(seq);
+    fn writePageDown(self: *Input, alt: bool, ctrl: bool, shift: bool) !void {
+        const mod = @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4;
+        var seq: [16]u8 = undefined;
+        const s = if (mod > 0)
+            try std.fmt.bufPrint(&seq, "\x1B[6;{d}~", .{mod + 1})
+        else
+            "\x1B[6~";
+        _ = try self.pty.write(s);
     }
 
     fn writeFunction(self: *Input, fn_num: u32, shift: bool, ctrl: bool, alt: bool) !void {
         if (fn_num < 1 or fn_num > 12) return;
         const base_seq = switch (fn_num) {
-            1 => "OP",
-            2 => "OQ",
-            3 => "OR",
-            4 => "OS",
-            5 => "[15~",
-            6 => "[17~",
-            7 => "[18~",
-            8 => "[19~",
-            9 => "[20~",
-            10 => "[21~",
-            11 => "[23~",
-            12 => "[24~",
-            else => {
-                std.log.debug("未知的 Fn 键: {d}", .{fn_num});
-                return;
-            },
+            1 => "P",
+            2 => "Q",
+            3 => "R",
+            4 => "S",
+            5 => "15~",
+            6 => "17~",
+            7 => "18~",
+            8 => "19~",
+            9 => "20~",
+            10 => "21~",
+            11 => "23~",
+            12 => "24~",
+            else => unreachable,
         };
+        const mod = @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4;
         var seq: [32]u8 = undefined;
-        const formatted_seq = if (shift or alt or ctrl)
-            try std.fmt.bufPrint(&seq, "\x1B[{d}{s}", .{ @as(u32, @intFromBool(shift)) + @as(u32, @intFromBool(alt)) * 2 + @as(u32, @intFromBool(ctrl)) * 4, base_seq })
+
+        const formatted_seq = if (mod > 0)
+            if (fn_num <= 4)
+                try std.fmt.bufPrint(&seq, "\x1B[1;{d}{s}", .{ mod + 1, base_seq })
+            else
+                try std.fmt.bufPrint(&seq, "\x1B[{s:.2};{d}~", .{ base_seq, mod + 1 })
+        else if (fn_num <= 4)
+            try std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq})
         else
-            try std.fmt.bufPrint(&seq, "\x1BO{s}", .{base_seq});
+            try std.fmt.bufPrint(&seq, "\x1B[{s}", .{base_seq});
+
         _ = try self.pty.write(formatted_seq);
     }
 

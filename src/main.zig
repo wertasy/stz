@@ -509,7 +509,15 @@ pub fn main() !u8 {
                             // 移除对 status 的严格检查，因为某些环境下 status 可能不符合预期 (如 XLookupKeySym)
                             // 这与原版 st 的行为一致 (st 忽略 status，仅检查 len)
                             if (n > 0 and n <= kbuf.len) {
-                                _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+                                // 处理 Alt+单字节字符：在字符前添加 ESC (\x1B)
+                                if (n == 1 and (ev.xkey.state & x11.c.Mod1Mask) != 0) {
+                                    var alt_buf: [2]u8 = undefined;
+                                    alt_buf[0] = 0x1B;
+                                    alt_buf[1] = kbuf[0];
+                                    _ = try pty.write(&alt_buf);
+                                } else {
+                                    _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+                                }
                             } else if (n == 0) {
                                 // Fallback: If XIM returns nothing (e.g. broken locale), try raw XLookupString
                                 // This ensures basic ASCII input works even if IME is misconfigured
@@ -524,7 +532,15 @@ pub fn main() !u8 {
                             var kbuf: [32]u8 = undefined;
                             const n = x11.c.XLookupString(&ev.xkey, &kbuf, kbuf.len, null, null);
                             if (n > 0) {
-                                _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+                                // 处理 Alt+单字节字符：在字符前添加 ESC (\x1B)
+                                if (n == 1 and (ev.xkey.state & x11.c.Mod1Mask) != 0) {
+                                    var alt_buf: [2]u8 = undefined;
+                                    alt_buf[0] = 0x1B;
+                                    alt_buf[1] = kbuf[0];
+                                    _ = try pty.write(&alt_buf);
+                                } else {
+                                    _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
+                                }
                             }
                         }
                     }

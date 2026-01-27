@@ -428,8 +428,8 @@ pub const Parser = struct {
                     self.term.c.attr.attr.reverse = false;
                     self.term.c.attr.attr.hidden = false;
                     self.term.c.attr.attr.struck = false;
-                    self.term.c.attr.fg = config.colors.default_foreground;
-                    self.term.c.attr.bg = config.colors.default_background;
+                    self.term.c.attr.fg = config.colors.default_foreground_idx;
+                    self.term.c.attr.bg = config.colors.default_background_idx;
                     self.term.c.attr.ustyle = -1;
                     for (0..3) |j| self.term.c.attr.ucolor[j] = -1;
                 },
@@ -496,7 +496,7 @@ pub const Parser = struct {
                     }
                     if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.fg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.fg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
-                39 => self.term.c.attr.fg = config.colors.default_foreground,
+                39 => self.term.c.attr.fg = config.colors.default_foreground_idx,
                 40...47 => self.term.c.attr.bg = @as(u32, @intCast(arg - 40)),
                 48 => {
                     var color_submode: i64 = -1;
@@ -530,7 +530,7 @@ pub const Parser = struct {
                     }
                     if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.bg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.bg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
                 },
-                49 => self.term.c.attr.bg = config.colors.default_background,
+                49 => self.term.c.attr.bg = config.colors.default_background_idx,
                 58 => {
                     var color_submode: i64 = -1;
                     var r: i64 = -1;
@@ -635,8 +635,8 @@ pub const Parser = struct {
         try self.term.moveTo(0, 0);
         self.term.c.state = .{};
         self.term.c.attr = .{};
-        self.term.c.attr.fg = config.colors.default_foreground;
-        self.term.c.attr.bg = config.colors.default_background;
+        self.term.c.attr.fg = config.colors.default_foreground_idx;
+        self.term.c.attr.bg = config.colors.default_background_idx;
         self.term.top = 0;
         self.term.bot = self.term.row - 1;
         self.term.mode = .{ .utf8 = true, .wrap = true };
@@ -1090,8 +1090,8 @@ pub const Parser = struct {
                         if (self.term.alt) |alt| {
                             var g = self.term.c.attr;
                             g.u = ' ';
-                            g.fg = config.colors.default_foreground;
-                            g.bg = config.colors.default_background;
+                            g.fg = config.colors.default_foreground_idx;
+                            g.bg = config.colors.default_background_idx;
                             g.attr = .{};
                             for (alt) |l| {
                                 for (l) |*cell| {

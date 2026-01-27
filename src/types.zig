@@ -132,8 +132,8 @@ pub const GlyphAttr = packed struct(u16) {
 pub const Glyph = struct {
     u: u21 = ' ', // Unicode 码点：默认空格
     attr: GlyphAttr = .{}, // 字符属性：默认无特殊样式
-    fg: u32 = config.colors.default_foreground, // 前景色索引：默认前景色
-    bg: u32 = config.colors.default_background, // 背景色索引：默认背景色
+    fg: u32 = config.colors.default_foreground_idx, // 前景色索引：默认前景色
+    bg: u32 = config.colors.default_background_idx, // 背景色索引：默认背景色
     ustyle: i32 = -1, // 下划线样式：-1 表示使用默认样式
     ucolor: [3]i32 = [_]i32{ -1, -1, -1 }, // 下划线颜色 RGB：-1 表示使用默认颜色
 

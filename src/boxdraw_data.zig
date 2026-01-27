@@ -214,12 +214,5 @@ pub const boxdata = init: {
     data[0x92] = BBS + 2;
     data[0x93] = BBS + 3;
 
-    // Geometric Shapes (to avoid gaps in common symbols)
-    data[0xa0] = BBD + 0; // ■ (BLACK SQUARE) -> Full Block
-    data[0xb2] = BTR + 1; // ▲ (U+25B2)
-    data[0xbc] = BTR + 2; // ▼ (U+25BC)
-    data[0xc0] = BTR + 3; // ◀ (U+25C0)
-    data[0xb6] = BTR + 4; // ▶ (U+25B6)
-
     break :init data;
 };

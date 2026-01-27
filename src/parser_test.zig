@@ -7,6 +7,7 @@ const libc = @cImport({
 const Terminal = @import("terminal.zig").Terminal;
 const Parser = @import("parser.zig").Parser;
 const types = @import("types.zig");
+const config = @import("config.zig");
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
@@ -42,7 +43,7 @@ test "SGR reset sequence" {
     try expect(!term.c.attr.attr.bold);
     try expect(!term.c.attr.attr.underline);
     // 258 是 config.zig 中的默认前景色
-    try expectEqual(@as(u32, 258), term.c.attr.fg);
+    try expectEqual(@as(u32, config.colors.default_foreground_idx), term.c.attr.fg);
 }
 
 test "CSI colon arguments" {

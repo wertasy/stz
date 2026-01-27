@@ -794,7 +794,7 @@ pub fn main() !u8 {
                 },
                 x11.c.SelectionRequest => {
                     const e = ev.xselectionrequest;
-                    std.log.info("SelectionRequest received (target={d})", .{e.target});
+                    // std.log.info("SelectionRequest received (target={d})", .{e.target});
 
                     var notify: x11.c.XEvent = undefined;
                     notify.type = x11.c.SelectionNotify;
@@ -828,7 +828,6 @@ pub fn main() !u8 {
                 },
                 x11.c.SelectionNotify => {
                     const e = ev.xselection;
-                    std.log.info("SelectionNotify received", .{});
 
                     if (e.property != 0) {
                         var text_prop: x11.c.XTextProperty = undefined;

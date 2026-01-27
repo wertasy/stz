@@ -456,11 +456,11 @@ pub const Renderer = struct {
             return u32ToRgb(term.palette[index]);
         }
         // 光标颜色
-        if (index == config.colors.default_cursor) return u32ToRgb(term.default_cs);
+        if (index == config.colors.default_cursor_idx) return u32ToRgb(term.default_cs);
         // 前景色
-        if (index == config.colors.default_foreground) return u32ToRgb(term.default_fg);
+        if (index == config.colors.default_foreground_idx) return u32ToRgb(term.default_fg);
         // 背景色
-        if (index == config.colors.default_background) return u32ToRgb(term.default_bg);
+        if (index == config.colors.default_background_idx) return u32ToRgb(term.default_bg);
 
         // 默认白色
         return .{ 0xFF, 0xFF, 0xFF };
@@ -1102,7 +1102,7 @@ pub const Renderer = struct {
         if (base.attr.bold) {
             if (fg_idx < 8) {
                 fg_idx += 8;
-            } else if (fg_idx == config.colors.default_foreground) {
+            } else if (fg_idx == config.colors.default_foreground_idx) {
                 fg_idx = 15;
             }
         }

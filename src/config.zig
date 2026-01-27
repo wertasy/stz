@@ -22,8 +22,8 @@ const CursorStyle = types.CursorStyle;
 
 // 字体配置
 pub const font = struct {
-    pub const name = "Maple Mono NF CN:pixelsize=18:antialias=true:autohint=false";
-    pub const size: u32 = 18; // 像素大小
+    pub const name = "Maple Mono NF CN:pixelsize=20:antialias=true:autohint=false";
+    pub const size: u32 = 20; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;
     pub const cwscale: f32 = 1.0; // 字符宽度缩放
@@ -32,12 +32,12 @@ pub const font = struct {
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等
     pub const fallback_fonts = [_][:0]const u8{
-        "FreeMono:pixelsize=18:antialias=true",
-        "FreeSans:pixelsize=18:antialias=true",
-        "FreeSerif:pixelsize=18:antialias=true",
-        "Noto Sans Mono:pixelsize=18:antialias=true",
-        "Noto Sans CJK SC:pixelsize=18:antialias=true",
-        "Noto Color Emoji:pixelsize=18:antialias=true",
+        "FreeMono:pixelsize=20:antialias=true",
+        "FreeSans:pixelsize=20:antialias=true",
+        "FreeSerif:pixelsize=20:antialias=true",
+        "Noto Sans Mono:pixelsize=20:antialias=true",
+        "Noto Sans CJK SC:pixelsize=20:antialias=true",
+        "Noto Color Emoji:pixelsize=20:antialias=true",
     };
 };
 
@@ -83,18 +83,17 @@ pub const colors = struct {
         0xffffff, // white
     };
 
-    // 特殊颜色（索引 256-259）
-    pub const default_cursor = 256; // #cccccc
-    pub const reverse_cursor = 257; // #555555
-    pub const default_foreground = 258; // #e3e3e3
-    pub const default_background = 259; // #131314
+    // 特殊颜色索引常量
+    pub const default_foreground_idx = 256 + 0;
+    pub const default_background_idx = 256 + 1;
+    pub const default_cursor_idx = 256 + 2;
+    pub const reverse_cursor_idx = 256 + 3;
 
     // 特殊颜色（RGB值）
     pub const foreground = 0xe3e3e3; // default foreground colour
     pub const background = 0x131314; // default background colour
     pub const cursor = 0xcccccc; // cursor
     pub const cursor_text = 0x555555; // rev cursor
-    pub const default_attr: u32 = 11; // 默认属性
 };
 
 // 光标配置
@@ -202,8 +201,3 @@ pub const shortcuts = [_]KeyBinding{
     .{ .mod = x11.c.ShiftMask, .key = x11.c.XK_Print, .action = .PrintScreen },
     .{ .mod = 0, .key = x11.c.XK_Print, .action = .PrintSelection },
 };
-
-// 初始化默认配置
-pub fn defaultConfig() @This() {
-    return @This();
-}

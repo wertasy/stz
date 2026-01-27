@@ -1080,7 +1080,7 @@ pub const Renderer = struct {
         }
 
         if (i > 0) {
-            try self.drawGlyphFontSpecs(line, ox, y1, term, x2 - ox, current_reverse);
+            try self.drawGlyphFontSpecs(line, ox, y1, term, i, current_reverse);
         }
     }
 
@@ -1121,15 +1121,23 @@ pub const Renderer = struct {
         var x: usize = x1;
         var i: usize = 0;
         while (i < len and x < line.len) {
+            if (line[x].attr.wide_dummy) {
+                x += 1;
+                continue;
+            }
+
             if (line[x].attr.wide) {
                 total_width += 2;
-            } else if (!line[x].attr.wide_dummy) {
+            } else {
                 total_width += 1;
             }
-            if (!line[x].attr.wide_dummy) {
-                i += 1;
-            }
+
+            i += 1;
             x += 1;
+
+            if (line[x - 1].attr.wide and x < line.len and line[x].attr.wide_dummy) {
+                x += 1;
+            }
         }
 
         const hborder_x = @as(i32, @intCast(x1 * self.char_width)) + hborder;
@@ -1177,7 +1185,13 @@ pub const Renderer = struct {
                     if (line[x1 + idx].attr.wide_dummy) continue;
 
                     if (code_idx > 0 and idx != self.hb_data.glyphs[code_idx - 1].cluster) {
-                        xp += runewidth;
+                        // 智能步进：结合逻辑宽度 (runewidth) 和视觉宽度 (cluster_xp - xp)
+                        // 这解决了当 wcwidth=1 但字体实际宽度为 2 时的覆盖问题
+                        const visual_advance = cluster_xp - xp;
+                        const cells = @round(visual_advance / @as(f32, @floatFromInt(self.char_width)));
+                        const grid_advance = @max(1.0, cells) * @as(f32, @floatFromInt(self.char_width));
+
+                        xp += @max(runewidth, grid_advance);
                         cluster_xp = xp;
                         cluster_yp = yp;
                     }

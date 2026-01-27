@@ -120,15 +120,16 @@ pub fn hbtransform(data: *HbTransformData, xfont: *c.XftFont, glyphs: []const ty
     c.hb_buffer_set_cluster_level(buffer, c.HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
     c.hb_buffer_set_content_type(buffer, c.HB_BUFFER_CONTENT_TYPE_UNICODE);
 
-    // 遍历所有字符，跳过 wide_dummy，并使用原始索引作为 cluster
+    // 遍历所有字符，保留 wide_dummy (替换为空格)，以保持索引对齐 (st 逻辑)
     // start 参数是相对于 glyphs 切片的偏移量
     for (start..glyphs.len) |i| {
-        if (!glyphs[i].attr.wide_dummy) {
-            c.hb_buffer_add(buffer, glyphs[i].u, @intCast(i));
+        // 跳过 wide_dummy，不添加到 buffer
+        if (glyphs[i].attr.wide_dummy) {
+            continue;
         }
+        c.hb_buffer_add(buffer, glyphs[i].u, @intCast(i));
     }
     // 注意：不再使用 hb_buffer_add_codepoints，因为它不支持自定义 cluster 映射（对于非连续索引）
-    // 且我们需要跳过 dummy 字符
 
     c.hb_shape(hbfont, buffer, null, 0);
 

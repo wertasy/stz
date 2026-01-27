@@ -561,7 +561,7 @@ pub fn setDirtyAttr(term: *Terminal, attr_mask: types.GlyphAttr) void {
             // 使用自定义的属性检查逻辑 (st 的 tsetdirtattr)
             const glyph_attr = screen[y][x].attr;
             // 检查 bitmask
-            if (attrMatches(glyph_attr, attr_mask)) {
+            if (glyph_attr.matches(attr_mask)) {
                 dirty[y] = true;
                 break;
             }
@@ -575,24 +575,9 @@ pub fn isAttrSet(term: *Terminal, attr_mask: types.GlyphAttr) bool {
 
     for (0..term.row) |y| {
         for (0..term.col) |x| {
-            if (attrMatches(screen[y][x].attr, attr_mask)) return true;
+            if (screen[y][x].attr.matches(attr_mask)) return true;
         }
     }
-    return false;
-}
-
-fn attrMatches(a: types.GlyphAttr, mask: types.GlyphAttr) bool {
-    if (mask.bold and a.bold) return true;
-    if (mask.faint and a.faint) return true;
-    if (mask.italic and a.italic) return true;
-    if (mask.underline and a.underline) return true;
-    if (mask.blink and a.blink) return true;
-    if (mask.reverse and a.reverse) return true;
-    if (mask.hidden and a.hidden) return true;
-    if (mask.struck and a.struck) return true;
-    if (mask.wide and a.wide) return true;
-    if (mask.wide_dummy and a.wide_dummy) return true;
-    if (mask.url and a.url) return true;
     return false;
 }
 

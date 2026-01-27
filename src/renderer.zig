@@ -1066,7 +1066,7 @@ pub const Renderer = struct {
 
             const effective_reverse = new.attr.reverse != term.mode.reverse;
 
-            if (i > 0 and (current_reverse != effective_reverse or self.attrsCmp(base, new))) {
+            if (i > 0 and (current_reverse != effective_reverse or base.attrsCmp(new))) {
                 try self.drawGlyphFontSpecs(line, ox, y1, term, i, current_reverse);
                 i = 0;
             }
@@ -1082,12 +1082,6 @@ pub const Renderer = struct {
         if (i > 0) {
             try self.drawGlyphFontSpecs(line, ox, y1, term, x2 - ox, current_reverse);
         }
-    }
-
-    // 比较两个字符的属性是否相同
-    fn attrsCmp(self: *Renderer, a: Glyph, b: Glyph) bool {
-        _ = self;
-        return a.fg != b.fg or a.bg != b.bg or @as(u16, @bitCast(a.attr)) != @as(u16, @bitCast(b.attr));
     }
 
     // 绘制一批相同属性的字符

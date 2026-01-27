@@ -65,6 +65,32 @@ pub const GlyphAttr = packed struct(u16) {
     url: bool = false, // URL标记：识别为超链接（Ctrl+点击可打开）
     dirty_underline: bool = false, // 下划线脏标记：需要重新渲染下划线
     _padding: u2 = 0, // 填充位：确保对齐到16位边界
+
+    pub fn matches(a: GlyphAttr, mask: GlyphAttr) bool {
+        if (mask.bold and a.bold) return true;
+        if (mask.faint and a.faint) return true;
+        if (mask.italic and a.italic) return true;
+        if (mask.underline and a.underline) return true;
+        if (mask.blink and a.blink) return true;
+        if (mask.reverse and a.reverse) return true;
+        if (mask.hidden and a.hidden) return true;
+        if (mask.struck and a.struck) return true;
+        if (mask.wide and a.wide) return true;
+        if (mask.wide_dummy and a.wide_dummy) return true;
+        if (mask.url and a.url) return true;
+        return false;
+    }
+
+    // 比较两个字符的属性是否相同（st 对齐）
+    // 对应 st 的 ATTRCMP 宏，排除 wrap 属性的比较
+    pub fn cmp(a: GlyphAttr, b: GlyphAttr) bool {
+        // st: ((a).mode & (~ATTR_WRAP)) != ((b).mode & (~ATTR_WRAP)) || (a).fg != (b).fg || (a).bg != (b).bg
+        // ATTR_WRAP = 1 << 8 = 256
+        const ATTR_WRAP: u16 = 1 << 8;
+        const a_attr_masked = @as(u16, @bitCast(a)) & (~ATTR_WRAP);
+        const b_attr_masked = @as(u16, @bitCast(b)) & (~ATTR_WRAP);
+        return a_attr_masked != b_attr_masked;
+    }
 };
 
 /// 字符单元
@@ -110,6 +136,11 @@ pub const Glyph = struct {
     bg: u32 = config.colors.default_background, // 背景色索引：默认背景色
     ustyle: i32 = -1, // 下划线样式：-1 表示使用默认样式
     ucolor: [3]i32 = [_]i32{ -1, -1, -1 }, // 下划线颜色 RGB：-1 表示使用默认颜色
+
+    // 比较两个字符的属性是否相同（st 对齐）
+    pub fn attrsCmp(a: Glyph, b: Glyph) bool {
+        return a.attr.cmp(b.attr) or a.fg != b.fg or a.bg != b.bg;
+    }
 };
 
 /// 光标状态

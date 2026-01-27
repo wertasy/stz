@@ -118,6 +118,7 @@ pub fn hbtransform(data: *HbTransformData, xfont: *c.XftFont, glyphs: []const ty
 
     c.hb_buffer_set_direction(buffer, c.HB_DIRECTION_LTR);
     c.hb_buffer_set_cluster_level(buffer, c.HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+    c.hb_buffer_set_content_type(buffer, c.HB_BUFFER_CONTENT_TYPE_UNICODE);
 
     // 遍历所有字符，跳过 wide_dummy，并使用原始索引作为 cluster
     // start 参数是相对于 glyphs 切片的偏移量

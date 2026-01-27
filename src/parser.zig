@@ -931,7 +931,9 @@ pub const Parser = struct {
             cell.* = -1;
         };
         if (self.csi.len == 0) return;
-        if (!std.ascii.isDigit(self.csi.buf[p]) and self.csi.buf[p] != ';' and self.csi.buf[p] != ':') {
+        // Check for private marker (<, =, >, ?)
+        // Standard defines 0x3C-0x3F as private parameter bytes (markers)
+        if (self.csi.buf[p] >= 0x3C and self.csi.buf[p] <= 0x3F) {
             self.csi.priv = self.csi.buf[p];
             p += 1;
         }
@@ -1074,7 +1076,11 @@ pub const Parser = struct {
             'T' => try screen.scrollDown(self.term, self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'h' => try self.setMode(true),
             'l' => try self.setMode(false),
-            'm' => try self.setGraphicsMode(),
+            'm' => if (self.csi.priv == 0) {
+                try self.setGraphicsMode();
+            } else {
+                std.log.debug("未处理的 CSI 私有序列: {c}{c}", .{ self.csi.priv, mode });
+            },
             'n' => switch (self.csi.arg[0]) {
                 5 => self.ptyWrite("\x1B[0n"),
                 6 => {

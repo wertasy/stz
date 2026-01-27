@@ -182,3 +182,42 @@ test "Parser setScrollRegion" {
     try expectEqual(@as(usize, 0), term.top);
     try expectEqual(@as(usize, 23), term.bot);
 }
+
+test "Private CSI handling" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+    var parser = try Parser.init(&term, null, allocator);
+    defer parser.deinit();
+
+    // SGR 4 sets underline
+    const seq_sgr = "\x1b[4m";
+    for (seq_sgr) |c| try parser.putc(@intCast(c));
+    try expect(term.c.attr.attr.underline);
+
+    // Reset
+    term.c.attr.attr.underline = false;
+
+    // CSI > 4 m should NOT set underline (XTMODKEYS)
+    const seq_priv = "\x1b[>4m";
+    for (seq_priv) |c| try parser.putc(@intCast(c));
+    try expect(!term.c.attr.attr.underline);
+}
+
+test "SGR empty arguments (Reset)" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+    var parser = try Parser.init(&term, null, allocator);
+    defer parser.deinit();
+
+    // Set underline
+    term.c.attr.attr.underline = true;
+
+    // SGR m (no args) should equivalent to SGR 0 -> Reset
+    const seq = "\x1b[m";
+    for (seq) |c| try parser.putc(@intCast(c));
+
+    // Should be reset
+    try expect(!term.c.attr.attr.underline);
+}

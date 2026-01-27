@@ -1022,8 +1022,8 @@ pub const Renderer = struct {
             bg_idx = temp;
         }
 
-        const fg_col = try self.getColor(term, fg_idx);
-        const bg_col = try self.getColor(term, bg_idx);
+        var fg_col = try self.getColor(term, fg_idx);
+        var bg_col = try self.getColor(term, bg_idx);
 
         // 计算总宽度用于绘制背景、下划线和删除线
         var total_width: usize = 0;
@@ -1046,7 +1046,7 @@ pub const Renderer = struct {
         // 绘制背景
         x11.c.XftDrawRect(self.draw, &bg_col, hborder_x, winy, @intCast(total_width * self.char_width), @intCast(self.char_height));
 
-        // boxdraw 使用特殊绘制，跳过 HarfBuzz
+        // boxdraw 使用特殊绘制，直接调用 drawBoxChar()
         if (base.attr.boxdraw) {
             x = x1;
             i = 0;
@@ -1058,16 +1058,10 @@ pub const Renderer = struct {
                 }
 
                 const x_pos = @as(i32, @intCast(x * self.char_width)) + hborder;
-                const y_pos = winy + self.ascent;
-                const font = self.getFontForGlyph(glyph.u, glyph.attr);
-                const glyph_index = x11.c.XftCharIndex(self.window.dpy, font, glyph.u);
+                const y_pos = winy;
 
-                self.specs_buffer.appendAssumeCapacity(.{
-                    .font = font,
-                    .glyph = glyph_index,
-                    .x = @as(i16, @intCast(x_pos)),
-                    .y = @as(i16, @intCast(y_pos)),
-                });
+                // 直接调用 drawBoxChar 绘制几何图形，不使用字体
+                try self.drawBoxChar(glyph.u, x_pos, y_pos, @intCast(self.char_width), @intCast(self.char_height), &fg_col, &bg_col, base.attr.bold);
 
                 x += 1;
                 i += 1;

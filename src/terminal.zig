@@ -118,6 +118,7 @@ const std = @import("std");
 const types = @import("types.zig");
 const screen = @import("screen.zig");
 const unicode = @import("unicode.zig");
+const boxdraw = @import("boxdraw.zig");
 
 const Glyph = types.Glyph;
 const GlyphAttr = types.GlyphAttr;
@@ -415,6 +416,10 @@ pub const Terminal = struct {
                 var glyph_attr = self.c.attr.attr;
                 if (width == 2) {
                     glyph_attr.wide = true;
+                }
+                // 检查是否是框线字符，设置 boxdraw 属性
+                if (config.draw.boxdraw and boxdraw.BoxDraw.isBoxDraw(u)) {
+                    glyph_attr.boxdraw = true;
                 }
                 lines[self.c.y][self.c.x] = Glyph{
                     .u = u,

@@ -763,9 +763,14 @@ pub fn main() !u8 {
                             // 仅在非鼠标模式或按住 Shift 时复制到剪贴板
                             // st 对齐：在鼠标模式下不设置 X11 选区，让应用程序自己管理
                             if (!term.mode.isMouseEnabled() or shift) {
-                                selector.copy(term) catch |err| {
-                                    std.log.err("Copy failed: {}", .{err});
-                                };
+                                // 完成选择扩展逻辑 (决定是进入 ready 还是 idle)
+                                selector.extend(term, cx, cy, .regular, true);
+
+                                if (term.selection.mode == .ready) {
+                                    selector.copy(term) catch |err| {
+                                        std.log.err("Copy failed: {}", .{err});
+                                    };
+                                }
                             } else {
                                 // 鼠标模式下清除本地高亮，让应用程序的选择显示
                                 selector.clear(term);
@@ -834,13 +839,14 @@ pub fn main() !u8 {
 
                     const utf8 = x11.getUtf8Atom(window.dpy);
                     const targets = x11.getTargetsAtom(window.dpy);
+                    const xa_string = x11.getStringAtom(window.dpy);
 
                     var success = false;
                     if (e.target == targets) {
-                        const supported = [_]x11.c.Atom{ targets, utf8, x11.c.XA_STRING };
+                        const supported = [_]x11.c.Atom{ targets, utf8, xa_string, x11.c.XA_STRING };
                         _ = x11.c.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.c.XA_ATOM, 32, x11.c.PropModeReplace, @ptrCast(&supported), supported.len);
                         success = true;
-                    } else if (e.target == utf8 or e.target == x11.c.XA_STRING) {
+                    } else if (e.target == utf8 or e.target == xa_string or e.target == x11.c.XA_STRING) {
                         if (selector.selected_text) |text| {
                             _ = x11.c.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.c.PropModeReplace, text.ptr, @intCast(text.len));
                             success = true;
@@ -855,27 +861,46 @@ pub fn main() !u8 {
                     const e = ev.xselection;
 
                     if (e.property != 0) {
-                        var text_prop: x11.c.XTextProperty = undefined;
-                        // Use ev.property (which should be PRIMARY)
-                        if (x11.c.XGetTextProperty(window.dpy, e.requestor, &text_prop, e.property) > 0) {
-                            defer {
-                                _ = x11.c.XFree(@ptrCast(text_prop.value));
-                            }
+                        var ofs: c_ulong = 0;
+                        var rem: c_ulong = 1;
 
-                            if (text_prop.value) |value| {
-                                const len = @as(usize, @intCast(text_prop.nitems));
-                                const paste_text = try allocator.dupe(u8, value[0..len]);
-                                defer allocator.free(paste_text);
+                        while (rem > 0) {
+                            var actual_type: x11.c.Atom = undefined;
+                            var actual_format: c_int = undefined;
+                            var nitems: c_ulong = undefined;
+                            var data: ?[*]u8 = null;
 
-                                // 发送粘贴内容
-                                try input.sendPaste(paste_text);
-                                std.log.info("已将 {d} 字节写入 PTY: {s}", .{ paste_text.len, paste_text });
+                            // Use XGetWindowProperty to read selection data (matching st's approach)
+                            // We read in chunks (1024 words at a time) to handle large selections
+                            if (x11.c.XGetWindowProperty(window.dpy, window.win, e.property, @intCast(ofs), 1024, x11.c.False, x11.c.AnyPropertyType, &actual_type, &actual_format, &nitems, &rem, @ptrCast(&data)) == 0) {
+                                if (data) |value| {
+                                    defer _ = x11.c.XFree(value);
 
-                                // Also add to paste buffer
-                                try paste_buffer.appendSlice(allocator, paste_text);
-                                std.log.info("粘贴: {s}", .{paste_text});
+                                    if (nitems > 0) {
+                                        const len = @as(usize, @intCast(nitems)) * @as(usize, @intCast(actual_format)) / 8;
+                                        const paste_text = try allocator.dupe(u8, value[0..len]);
+                                        defer allocator.free(paste_text);
+
+                                        // 发送粘贴内容
+                                        try input.sendPaste(paste_text);
+                                        // std.log.info("SelectionNotify: Received {d} bytes from property {d}", .{ paste_text.len, e.property });
+
+                                        // Also add to paste buffer
+                                        try paste_buffer.appendSlice(allocator, paste_text);
+
+                                        // Update offset for next chunk
+                                        ofs += nitems * @as(c_ulong, @intCast(actual_format)) / 32;
+                                    } else break;
+                                } else break;
+                            } else {
+                                std.log.err("SelectionNotify: XGetWindowProperty failed", .{});
+                                break;
                             }
                         }
+                        // 读取后立即删除属性，避免残留旧数据影响下一次粘贴 (ICCCM 推荐)
+                        _ = x11.c.XDeleteProperty(window.dpy, window.win, e.property);
+                    } else {
+                        // std.log.info("SelectionNotify: Conversion failed (property=None)", .{});
                     }
 
                     // 粘贴完成后清除选择高亮
@@ -1049,11 +1074,15 @@ pub fn main() !u8 {
 
                 // 同步 OSC 52 剪贴板数据
                 if (term.clipboard_data) |data| {
-                    selector.copyTextToClipboard(data, term.clipboard_mask) catch |err| {
-                        std.log.err("OSC 52 剪贴板同步失败: {}", .{err});
-                    };
-                    allocator.free(data);
-                    term.clipboard_data = null;
+                    // 仅在终端获得焦点时同步，避免在后台运行时干扰其他终端的剪切板
+                    // 如果未获得焦点，保留数据直到下一次获得焦点或被新序列覆盖
+                    if (term.mode.focused) {
+                        selector.copyTextToClipboard(data, term.clipboard_mask) catch |err| {
+                            std.log.err("OSC 52 剪贴板同步失败: {}", .{err});
+                        };
+                        allocator.free(data);
+                        term.clipboard_data = null;
+                    }
                 }
             }
         }

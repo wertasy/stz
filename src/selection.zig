@@ -381,17 +381,16 @@ pub const Selector = struct {
     pub fn requestSelection(self: *Selector, selection: x11.c.Atom) !void {
         if (self.dpy) |dpy| {
             const utf8_atom = x11.getUtf8Atom(dpy);
-            // XConvertSelection: requestor (win), selection, target (UTF8), property (PRIMARY), time
-            // 我们使用 PRIMARY 属性名作为临时存储
-            const prop_atom = x11.getPrimaryAtom(dpy);
-            _ = x11.c.XConvertSelection(dpy, selection, utf8_atom, prop_atom, self.win, x11.c.CurrentTime);
+            // XConvertSelection: requestor (win), selection, target (UTF8), property (selection), time
+            // 对齐 st：使用 selection atom 作为 property 名
+            _ = x11.c.XConvertSelection(dpy, selection, utf8_atom, selection, self.win, x11.c.CurrentTime);
         }
     }
 
     /// 处理 SelectionClear 事件
     pub fn handleSelectionClear(self: *Selector, term: *Terminal, event: *const x11.c.XSelectionClearEvent) void {
         _ = event;
-        // 如果我们丢失了 PRIMARY 选区的所有权，清除当前选择
+        // 如果我们丢失了选区的所有权，清除当前高亮
         self.clear(term);
     }
 };

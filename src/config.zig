@@ -23,7 +23,7 @@ const CursorStyle = types.CursorStyle;
 // 字体配置
 pub const font = struct {
     pub const name = "Maple Mono NF CN:pixelsize=18:antialias=true:autohint=false";
-    pub const size: u32 = 20; // 像素大小
+    pub const size: u32 = 18; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;
     pub const cwscale: f32 = 1.0; // 字符宽度缩放
@@ -63,25 +63,25 @@ pub const stty_args = "stty raw pass8 nl -echo -iexten -cstopb 38400";
 pub const colors = struct {
     // 标准颜色 (16色) - 使用与 st 一致的 RGB 值
     pub const normal = [_]u32{
-        0x000000, // black
-        0xcd0000, // red3
-        0x00cd00, // green3
-        0xcdcd00, // yellow3
-        0x0000ee, // blue2
-        0xcd00cd, // magenta3
-        0x00cdcd, // cyan3
-        0xe5e5e5, // gray90
+        0x1B1D1E, // black          #1B1D1E
+        0xcd0000, // darkred        #FF0044
+        0x82B414, // darkgreen      #82B414
+        0xFD971F, // darkyellow     #FD971F
+        0x266C98, // darkblue       #266C98
+        0xcd00cd, // darkmagenta    #AC0CB1
+        0xAE81FF, // darkcyan       #AE81FF
+        0xCCCCCC, // gray           #CCCCCC
     };
 
     pub const bright = [_]u32{
-        0x7f7f7f, // gray50
-        0xff0000, // red
-        0x00ff00, // green
-        0xffff00, // yellow
-        0x5c5cff, // #5c5cff
-        0xff00ff, // magenta
-        0x00ffff, // cyan
-        0xffffff, // white
+        0x808080, // darkgray       #808080
+        0xF92672, // red            #F92672
+        0xA6E22E, // green          #A6E22E
+        0xE6DB74, // yellow         #E6DB74
+        0xFF6188, // blue           #7070F0
+        0xD63AE1, // magenta        #D63AE1
+        0x66D9EF, // cyan           #66D9EF
+        0xF8F8F2, // white          #F8F8F2
     };
 
     // 特殊颜色索引常量
@@ -91,10 +91,10 @@ pub const colors = struct {
     pub const reverse_cursor_idx = 256 + 3;
 
     // 特殊颜色（RGB值）
-    pub const foreground = 0xe3e3e3; // default foreground colour
-    pub const background = 0x131314; // default background colour
-    pub const cursor = 0xcccccc; // cursor
-    pub const cursor_text = 0x555555; // rev cursor
+    pub const foreground = 0xFCFCFA; // default foreground  #FCFCFA
+    pub const background = 0x1B1D1E; // default background  #1B1D1E
+    pub const cursor = 0xCCCCCC; // cursor                  #CCCCCC
+    pub const cursor_text = 0x555555; // rev cursor         #555555
 };
 
 // 光标配置

@@ -152,12 +152,27 @@ pub const Renderer = struct {
         var font_italic = x11.c.XftFontOpenPattern(window.dpy, italic_pattern);
         if (font_italic == null) font_italic = font;
 
-        // Bold
+        // Bold - 尝试使用完整字体名称加载粗体变体
         const bold_pattern = x11.c.FcPatternDuplicate(pattern);
         _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_WEIGHT);
         _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
+
+        // 尝试删除大小和样式限制，让 FontConfig 更容易匹配粗体变体
+        _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_PIXEL_SIZE);
+        _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_SIZE);
+        _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_SLANT);
+
         var font_bold = x11.c.XftFontOpenPattern(window.dpy, bold_pattern);
-        if (font_bold == null) font_bold = font;
+        if (font_bold == null or font_bold == font) {
+            // 备用方法：使用带 style=Bold 的完整字体名称
+            var buf: [256]u8 = undefined;
+            const font_name = std.fmt.bufPrintZ(&buf, "{s}:style=Bold:weight={d}", .{ config.font.name, config.font.bold_weight }) catch "Monospace:style=Bold";
+            font_bold = x11.c.XftFontOpenName(window.dpy, window.screen, font_name);
+            if (font_bold == null) {
+                std.log.warn("粗体字体加载失败，回退到普通字体", .{});
+                font_bold = font;
+            }
+        }
 
         // Italic Bold
         const ib_pattern = x11.c.FcPatternDuplicate(pattern);
@@ -169,6 +184,13 @@ pub const Renderer = struct {
         if (font_italic_bold == null) font_italic_bold = font;
 
         x11.c.FcPatternDestroy(pattern);
+
+        // 打印字体地址（调试用）
+        // std.log.info("主字体: {*}", .{font});
+        // std.log.info("粗体字体: {*}", .{font_bold});
+        // std.log.info("斜体字体: {*}", .{font_italic});
+        // std.log.info("斜粗字体: {*}", .{font_italic_bold});
+        // std.log.info("字体是否相同: font==font_bold={any}, font==font_italic={any}", .{font == font_bold, font == font_italic});
 
         // Update window metrics
         window.cell_width = char_width;
@@ -478,6 +500,11 @@ pub const Renderer = struct {
         } else if (attr.italic) {
             f = self.font_italic;
         }
+
+        // 调试：当使用粗体字体时记录日志（只记录部分 ASCII 字符以避免过多日志）
+        // if (attr.bold and u < 128) {
+        //     std.log.warn("getFontForGlyph: char={u} ({c}), bold={any}, italic={any}, use_bold={any}, font={*}, font_bold={*}, is_bold_font={any}", .{u, @as(u8, @truncate(u)), attr.bold, attr.italic, use_bold, f, self.font_bold, f == self.font_bold});
+        // }
 
         if (x11.c.XftCharExists(self.window.dpy, f, u) != 0) {
             return f;

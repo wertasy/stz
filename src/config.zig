@@ -117,6 +117,7 @@ pub const draw = struct {
     pub const boxdraw: bool = true; // 框线字符绘制
     pub const boxdraw_bold: bool = true;
     pub const boxdraw_braille: bool = true;
+    pub const disable_bold_font: bool = false; // 禁用粗体字体，使用亮色模拟粗体（st 的传统行为）
 };
 
 // 滚动配置

@@ -1097,7 +1097,9 @@ pub const Renderer = struct {
         var fg_idx = base.fg;
         var bg_idx = base.bg;
 
-        if (base.attr.bold) {
+        // 粗体处理：根据配置选择使用粗体字体或亮色模拟
+        if (base.attr.bold and config.draw.disable_bold_font) {
+            // 传统方案：使用亮色代替粗体（st 的默认行为）
             if (fg_idx < 8) {
                 fg_idx += 8;
             } else if (fg_idx == config.colors.default_foreground_idx) {

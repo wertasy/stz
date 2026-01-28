@@ -1,7 +1,6 @@
-//! Screen 模块单元测试
+//! Terminal 模块单元测试
 
 const std = @import("std");
-const screen = @import("screen.zig");
 const types = @import("types.zig");
 const terminal = @import("terminal.zig");
 
@@ -10,28 +9,22 @@ const expectEqual = std.testing.expectEqual;
 
 test "Screen initialization" {
     const allocator = std.testing.allocator;
-    var term = terminal.Terminal{
-        .allocator = allocator,
-    };
-    try screen.init(&term, 24, 80, allocator);
-    defer screen.deinit(&term);
+    const term = terminal.init(24, 80, allocator);
+    defer terminal.deinit();
 
     try expect(term.row == 24);
     try expect(term.col == 80);
-    try expect(term.line != null);
+    try expect(term.screen != null);
     try expect(term.dirty != null);
 }
 
 test "Screen dirty flag" {
     const allocator = std.testing.allocator;
-    var term = terminal.Terminal{
-        .allocator = allocator,
-    };
-    try screen.init(&term, 24, 80, allocator);
-    defer screen.deinit(&term);
+    const term = terminal.init(24, 80, allocator);
+    defer terminal.deinit();
 
     // Mark a row as dirty
-    screen.setDirty(&term, 5, 5);
+    term.setDirty(5, 5);
 
     if (term.dirty) |dirty| {
         try expect(dirty[5]);
@@ -44,14 +37,11 @@ test "Screen dirty flag" {
 
 test "Screen full dirty" {
     const allocator = std.testing.allocator;
-    var term = terminal.Terminal{
-        .allocator = allocator,
-    };
-    try screen.init(&term, 24, 80, allocator);
-    defer screen.deinit(&term);
+    const term = terminal.init(24, 80, allocator);
+    defer terminal.deinit();
 
     // Mark all rows as dirty
-    screen.setFullDirty(&term);
+    term.setFullDirty();
 
     if (term.dirty) |dirty| {
         for (dirty) |is_dirty| {
@@ -64,14 +54,11 @@ test "Screen full dirty" {
 
 test "Clear dirty flags" {
     const allocator = std.testing.allocator;
-    var term = terminal.Terminal{
-        .allocator = allocator,
-    };
-    try screen.init(&term, 24, 80, allocator);
-    defer screen.deinit(&term);
+    const term = terminal.init(24, 80, allocator);
+    defer terminal.deinit();
 
     // Mark all rows as dirty
-    screen.setFullDirty(&term);
+    term.setFullDirty();
 
     // Manually clear dirty flags
     if (term.dirty) |dirty| {
@@ -91,27 +78,24 @@ test "Clear dirty flags" {
 
 test "Screen scroll" {
     const allocator = std.testing.allocator;
-    var term = terminal.Terminal{
-        .allocator = allocator,
-    };
-    try screen.init(&term, 24, 80, allocator);
-    defer screen.deinit(&term);
+    const term = terminal.init(24, 80, allocator);
+    defer terminal.deinit();
 
     // Set scroll region
     term.top = 5;
     term.bot = 15;
 
     // Write some content to verify scrolling
-    if (term.line) |line| {
+    if (term.screen) |line| {
         for (0..5) |y| {
             line[y][0].u = @intCast('A' + y);
         }
     }
 
     // Scroll up by 1
-    try screen.scrollUp(&term, 1, 1);
+    try term.scrollUp(1, 1);
 
-    if (term.line) |line| {
+    if (term.screen) |line| {
         // Row 6 should now contain what was in row 5
         try expectEqual(@as(u21, 'E'), line[6][0].u);
     }

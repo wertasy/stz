@@ -113,7 +113,6 @@
 const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
-const screen = @import("screen.zig");
 const terminal = @import("terminal.zig");
 
 const Glyph = types.Glyph;
@@ -235,8 +234,8 @@ pub const Parser = struct {
     /// 处理单个字符
     pub fn putc(self: *Parser, c: u21) !void {
         // 收到任何输入时，如果是正在查看历史，则自动跳回底部 (st 对齐)
-        if (self.term.scr > 0) {
-            self.term.scr = 0;
+        if (self.term.scroll > 0) {
+            self.term.scroll = 0;
             if (self.term.dirty) |dirty| {
                 for (0..dirty.len) |i| dirty[i] = true;
             }
@@ -610,7 +609,7 @@ pub const Parser = struct {
     //     term.c.y = LIMIT(y, miny, maxy);
     // }
     fn decaln(self: *Parser) !void {
-        if (self.term.line) |lines| {
+        if (self.term.screen) |lines| {
             const glyph = self.term.c.attr;
             var glyph_var = glyph;
             glyph_var.u = 'E';
@@ -693,7 +692,7 @@ pub const Parser = struct {
             },
             0x8D => { // RI
                 if (self.term.c.y == self.term.top) {
-                    try screen.scrollDown(self.term, self.term.top, 1);
+                    try self.term.scrollDown(self.term.top, 1);
                 } else {
                     try self.term.moveCursor(0, -1);
                 }
@@ -792,7 +791,7 @@ pub const Parser = struct {
             },
             'M' => { // RI
                 if (self.term.c.y == self.term.top) {
-                    try screen.scrollDown(self.term, self.term.top, 1);
+                    try self.term.scrollDown(self.term.top, 1);
                 } else {
                     try self.term.moveCursor(0, -1);
                 }
@@ -979,8 +978,8 @@ pub const Parser = struct {
                 self.term.c.state.wrap_next = false;
             },
             'd' => try self.term.setCursor(self.term.c.x, @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
-            'S' => if (self.csi.priv == 0) try screen.scrollUp(self.term, self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
-            'T' => try screen.scrollDown(self.term, self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
+            'S' => if (self.csi.priv == 0) try self.term.scrollUp(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
+            'T' => try self.term.scrollDown(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
             'h' => try self.setMode(true),
             'l' => try self.setMode(false),
             'm' => if (self.csi.priv == 0) {
@@ -1071,7 +1070,7 @@ pub const Parser = struct {
             2004 => self.term.mode.brckt_paste = set,
             2026 => self.term.mode.sync_update = set,
             47, 1047 => {
-                if (self.term.alt != null) {
+                if (self.term.alt_screen != null) {
                     const alt = self.term.mode.alt_screen;
                     if (alt) {
                         try self.term.clearScreen(2);
@@ -1088,10 +1087,10 @@ pub const Parser = struct {
             1049 => {
                 if (set) {
                     try self.cursorSaveRestore(.save);
-                    if (self.term.alt != null and !self.term.mode.alt_screen) {
+                    if (self.term.alt_screen != null and !self.term.mode.alt_screen) {
                         // 进入备用屏幕时，虽然 st 是在退出时清除，但为了稳健性，
                         // 我们在进入时也确保清除（防止上次异常退出残留）
-                        if (self.term.alt) |alt| {
+                        if (self.term.alt_screen) |alt| {
                             var g = self.term.c.attr;
                             g.u = ' ';
                             g.fg = config.colors.default_foreground_idx;
@@ -1111,7 +1110,7 @@ pub const Parser = struct {
                         // 移除 moveTo(0, 0)，与 st 保持一致，光标位置由应用控制
                     }
                 } else {
-                    if (self.term.alt != null and self.term.mode.alt_screen) {
+                    if (self.term.alt_screen != null and self.term.mode.alt_screen) {
                         try self.term.clearScreen(2); // 退出前清除备用屏幕 (匹配 st 行为)
                         try self.term.swapScreen();
 

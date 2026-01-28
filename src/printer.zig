@@ -50,7 +50,7 @@ pub const Printer = struct {
 
     /// 打印当前屏幕内容（printscreen）
     pub fn printScreen(self: *Printer, term: *terminal.Terminal) !void {
-        const screen = if (term.mode.alt_screen) term.alt else term.line;
+        const screen = if (term.mode.alt_screen) term.alt_screen else term.screen;
         if (screen == null) return;
 
         for (0..term.row) |y| {

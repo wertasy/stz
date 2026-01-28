@@ -28,7 +28,7 @@ pub const UrlDetector = struct {
 
     /// 高亮显示终端中的 URL
     pub fn highlightUrls(self: *UrlDetector) !void {
-        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.screen;
         if (screen == null) return;
 
         const line_buffer = try self.allocator.alloc(u8, self.term.col + 1);
@@ -90,7 +90,7 @@ pub const UrlDetector = struct {
 
     /// 清除 URL 高亮
     pub fn clearHighlights(self: *UrlDetector) void {
-        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.screen;
         if (screen == null) return;
 
         for (0..@min(self.term.row, screen.?.len)) |y| {
@@ -102,7 +102,7 @@ pub const UrlDetector = struct {
 
     /// 检查指定位置是否是 URL
     pub fn isUrlAt(self: *UrlDetector, x: usize, y: usize) bool {
-        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen = if (self.term.mode.alt_screen) self.term.alt_screen else self.term.screen;
         if (screen == null) return false;
         if (y >= screen.?.len) return false;
         if (x >= self.term.col) return false;
@@ -112,7 +112,7 @@ pub const UrlDetector = struct {
 
     /// 获取指定位置的 URL
     pub fn getUrlAt(self: *UrlDetector, x: usize, y: usize) ![]u8 {
-        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.line;
+        const screen = if (self.term.mode.alt_screen) self.term.alt_screen else self.term.screen;
         if (screen == null) return error.NoUrlFound;
         if (y >= screen.?.len) return error.NoUrlFound;
         if (x >= self.term.col) return error.NoUrlFound;

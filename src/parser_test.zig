@@ -123,9 +123,9 @@ test "Wide character wrapping" {
     try expectEqual(@as(usize, 2), term.c.x);
     try expect(!term.c.state.wrap_next);
     // 字符应该被写入到下一行开头
-    try expectEqual(wide_char, term.line.?[1][0].u);
+    try expectEqual(wide_char, term.screen.?[1][0].u);
     // 且应该是 wide
-    try expect(term.line.?[1][0].attr.wide);
+    try expect(term.screen.?[1][0].attr.wide);
 }
 
 test "LF behavior (LNM)" {

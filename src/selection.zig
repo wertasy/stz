@@ -53,7 +53,6 @@ const types = @import("types.zig");
 const Terminal = @import("terminal.zig").Terminal;
 const config = @import("config.zig");
 const x11 = @import("x11.zig");
-const scr_mod = @import("screen.zig");
 
 const Selection = types.Selection;
 const SelectionMode = types.SelectionMode;
@@ -180,7 +179,7 @@ pub const Selector = struct {
                 const delimiters = config.selection.word_delimiters;
                 var x = point.x;
                 const y = point.y;
-                const line = scr_mod.getVisibleLine(term, y);
+                const line = term.getVisibleLine(y);
                 if (x >= line.len) return;
 
                 const initial_c = line[x].u;
@@ -218,7 +217,7 @@ pub const Selector = struct {
     /// 检查是否选中
     pub fn isSelected(self: *Selector, term: *const Terminal, x: usize, y: usize) bool {
         _ = self;
-        return scr_mod.isInsideSelection(term, x, y);
+        return term.isInsideSelection(x, y);
     }
 
     /// 获取选中的文本
@@ -241,7 +240,7 @@ pub const Selector = struct {
             var x_start: usize = 0;
             var x_end: usize = 0;
 
-            const line = scr_mod.getVisibleLine(term, y);
+            const line = term.getVisibleLine(y);
 
             if (sel.type == .rectangular) {
                 x_start = sel.nb.x;
@@ -301,7 +300,7 @@ pub const Selector = struct {
     /// 清除选择
     pub fn clear(self: *Selector, term: *Terminal) void {
         _ = self;
-        scr_mod.selClear(term);
+        term.selClear();
     }
 
     /// 清除高亮标记

@@ -16,7 +16,7 @@ test "Selection word snap" {
     // 准备数据: "hello world test"
     const text = "hello world test";
     for (text, 0..) |c, i| {
-        term.line.?[0][i].u = @intCast(c);
+        term.screen.?[0][i].u = @intCast(c);
     }
 
     var selector = selection.Selector.init(allocator);

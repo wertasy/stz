@@ -72,6 +72,38 @@
 //! - 第 1-24 行：可滚动区域
 //! - 当第 24 行满时，滚动内容在第 1-24 行
 //! ```
+//! ### 屏幕缓冲区管理
+//! 负责管理终端屏幕的行、字符、滚动、脏标记等
+//!
+//! 核心功能：
+//! - 屏幕缓冲区初始化和清理：分配主屏幕、备用屏幕、历史缓冲区
+//! - 滚动操作：向上/向下滚动指定行数
+//! - 清除操作：清除屏幕区域、清除行、删除字符、插入空格
+//! - 脏标记管理：设置全屏脏、设置属性脏、检查属性设置
+//! - 历史滚动：支持用户用 Shift+PageUp/PageDown 查看历史
+//!
+//! 屏幕缓冲区结构：
+//! - 主屏幕 (line): 普通的命令行界面
+//! - 备用屏幕 (alt): TUI 程序专用（如 vim）
+//! - 历史缓冲区 (hist): 循环缓冲区，存储滚出的内容
+//! - 脏标记 (dirty): dirty[i]=true 表示第 i 行需要重新渲染
+//!
+//! 滚动机制：
+//! - 当内容超出屏幕顶部时，会被推入历史缓冲区
+//! - 滚动区域由 term.top 和 term.bot 限定
+//! - 滚动操作只在 [top, bot] 范围内有效
+//!
+//! 屏幕缓冲区结构：
+//! - 主屏幕 (line): 普通的命令行界面
+//! - 备用屏幕 (alt): TUI 程序专用（如 vim）
+//! - 历史缓冲区 (hist): 循环缓冲区，存储滚出的内容
+//! - 脏标记 (dirty): dirty[i]=true 表示第 i 行需要重新渲染
+//!
+//! 滚动机制：
+//! - 当内容超出屏幕顶部时，会被推入历史缓冲区
+//! - 滚动区域由 term.top 和 term.bot 限定
+//! - 滚动操作只在 [top, bot] 范围内有效
+//!
 //! ### 6. 备用屏幕 (Alternate Screen)
 //! TUI 程序（如 vim、htop）使用备用屏幕显示自己的界面：
 //! - 主屏幕 (line): 普通的命令行界面
@@ -116,7 +148,6 @@
 
 const std = @import("std");
 const types = @import("types.zig");
-const screen = @import("screen.zig");
 const unicode = @import("unicode.zig");
 const boxdraw = @import("boxdraw.zig");
 
@@ -147,15 +178,15 @@ pub const Terminal = struct {
     col: usize = 0, // 列数：屏幕有多少列
 
     // ========== 屏幕缓冲区 ==========
-    line: ?[][]Glyph = null, // 主屏幕：普通的命令行界面
-    alt: ?[][]Glyph = null, // 备用屏幕：TUI 程序专用（如 vim）
+    screen: ?[][]Glyph = null, // 主屏幕：普通的命令行界面
+    alt_screen: ?[][]Glyph = null, // 备用屏幕：TUI 程序专用（如 vim）
 
     // ========== 历史记录 ==========
     hist: ?[][]Glyph = null, // 历史缓冲区：循环缓冲区，存储滚出的内容
     hist_idx: usize = 0, // 历史写入索引：循环缓冲区的当前写入位置
     hist_cnt: usize = 0, // 历史行数：历史缓冲区当前存储了多少行
     hist_max: usize = 0, // 历史最大行数：历史缓冲区的容量（配置项）
-    scr: usize = 0, // 滚动偏移：向上滚动的行数（0 = 底部，查看最新内容）
+    scroll: usize = 0, // 滚动偏移：向上滚动的行数（0 = 底部，查看最新内容）
 
     // ========== 脏标记 ==========
     dirty: ?[]bool = null, // 脏标记：dirty[i]=true 表示第 i 行需要重新渲染
@@ -213,20 +244,152 @@ pub const Terminal = struct {
 
     /// 初始化终端
     pub fn init(row: usize, col: usize, allocator: std.mem.Allocator) !Terminal {
-        var t = Terminal{
+        var term = Terminal{
             .allocator = allocator,
             .printer = null,
         };
 
-        // 初始化屏幕（包括尺寸、缓冲区、光标、模式等）
-        try screen.init(&t, row, col, allocator);
+        // ========== 屏幕尺寸 ==========
+        term.row = row;
+        term.col = col;
+        term.allocator = allocator;
 
-        return t;
+        // ========== 分配内存 ==========
+        // 分配主屏幕
+        const line_buf = try allocator.alloc([]Glyph, row);
+        errdefer allocator.free(line_buf);
+        term.screen = line_buf;
+
+        // 分配备用屏幕
+        const alt_buf = try allocator.alloc([]Glyph, row);
+        errdefer allocator.free(alt_buf);
+        term.alt_screen = alt_buf;
+
+        // 分配历史缓冲区
+        const hist_rows = config.scroll.history_lines;
+        const hist_buf = try allocator.alloc([]Glyph, hist_rows);
+        errdefer allocator.free(hist_buf);
+        term.hist = hist_buf;
+        term.hist_max = hist_rows;
+        term.hist_idx = 0;
+        term.hist_cnt = 0;
+        term.scroll = 0;
+
+        // 分配脏标记
+        const dirty_buf = try allocator.alloc(bool, row);
+        errdefer allocator.free(dirty_buf);
+        term.dirty = dirty_buf;
+
+        // 分配制表符
+        const tabs_buf = try allocator.alloc(bool, col);
+        errdefer allocator.free(tabs_buf);
+        term.tabs = tabs_buf;
+
+        // ========== 初始化屏幕内容 ==========
+        // 初始化每一行
+        for (0..row) |y| {
+            term.screen.?[y] = try allocator.alloc(Glyph, col);
+            term.alt_screen.?[y] = try allocator.alloc(Glyph, col);
+            term.dirty.?[y] = true;
+
+            // 初始化为空格字符
+            for (0..col) |x| {
+                term.screen.?[y][x] = Glyph{};
+                term.alt_screen.?[y][x] = Glyph{};
+            }
+        }
+
+        // 初始化历史缓冲区
+        for (0..term.hist_max) |y| {
+            term.hist.?[y] = try allocator.alloc(Glyph, col);
+            for (0..col) |x| {
+                term.hist.?[y][x] = Glyph{};
+            }
+        }
+
+        // ========== 初始化制表符 ==========
+        for (term.tabs.?) |*tab| {
+            tab.* = false;
+        }
+
+        // 设置默认制表符间隔（每8列一个）
+        for (0..col) |x| {
+            if (x % 8 == 0) {
+                term.tabs.?[x] = true;
+            }
+        }
+
+        // ========== 初始化字符集 ==========
+        term.trantbl = [_]Charset{.usa} ** 4;
+        term.charset = 0;
+        term.icharset = 0;
+
+        // ========== 初始化光标 ==========
+        term.c = TCursor{};
+
+        // ========== 初始化保存的光标状态 ==========
+        term.cursor_style = config.cursor.style;
+        for (0..2) |i| {
+            term.saved_cursor[i] = types.SavedCursor{
+                .attr = term.c.attr,
+                .x = 0,
+                .y = 0,
+                .state = .default,
+                .style = .blinking_bar,
+                .trantbl = [_]Charset{.usa} ** 4,
+                .charset = 0,
+            };
+        }
+
+        // ========== 设置默认模式 ==========
+        term.mode.utf8 = true;
+        term.mode.wrap = true;
+
+        // ========== 初始化滚动区域 ==========
+        term.top = 0;
+        term.bot = row - 1;
+
+        return term;
     }
 
     /// 清理终端资源
     pub fn deinit(self: *Terminal) void {
-        screen.deinit(self);
+        const allocator = self.allocator;
+
+        if (self.screen) |lines| {
+            for (lines) |line| {
+                allocator.free(line);
+            }
+            allocator.free(lines);
+        }
+
+        if (self.alt_screen) |lines| {
+            for (lines) |line| {
+                allocator.free(line);
+            }
+            allocator.free(lines);
+        }
+
+        if (self.hist) |lines| {
+            for (lines) |line| {
+                allocator.free(line);
+            }
+            allocator.free(lines);
+        }
+
+        if (self.dirty) |d| {
+            allocator.free(d);
+        }
+
+        if (self.tabs) |t| {
+            allocator.free(t);
+        }
+
+        self.screen = null;
+        self.alt_screen = null;
+        self.hist = null;
+        self.dirty = null;
+        self.tabs = null;
     }
 
     /// 设置打印机
@@ -238,7 +401,7 @@ pub const Terminal = struct {
     /// 如果 (x, y) 是 wide_dummy，则清理 (x-1, y) 的 wide 标志
     /// 如果 (x, y) 是 wide，则清理 (x+1, y) 的 wide_dummy 标志
     pub fn clearWide(self: *Terminal, x: usize, y: usize) void {
-        const lines = self.line orelse return;
+        const lines = self.screen orelse return;
         if (y >= lines.len) return;
         const row = lines[y];
         if (x >= row.len) return;
@@ -414,7 +577,7 @@ pub const Terminal = struct {
         }
 
         // 写入字符
-        if (self.line) |lines| {
+        if (self.screen) |lines| {
             if (self.c.y < lines.len and self.c.x < lines[self.c.y].len) {
                 // 清理被覆盖的宽字符 (st 对齐: tsetchar)
                 self.clearWide(self.c.x, self.c.y);
@@ -527,7 +690,7 @@ pub const Terminal = struct {
         }
 
         if (self.c.y == self.bot) {
-            try screen.scrollUp(self, self.top, 1);
+            try self.scrollUp(self.top, 1);
         } else {
             // Move down with clamping respecting origin mode
             var next_y = self.c.y + 1;
@@ -581,25 +744,25 @@ pub const Terminal = struct {
                 // clearRegion(x, y, x, y) clears one cell.
 
                 // Clear from cursor to end of line
-                try screen.clearRegion(self, self.c.x, self.c.y, self.col - 1, self.c.y);
+                try self.clearRegion(self.c.x, self.c.y, self.col - 1, self.c.y);
 
                 // Clear remaining lines below
                 if (self.c.y < self.row - 1) {
-                    try screen.clearRegion(self, 0, self.c.y + 1, self.col - 1, self.row - 1);
+                    try self.clearRegion(0, self.c.y + 1, self.col - 1, self.row - 1);
                 }
             },
             1 => { // From beginning of screen to cursor
                 if (self.c.y > 0) {
-                    try screen.clearRegion(self, 0, 0, self.col - 1, self.c.y - 1);
+                    try self.clearRegion(0, 0, self.col - 1, self.c.y - 1);
                 }
                 // Clear from start of line to cursor
-                try screen.clearRegion(self, 0, self.c.y, self.c.x, self.c.y);
+                try self.clearRegion(0, self.c.y, self.c.x, self.c.y);
             },
             2 => { // Clear entire screen
-                try screen.clearRegion(self, 0, 0, self.col - 1, self.row - 1);
+                try self.clearRegion(0, 0, self.col - 1, self.row - 1);
             },
             3 => { // Clear scroll region (not supported by standard ED, but good to have)
-                try screen.clearRegion(self, 0, self.top, self.col - 1, self.bot);
+                try self.clearRegion(0, self.top, self.col - 1, self.bot);
             },
             else => {
                 std.log.debug("未知的清屏模式: {d}", .{mode});
@@ -611,13 +774,13 @@ pub const Terminal = struct {
     pub fn clearLine(self: *Terminal, mode: u32) !void {
         switch (mode) {
             0 => { // 从光标到行末
-                try screen.clearRegion(self, self.c.x, self.c.y, self.col - 1, self.c.y);
+                try self.clearRegion(self.c.x, self.c.y, self.col - 1, self.c.y);
             },
             1 => { // 从行首到光标
-                try screen.clearRegion(self, 0, self.c.y, self.c.x, self.c.y);
+                try self.clearRegion(0, self.c.y, self.c.x, self.c.y);
             },
             2 => { // 清除整行
-                try screen.clearRegion(self, 0, self.c.y, self.col - 1, self.c.y);
+                try self.clearRegion(0, self.c.y, self.col - 1, self.c.y);
             },
             else => {
                 std.log.debug("未知的清除行模式: {d}", .{mode});
@@ -628,7 +791,7 @@ pub const Terminal = struct {
     /// 删除字符
     pub fn deleteChars(self: *Terminal, n: usize) !void {
         const count = @min(n, self.col - self.c.x);
-        const screen_buf = self.line;
+        const screen_buf = self.screen;
 
         if (screen_buf) |scr| {
             if (self.c.y < scr.len) {
@@ -675,7 +838,7 @@ pub const Terminal = struct {
     /// 插入空字符
     pub fn insertBlanks(self: *Terminal, n: usize) !void {
         const count = @min(n, self.col - self.c.x);
-        const screen_buf = self.line;
+        const screen_buf = self.screen;
 
         if (screen_buf) |scr| {
             if (self.c.y < scr.len) {
@@ -761,16 +924,11 @@ pub const Terminal = struct {
 
     /// 切换到备用屏幕
     pub fn swapScreen(self: *Terminal) !void {
-        const temp = self.line;
-        self.line = self.alt;
-        self.alt = temp;
+        const temp = self.screen;
+        self.screen = self.alt_screen;
+        self.alt_screen = temp;
         self.mode.alt_screen = !self.mode.alt_screen;
-        screen.setFullDirty(self);
-    }
-
-    /// 调整终端大小
-    pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
-        try screen.resize(self, new_row, new_col);
+        self.setFullDirty();
     }
 
     /// 向上滚动历史 (PageUp)
@@ -778,29 +936,29 @@ pub const Terminal = struct {
         const hist_len = self.hist_cnt;
         if (hist_len == 0) return;
 
-        var next_scr = self.scr + n;
-        if (next_scr > hist_len) {
-            next_scr = hist_len;
+        var next_scroll = self.scroll + n;
+        if (next_scroll > hist_len) {
+            next_scroll = hist_len;
         }
 
-        if (next_scr != self.scr) {
-            self.scr = next_scr;
-            screen.setFullDirty(self);
+        if (next_scroll != self.scroll) {
+            self.scroll = next_scroll;
+            self.setFullDirty();
         }
     }
 
     /// 向下滚动历史 (PageDown)
     pub fn kscrollDown(self: *Terminal, n: usize) void {
-        var next_scr = self.scr;
-        if (n >= next_scr) {
-            next_scr = 0;
+        var next_scroll = self.scroll;
+        if (n >= next_scroll) {
+            next_scroll = 0;
         } else {
-            next_scr -= n;
+            next_scroll -= n;
         }
 
-        if (next_scr != self.scr) {
-            self.scr = next_scr;
-            screen.setFullDirty(self);
+        if (next_scroll != self.scroll) {
+            self.scroll = next_scroll;
+            self.setFullDirty();
         }
     }
 
@@ -815,7 +973,7 @@ pub const Terminal = struct {
 
     /// DECALN - 屏幕对齐测试（填充 E 字符）
     pub fn decaln(self: *Terminal) !void {
-        if (self.line) |lines| {
+        if (self.screen) |lines| {
             const glyph = self.c.attr;
             var glyph_var = glyph;
             glyph_var.u = 'E';
@@ -841,7 +999,7 @@ pub const Terminal = struct {
         const erase_count = @min(n, max_chars);
         if (erase_count == 0) return;
 
-        if (self.line) |lines| {
+        if (self.screen) |lines| {
             if (self.c.y < lines.len) {
                 const line = lines[self.c.y];
                 const clear_glyph = Glyph{ .u = ' ', .fg = self.c.attr.fg, .bg = self.c.attr.bg };
@@ -872,19 +1030,19 @@ pub const Terminal = struct {
 
         switch (mode) {
             0 => { // 从光标到屏幕末尾
-                try screen.clearRegion(self, x, y, self.col - 1, y);
+                try self.clearRegion(x, y, self.col - 1, y);
                 if (y < self.row - 1) {
-                    try screen.clearRegion(self, 0, y + 1, self.col - 1, self.row - 1);
+                    try self.clearRegion(0, y + 1, self.col - 1, self.row - 1);
                 }
             },
             1 => { // 从屏幕开头到光标
                 if (y > 0) {
-                    try screen.clearRegion(self, 0, 0, self.col - 1, y - 1);
+                    try self.clearRegion(0, 0, self.col - 1, y - 1);
                 }
-                try screen.clearRegion(self, 0, y, x, y);
+                try self.clearRegion(0, y, x, y);
             },
             2 => { // 清除整个屏幕
-                try screen.clearRegion(self, 0, 0, self.col - 1, self.row - 1);
+                try self.clearRegion(0, 0, self.col - 1, self.row - 1);
             },
             3 => { // 清除历史缓冲区
                 if (self.hist) |hist| {
@@ -901,7 +1059,7 @@ pub const Terminal = struct {
                 }
                 self.hist_cnt = 0;
                 self.hist_idx = 0;
-                self.scr = 0;
+                self.scroll = 0;
                 if (self.dirty) |dirty| {
                     for (0..dirty.len) |i| dirty[i] = true;
                 }
@@ -918,9 +1076,9 @@ pub const Terminal = struct {
         const y = self.c.y;
 
         switch (mode) {
-            0 => try screen.clearRegion(self, x, y, self.col - 1, y),
-            1 => try screen.clearRegion(self, 0, y, x, y),
-            2 => try screen.clearRegion(self, 0, y, self.col - 1, y),
+            0 => try self.clearRegion(x, y, self.col - 1, y),
+            1 => try self.clearRegion(0, y, x, y),
+            2 => try self.clearRegion(0, y, self.col - 1, y),
             else => {
                 std.log.debug("未知的清除行模式: {d}", .{mode});
             },
@@ -930,12 +1088,486 @@ pub const Terminal = struct {
     /// 插入空白行（在滚动区域内）
     pub fn insertBlankLines(self: *Terminal, n: usize) !void {
         if (self.c.y < self.top or self.c.y > self.bot) return;
-        try screen.scrollDown(self, self.c.y, n);
+        try self.scrollDown(self.c.y, n);
     }
 
     /// 删除行（在滚动区域内）
     pub fn deleteLines(self: *Terminal, n: usize) !void {
         if (self.c.y < self.top or self.c.y > self.bot) return;
-        try screen.scrollUp(self, self.c.y, n);
+        try self.scrollUp(self.c.y, n);
+    }
+
+    /// 获取当前可见的行数据（考虑滚动偏移）
+    pub fn getVisibleLine(self: *const Terminal, y: usize) []Glyph {
+        // 如果处于备用屏幕模式，直接返回当前行（因为 line/alt 已经交换过了）
+        // 此时 term.screen 指向的是备用屏幕缓冲区
+        if (self.mode.alt_screen) {
+            return self.screen.?[y];
+        }
+
+        if (self.scroll > 0) {
+            if (y < self.scroll) {
+                // 在历史记录中
+                const newest_idx = (self.hist_idx + self.hist_max - 1) % self.hist_max;
+                const offset = self.scroll - y - 1;
+                if (self.hist_cnt > 0) {
+                    if (offset < self.hist_cnt) {
+                        const hist_fetch_idx = (newest_idx + self.hist_max - offset) % self.hist_max;
+                        return self.hist.?[hist_fetch_idx];
+                    }
+                }
+                // 超出历史记录，返回第一行
+                return self.screen.?[0];
+            } else {
+                // 在当前屏幕
+                return self.screen.?[y - self.scroll];
+            }
+        }
+
+        return self.screen.?[y];
+    }
+
+    /// 调整终端大小
+    /// 参考 st 的 tresize 实现，滑动屏幕以保持光标位置
+    pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
+        const allocator = self.allocator;
+
+        if (new_row < 1 or new_col < 1) {
+            return error.InvalidSize;
+        }
+
+        const old_row = self.row;
+        const old_col = self.col;
+
+        // 滑动屏幕内容以保持光标位置
+        // 如果光标在新屏幕外面，向上滚动屏幕
+        var valid_rows: usize = 0;
+        if (self.c.y >= new_row) {
+            const shift = self.c.y - new_row + 1;
+            // 释放顶部的行
+            for (0..shift) |y| {
+                if (self.screen) |lines| allocator.free(lines[y]);
+                if (self.alt_screen) |alt| allocator.free(alt[y]);
+            }
+
+            valid_rows = old_row - shift;
+            // 如果有效行数依然超过新屏幕高度，进一步释放
+            if (valid_rows > new_row) {
+                for (new_row..valid_rows) |y| {
+                    if (self.screen) |lines| allocator.free(lines[y + shift]);
+                    if (self.alt_screen) |alt| allocator.free(alt[y + shift]);
+                }
+                valid_rows = new_row;
+            }
+
+            // 移动剩余的行到顶部
+            if (self.screen) |lines| {
+                for (0..valid_rows) |y| {
+                    lines[y] = lines[y + shift];
+                }
+            }
+            if (self.alt_screen) |alt| {
+                for (0..valid_rows) |y| {
+                    alt[y] = alt[y + shift];
+                }
+            }
+            self.c.y -= shift;
+        } else {
+            valid_rows = old_row;
+            // 如果新屏幕比旧屏幕矮，释放超出的行
+            if (new_row < old_row) {
+                for (new_row..old_row) |y| {
+                    if (self.screen) |lines| allocator.free(lines[y]);
+                    if (self.alt_screen) |alt| allocator.free(alt[y]);
+                }
+                valid_rows = new_row;
+            }
+        }
+
+        // 重新分配行数组
+        self.screen = try allocator.realloc(self.screen.?, new_row);
+        self.alt_screen = try allocator.realloc(self.alt_screen.?, new_row);
+
+        // 调整现有行的宽度
+        for (0..valid_rows) |y| {
+            self.screen.?[y] = try allocator.realloc(self.screen.?[y], new_col);
+            self.alt_screen.?[y] = try allocator.realloc(self.alt_screen.?[y], new_col);
+
+            // 清除新扩展的区域（使用当前光标颜色，st 对齐）
+            if (new_col > old_col) {
+                for (old_col..new_col) |x| {
+                    self.screen.?[y][x] = Glyph{
+                        .u = ' ',
+                        .fg = self.c.attr.fg,
+                        .bg = self.c.attr.bg,
+                    };
+                    self.alt_screen.?[y][x] = Glyph{
+                        .u = ' ',
+                        .fg = self.c.attr.fg,
+                        .bg = self.c.attr.bg,
+                    };
+                }
+            }
+        }
+
+        // 分配并初始化新行 (st 对齐)
+        for (valid_rows..new_row) |y| {
+            self.screen.?[y] = try allocator.alloc(Glyph, new_col);
+            self.alt_screen.?[y] = try allocator.alloc(Glyph, new_col);
+            for (0..new_col) |x| {
+                self.screen.?[y][x] = Glyph{
+                    .u = ' ',
+                    .fg = self.c.attr.fg,
+                    .bg = self.c.attr.bg,
+                };
+                self.alt_screen.?[y][x] = Glyph{
+                    .u = ' ',
+                    .fg = self.c.attr.fg,
+                    .bg = self.c.attr.bg,
+                };
+            }
+        }
+
+        // 调整历史缓冲区（如果宽度改变）
+        if (new_col != old_col) {
+            if (self.hist) |hist| {
+                for (0..self.hist_max) |y| {
+                    hist[y] = try allocator.realloc(hist[y], new_col);
+                    // 清除新扩展的区域
+                    if (new_col > old_col) {
+                        for (old_col..new_col) |x| {
+                            hist[y][x] = Glyph{};
+                        }
+                    }
+                }
+            }
+            self.scroll = 0;
+        }
+
+        // 调整脏标记
+        self.dirty = try allocator.realloc(self.dirty.?, new_row);
+        for (0..new_row) |y| {
+            self.dirty.?[y] = true;
+        }
+
+        // 调整制表符
+        const tab_spaces = config.tab_spaces;
+        self.tabs = try allocator.realloc(self.tabs.?, new_col);
+        if (new_col > old_col) {
+            // 从旧边界开始，按步进设置新的制表位
+            var x = old_col;
+            // 找到旧区域最后一个制表位（或起始点）
+            while (x > 0 and !self.tabs.?[x - 1]) : (x -= 1) {}
+            if (x == 0) {
+                x = tab_spaces;
+            } else {
+                x += tab_spaces - 1;
+            }
+
+            // 清除新区域并设置新制表位
+            for (old_col..new_col) |i| {
+                self.tabs.?[i] = false;
+            }
+            var i = x;
+            while (i < new_col) : (i += tab_spaces) {
+                self.tabs.?[i] = true;
+            }
+        }
+
+        self.row = new_row;
+        self.col = new_col;
+
+        // 重置滚动区域
+        self.top = 0;
+        self.bot = new_row - 1;
+
+        // 限制光标位置
+        if (self.c.x >= new_col) {
+            self.c.x = new_col - 1;
+        }
+        if (self.c.y >= new_row) {
+            self.c.y = new_row - 1;
+        }
+
+        // 限制保存的光标位置 (st 对齐)
+        for (0..2) |i| {
+            if (self.saved_cursor[i].x >= new_col) {
+                self.saved_cursor[i].x = new_col - 1;
+            }
+            if (self.saved_cursor[i].y >= new_row) {
+                self.saved_cursor[i].y = new_row - 1;
+            }
+        }
+
+        self.c.state.wrap_next = false;
+    }
+
+    /// 清除区域
+    pub fn clearRegion(self: *Terminal, x1: usize, y1: usize, x2: usize, y2: usize) !void {
+        const gx1 = @min(x1, x2);
+        const gx2 = @max(x1, x2);
+        const gy1 = @min(y1, y2);
+        const gy2 = @max(y1, y2);
+
+        // 限制在屏幕范围内
+        const sx1 = @min(gx1, self.col - 1);
+        const sx2 = @min(gx2, self.col - 1);
+        const sy1 = @min(gy1, self.row - 1);
+        const sy2 = @min(gy2, self.row - 1);
+
+        const screen = self.screen;
+
+        for (sy1..sy2 + 1) |y| {
+            if (self.dirty) |dirty| {
+                dirty[y] = true;
+            }
+            for (sx1..sx2 + 1) |x| {
+                // 清理宽字符
+                self.clearWide(x, y);
+
+                // 如果清除的单元格在选择范围内，清除选择 (st 对齐)
+
+                if (self.selection.mode != .idle) {
+                    if (isInsideSelection(self, x, y)) {
+                        selClear(self);
+                    }
+                }
+
+                if (screen) |scr| {
+                    scr[y][x] = .{
+                        .u = ' ',
+                        .fg = self.c.attr.fg,
+                        .bg = self.c.attr.bg,
+                        .attr = .{},
+                    };
+                }
+            }
+        }
+    }
+
+    /// 屏幕向上滚动
+    pub fn scrollUp(self: *Terminal, orig: usize, n: usize) !void {
+        if (orig > self.bot) return;
+        const limit_n = @min(n, self.bot - orig + 1);
+        if (limit_n == 0) return;
+
+        // Log scroll event
+        // std.log.debug("SCROLL_UP: orig={d}, n={d}, bot={d}, cursor=({d},{d})", .{ orig, n, term.bot, term.c.x, term.c.y });
+
+        const screen = self.screen;
+
+        if (orig == 0 and limit_n > 0 and !self.mode.alt_screen) {
+            // Save lines to history
+            for (0..limit_n) |i| {
+                const line_idx = orig + i;
+                const src_line = screen.?[line_idx];
+                const dest_line = self.hist.?[self.hist_idx];
+
+                @memcpy(dest_line, src_line);
+
+                self.hist_idx = (self.hist_idx + 1) % self.hist_max;
+                if (self.hist_cnt < self.hist_max) {
+                    self.hist_cnt += 1;
+                }
+            }
+        }
+
+        // 移动行
+        var i: usize = orig;
+        while (i + limit_n <= self.bot) : (i += 1) {
+            const temp = screen.?[i];
+            screen.?[i] = screen.?[i + limit_n];
+            screen.?[i + limit_n] = temp;
+        }
+
+        // 更新选择区域位置 (st 对齐)
+        selScroll(self, orig, -@as(i32, @intCast(limit_n)));
+
+        // Mark affected region as dirty
+        setDirty(self, orig, self.bot);
+
+        // 清除底部行
+        for (0..limit_n) |k| {
+            const idx = self.bot + 1 - limit_n + k;
+            if (screen) |scr| {
+                for (scr[idx]) |*glyph| {
+                    glyph.* = .{
+                        .u = ' ',
+                        .fg = self.c.attr.fg,
+                        .bg = self.c.attr.bg,
+                        .attr = .{},
+                    };
+                }
+            }
+        }
+    }
+
+    /// 屏幕向下滚动
+    pub fn scrollDown(self: *Terminal, orig: usize, n: usize) !void {
+        if (orig > self.bot) return;
+        const limit_n = @min(n, self.bot - orig + 1);
+        if (limit_n == 0) return;
+        const screen = self.screen;
+
+        // 移动行
+        var i: usize = self.bot;
+        while (i >= orig + limit_n) : (i -= 1) {
+            const temp = screen.?[i];
+            screen.?[i] = screen.?[i - limit_n];
+            screen.?[i - limit_n] = temp;
+        }
+
+        // 更新选择区域位置 (st 对齐)
+        selScroll(self, orig, @as(i32, @intCast(limit_n)));
+
+        // Mark affected region as dirty
+        setDirty(self, orig, self.bot);
+
+        // 清除顶部行
+        for (0..limit_n) |k| {
+            const idx = orig + k;
+            if (screen) |scr| {
+                for (scr[idx]) |*glyph| {
+                    glyph.* = .{
+                        .u = ' ',
+                        .fg = self.c.attr.fg,
+                        .bg = self.c.attr.bg,
+                        .attr = .{},
+                    };
+                }
+            }
+        }
+    }
+
+    /// 设置所有行为脏
+    pub fn setFullDirty(self: *Terminal) void {
+        if (self.dirty) |dirty| {
+            for (dirty) |*d| {
+                d.* = true;
+            }
+        }
+    }
+
+    /// 设置行为脏
+    pub fn setDirty(self: *Terminal, top: usize, bot: usize) void {
+        const t = @min(top, self.row - 1);
+        const b = @min(bot, self.row - 1);
+
+        if (t <= b) {
+            if (self.dirty) |dirty| {
+                for (t..b + 1) |i| {
+                    dirty[i] = true;
+                }
+            }
+        }
+    }
+
+    /// 将包含特定属性的所有行标记为脏
+    pub fn setDirtyAttr(self: *Terminal, attr_mask: types.GlyphAttr) void {
+        const screen = self.screen orelse return;
+        const dirty = self.dirty orelse return;
+
+        for (0..self.row) |y| {
+            if (dirty[y]) continue;
+            for (0..self.col) |x| {
+                // 使用自定义的属性检查逻辑 (st 的 tsetdirtattr)
+                const glyph_attr = screen[y][x].attr;
+                // 检查 bitmask
+                if (glyph_attr.matches(attr_mask)) {
+                    dirty[y] = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    /// 检查屏幕上是否存在带有特定属性的字符
+    pub fn isAttrSet(self: *Terminal, attr_mask: types.GlyphAttr) bool {
+        const screen = self.screen orelse return false;
+
+        for (0..self.row) |y| {
+            for (0..self.col) |x| {
+                if (screen[y][x].attr.matches(attr_mask)) return true;
+            }
+        }
+        return false;
+    }
+
+    /// 获取行长度（忽略尾部空格）
+    pub fn lineLength(self: *Terminal, y: usize) usize {
+        const screen = self.screen;
+        if (screen) |scr| {
+            // 检查是否换行到下一行
+            if (scr[y][self.col - 1].attr.wrap) {
+                return self.col;
+            }
+
+            // 从末尾向前查找非空格
+            var len: usize = self.col;
+            while (len > 0 and scr[y][len - 1].u == ' ') {
+                len -= 1;
+            }
+            return len;
+        }
+        return 0;
+    }
+
+    /// 清除当前选择 (st 对齐)
+    pub fn selClear(self: *Terminal) void {
+        self.selection.mode = .idle;
+        self.selection.ob.x = std.math.maxInt(usize);
+        self.selection.nb.x = std.math.maxInt(usize);
+    }
+
+    /// 检查坐标是否在选择区域内 (st 对齐)
+    pub fn isInsideSelection(self: *const Terminal, x: usize, y: usize) bool {
+        const sel = self.selection;
+        if (sel.mode == .idle or sel.nb.x == std.math.maxInt(usize)) return false;
+
+        if (sel.type == .regular) {
+            return (y >= sel.nb.y and y <= sel.ne.y) and
+                (y != sel.nb.y or x >= sel.nb.x) and
+                (y != sel.ne.y or x <= sel.ne.x);
+        } else {
+            return (x >= sel.nb.x and x <= sel.ne.x and
+                y >= sel.nb.y and y <= sel.ne.y);
+        }
+    }
+
+    /// 处理屏幕滚动导致的选择区域偏移 (st 对齐)
+    pub fn selScroll(self: *Terminal, orig: usize, n: i32) void {
+        const sel = &self.selection;
+        if (sel.mode == .idle) return;
+
+        // 如果选择区域不在当前屏幕模式（主/备），则不处理
+        if (sel.alt != self.mode.alt_screen) return;
+
+        const top = orig;
+        const bot = self.bot;
+
+        const start_in = (sel.nb.y >= top and sel.nb.y <= bot);
+        const end_in = (sel.ne.y >= top and sel.ne.y <= bot);
+
+        if (start_in != end_in) {
+            // 部分在滚动区域内，清除选择
+            selClear(self);
+        } else if (start_in) {
+            // 全部在滚动区域内，移动
+            const new_ob_y = @as(isize, @intCast(sel.ob.y)) + n;
+            const new_oe_y = @as(isize, @intCast(sel.oe.y)) + n;
+            const new_nb_y = @as(isize, @intCast(sel.nb.y)) + n;
+            const new_ne_y = @as(isize, @intCast(sel.ne.y)) + n;
+
+            if (new_nb_y < @as(isize, @intCast(top)) or new_nb_y > @as(isize, @intCast(bot)) or
+                new_ne_y < @as(isize, @intCast(top)) or new_ne_y > @as(isize, @intCast(bot)))
+            {
+                selClear(self);
+            } else {
+                sel.ob.y = @as(usize, @intCast(new_ob_y));
+                sel.oe.y = @as(usize, @intCast(new_oe_y));
+                sel.nb.y = @as(usize, @intCast(new_nb_y));
+                sel.ne.y = @as(usize, @intCast(new_ne_y));
+            }
+        }
     }
 };

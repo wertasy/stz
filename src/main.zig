@@ -119,7 +119,6 @@ const UrlDetector = @import("url.zig").UrlDetector;
 const Printer = @import("printer.zig").Printer;
 const config = @import("config.zig");
 const types = @import("types.zig");
-const screen = @import("screen.zig");
 const c_locale = @cImport({
     @cInclude("locale.h");
 });
@@ -506,7 +505,7 @@ pub fn main() !u8 {
                         // 开始输入时清除选择高亮
                         if (term.selection.mode != .idle) {
                             selector.clear(term);
-                            screen.setFullDirty(term);
+                            term.setFullDirty();
                         }
 
                         // 优先处理特殊按键（Backspace, Delete, 方向键等）
@@ -678,7 +677,7 @@ pub fn main() !u8 {
                         if (snap_mode != .none) {
                             selector.extend(term, cx, cy, .regular, false);
                         }
-                        screen.setFullDirty(term);
+                        term.setFullDirty();
                         if (try renderer.render(term, &selector)) |rect| {
                             window.presentPartial(rect);
                         }
@@ -774,7 +773,7 @@ pub fn main() !u8 {
                             } else {
                                 // 鼠标模式下清除本地高亮，让应用程序的选择显示
                                 selector.clear(term);
-                                screen.setFullDirty(term);
+                                term.setFullDirty();
                                 if (try renderer.render(term, &selector)) |rect| {
                                     window.presentPartial(rect);
                                 }
@@ -816,7 +815,7 @@ pub fn main() !u8 {
                     if (mouse_pressed and pressed_button == x11.c.Button1) {
                         // Update selection
                         selector.extend(term, cx, cy, .regular, false);
-                        screen.setFullDirty(term);
+                        term.setFullDirty();
                         if (try renderer.render(term, &selector)) |rect| {
                             window.presentPartial(rect);
                         }
@@ -905,7 +904,7 @@ pub fn main() !u8 {
 
                     // 粘贴完成后清除选择高亮
                     selector.clear(term);
-                    screen.setFullDirty(term);
+                    term.setFullDirty();
                     if (try renderer.render(term, &selector)) |rect| {
                         try renderer.renderCursor(term);
                         window.presentPartial(rect);
@@ -996,8 +995,8 @@ pub fn main() !u8 {
                 renderer.cursor_blink_state = !renderer.cursor_blink_state;
 
                 // 1. 如果有文本闪烁属性，标记相关行为脏
-                if (screen.isAttrSet(term, .{ .blink = true })) {
-                    screen.setDirtyAttr(term, .{ .blink = true });
+                if (term.isAttrSet(.{ .blink = true })) {
+                    term.setDirtyAttr(.{ .blink = true });
                 }
 
                 // 2. 如果光标需要闪烁，标记光标行为脏

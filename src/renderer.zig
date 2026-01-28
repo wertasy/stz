@@ -52,7 +52,6 @@ const config = @import("config.zig");
 const selection = @import("selection.zig");
 const boxdraw = @import("boxdraw.zig");
 const boxdraw_data = @import("boxdraw_data.zig");
-const screen_mod = @import("screen.zig");
 const terminal = @import("terminal.zig");
 const unicode = @import("unicode.zig");
 
@@ -536,7 +535,7 @@ pub const Renderer = struct {
     }
 
     pub fn render(self: *Renderer, term: *Terminal, selector: *selection.Selector) !?x11.c.XRectangle {
-        if (term.line == null) return null;
+        if (term.screen == null) return null;
 
         // Default background color
         var default_bg = try self.getColor(term, config.colors.default_background_idx);
@@ -571,7 +570,7 @@ pub const Renderer = struct {
         // std.log.debug("Rendering... rows={d} cols={d}", .{term.row, term.col});
         for (0..term.row) |y| {
             // Determine which line to draw
-            const line_data = screen_mod.getVisibleLine(term, y);
+            const line_data = term.getVisibleLine(y);
 
             // 脏标记检查逻辑优化：
             // 只有在非滚动查看状态且没有活动的文本选择时，才通过脏标记跳过渲染。
@@ -642,7 +641,7 @@ pub const Renderer = struct {
         const hborder = @as(i32, @intCast(self.window.hborder_px));
         const vborder = @as(i32, @intCast(self.window.vborder_px));
         const x_pos = @as(i32, @intCast(cx * self.char_width)) + hborder;
-        const screen_y = if (term.scr > 0 and !term.mode.alt_screen) @as(isize, @intCast(cy)) - @as(isize, @intCast(term.scr)) else @as(isize, @intCast(cy));
+        const screen_y = if (term.scroll > 0 and !term.mode.alt_screen) @as(isize, @intCast(cy)) - @as(isize, @intCast(term.scroll)) else @as(isize, @intCast(cy));
         if (screen_y < 0 or screen_y >= @as(isize, @intCast(term.row))) return;
         const y_pos = @as(i32, @intCast(screen_y)) * @as(i32, @intCast(self.char_height)) + vborder;
 
@@ -664,7 +663,7 @@ pub const Renderer = struct {
             return;
         }
 
-        const screen = term.line;
+        const screen = term.screen;
         var glyph = Glyph{};
         if (screen) |scr| {
             if (cy < scr.len and cx < scr[cy].len) {

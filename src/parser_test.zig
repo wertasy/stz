@@ -222,3 +222,41 @@ test "SGR empty arguments (Reset)" {
     // Should be reset
     try expect(!term.c.attr.attr.underline);
 }
+
+test "Mouse mode toggles" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+    var parser = try Parser.init(&term, null, allocator);
+    defer parser.deinit();
+
+    // 1. Enable DECSET 1000 (mouse)
+    const seq1 = "\x1b[?1000h";
+    for (seq1) |c| try parser.putc(@intCast(c));
+    try expect(term.mode.mouse);
+
+    // 2. Disable DECSET 1000
+    const seq2 = "\x1b[?1000l";
+    for (seq2) |c| try parser.putc(@intCast(c));
+    try expect(!term.mode.mouse);
+
+    // 3. Enable DECSET 1002 (mouse_btn)
+    const seq3 = "\x1b[?1002h";
+    for (seq3) |c| try parser.putc(@intCast(c));
+    try expect(term.mode.mouse_btn);
+
+    // 4. Enable DECSET 1006 (mouse_sgr)
+    const seq4 = "\x1b[?1006h";
+    for (seq4) |c| try parser.putc(@intCast(c));
+    try expect(term.mode.mouse_sgr);
+
+    // 5. Enable DECSET 1004 (mouse_focus)
+    const seq5 = "\x1b[?1004h";
+    for (seq5) |c| try parser.putc(@intCast(c));
+    try expect(term.mode.mouse_focus);
+
+    // 6. Enable DECSET 9 (mouse_x10)
+    const seq6 = "\x1b[?9h";
+    for (seq6) |c| try parser.putc(@intCast(c));
+    try expect(term.mode.mouse_x10);
+}

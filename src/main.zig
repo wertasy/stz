@@ -450,6 +450,12 @@ pub fn main() !u8 {
                     const XK_KP_Prior = 0xFF9A;
                     const XK_KP_Next = 0xFF9B;
                     const XK_Print = 0xFF61; // Print/SysRq
+                    const XK_Insert = 0xFF63;
+                    const XK_KP_Insert = 0xFF9E;
+                    const XK_V = 0x0056;
+                    const XK_v = 0x0076;
+                    const XK_C = 0x0043;
+                    const XK_c = 0x0063;
 
                     const ctrl = (state & x11.c.ControlMask) != 0;
 
@@ -467,12 +473,22 @@ pub fn main() !u8 {
                             try renderer.renderCursor(term);
                             window.presentPartial(rect);
                         }
-                    } else if (ctrl and shift and (keysym == 'V' or keysym == 'v')) {
-                        // Ctrl+Shift+V: 从 CLIPBOARD 粘贴 (与现代终端一致)
+                    } else if (ctrl and shift and (keysym == XK_C or keysym == XK_c)) {
+                        // Ctrl+Shift+C: 复制到 CLIPBOARD
+                        selector.copyToClipboard() catch |err| {
+                            std.log.err("Clipboard copy failed: {}", .{err});
+                        };
+                    } else if (ctrl and shift and (keysym == XK_V or keysym == XK_v)) {
+                        // Ctrl+Shift+V: 从 CLIPBOARD 粘贴
                         const dpy = window.dpy;
                         const clipboard = x11.getClipboardAtom(dpy);
                         selector.requestSelection(clipboard) catch |err| {
                             std.log.err("Clipboard paste request failed: {}", .{err});
+                        };
+                    } else if (shift and (keysym == XK_Insert or keysym == XK_KP_Insert)) {
+                        // Shift+Insert: 从 PRIMARY 粘贴 (经典 X11 行为)
+                        selector.requestPaste() catch |err| {
+                            std.log.err("Primary paste request failed: {}", .{err});
                         };
                     } else if (keysym == XK_Print) {
                         // Print key handling
@@ -622,12 +638,9 @@ pub fn main() !u8 {
                     }
 
                     // 鼠标报告优先，除非按下 Shift 键强制进行终端选择
+                    // 当启用鼠标模式时，发送鼠标报告到 PTY，但同时也显示选择高亮
+                    // 这样用户能看到高亮效果，同时应用程序也能处理选择
                     if (term.mode.isMouseEnabled() and !shift) {
-                        // 如果当前有本地选择，点击时清除它
-                        if (term.selection.mode != .idle) {
-                            selector.clear(term);
-                            screen.setFullDirty(term);
-                        }
                         try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         if (e.button >= 1 and e.button <= 3) {
                             mouse_pressed = true;
@@ -658,6 +671,7 @@ pub fn main() !u8 {
                         pressed_button = e.button;
                         mouse_x = cx;
                         mouse_y = cy;
+
                         // Clear previous selection
                         selector.clear(term);
                         selector.start(term, cx, cy, snap_mode);
@@ -737,6 +751,7 @@ pub fn main() !u8 {
                         try input.sendMouseReport(cx, cy, e.button, e.state, 1);
                         mouse_pressed = false;
                         pressed_button = 0;
+                        // 跳过本地复制逻辑，让应用程序完全接管剪贴板
                         continue;
                     }
 
@@ -745,10 +760,20 @@ pub fn main() !u8 {
                         pressed_button = 0;
 
                         if (e.button == x11.c.Button1) {
-                            // Copy on release
-                            selector.copy(term) catch |err| {
-                                std.log.err("Copy failed: {}", .{err});
-                            };
+                            // 仅在非鼠标模式或按住 Shift 时复制到剪贴板
+                            // st 对齐：在鼠标模式下不设置 X11 选区，让应用程序自己管理
+                            if (!term.mode.isMouseEnabled() or shift) {
+                                selector.copy(term) catch |err| {
+                                    std.log.err("Copy failed: {}", .{err});
+                                };
+                            } else {
+                                // 鼠标模式下清除本地高亮，让应用程序的选择显示
+                                selector.clear(term);
+                                screen.setFullDirty(term);
+                                if (try renderer.render(term, &selector)) |rect| {
+                                    window.presentPartial(rect);
+                                }
+                            }
                         }
                     }
                 },
@@ -774,13 +799,13 @@ pub fn main() !u8 {
                     const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
                     if (terminal.mode.isMouseEnabled() and !shift) {
-                        // Only send motion if button is pressed or mouse_many/mouse_motion is set
+                        // Only send motion if button is pressed or mouse_many/mouse_btn is set
                         const send_motion = terminal.mode.mouse_many or
-                            (terminal.mode.mouse_motion and mouse_pressed);
+                            (terminal.mode.mouse_btn and mouse_pressed);
                         if (send_motion) {
-                            try input.sendMouseReport(cx, cy, 0, e.state, 2);
+                            try input.sendMouseReport(cx, cy, pressed_button, e.state, 2);
                         }
-                        continue;
+                        // 不 continue，继续执行下面的选择高亮逻辑
                     }
 
                     if (mouse_pressed and pressed_button == x11.c.Button1) {
@@ -842,18 +867,12 @@ pub fn main() !u8 {
                                 const paste_text = try allocator.dupe(u8, value[0..len]);
                                 defer allocator.free(paste_text);
 
-                                // 将 \n 转换为 \r 以适应终端
-                                for (paste_text) |*char| {
-                                    if (char.* == '\n') char.* = '\r';
-                                }
-
-                                // Send to PTY
-                                const written = try pty.write(paste_text);
-                                std.log.info("已将 {d} 字节写入 PTY: {s}", .{ written, paste_text });
+                                // 发送粘贴内容
+                                try input.sendPaste(paste_text);
+                                std.log.info("已将 {d} 字节写入 PTY: {s}", .{ paste_text.len, paste_text });
 
                                 // Also add to paste buffer
                                 try paste_buffer.appendSlice(allocator, paste_text);
-
                                 std.log.info("粘贴: {s}", .{paste_text});
                             }
                         }
@@ -880,7 +899,7 @@ pub fn main() !u8 {
                     // std.log.info("FocusIn", .{});
                     term.mode.focused = true;
                     if (window.ic) |ic| x11.c.XSetICFocus(ic);
-                    if (term.mode.focused_report) {
+                    if (term.mode.mouse_focus) {
                         _ = pty.write("\x1B[I") catch {};
                     }
                     if (try renderer.render(term, &selector)) |rect| {
@@ -894,7 +913,7 @@ pub fn main() !u8 {
                     // std.log.info("FocusOut", .{});
                     term.mode.focused = false;
                     if (window.ic) |ic| x11.c.XUnsetICFocus(ic);
-                    if (term.mode.focused_report) {
+                    if (term.mode.mouse_focus) {
                         _ = pty.write("\x1B[O") catch {};
                     }
                     if (try renderer.render(term, &selector)) |rect| {
@@ -1027,6 +1046,15 @@ pub fn main() !u8 {
             if (n > 0) {
                 try parser.processBytes(read_buffer[0..n]);
                 pending_render = true;
+
+                // 同步 OSC 52 剪贴板数据
+                if (term.clipboard_data) |data| {
+                    selector.copyTextToClipboard(data, term.clipboard_mask) catch |err| {
+                        std.log.err("OSC 52 剪贴板同步失败: {}", .{err});
+                    };
+                    allocator.free(data);
+                    term.clipboard_data = null;
+                }
             }
         }
         window.updateImeSpot(term.c.x, term.c.y); // 更新输入法光标位置

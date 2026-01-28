@@ -754,6 +754,7 @@ pub const Parser = struct {
                 self.term.esc.str = true;
                 self.term.esc.start = false;
                 self.csiReset();
+                try self.strReset();
                 self.str.type = cc;
             },
             '(', ')', '*', '+' => {
@@ -1057,13 +1058,16 @@ pub const Parser = struct {
                 try self.term.moveTo(0, 0);
             },
             7 => self.term.mode.wrap = set,
+            9 => self.term.mode.mouse_x10 = set, // X10 鼠标模式 (仅按下)
             12 => self.term.mode.blink = set,
             25 => self.term.mode.hide_cursor = !set,
             1000 => self.term.mode.mouse = set,
             1002 => self.term.mode.mouse_btn = set,
             1003 => self.term.mode.mouse_many = set,
-            1004 => self.term.mode.focused_report = set,
+            1004 => self.term.mode.mouse_focus = set,
+            1005 => self.term.mode.mouse_utf8 = set,
             1006 => self.term.mode.mouse_sgr = set,
+            1015 => self.term.mode.mouse_urxvt = set,
             2004 => self.term.mode.brckt_paste = set,
             2026 => self.term.mode.sync_update = set,
             47, 1047 => {
@@ -1146,6 +1150,7 @@ pub const Parser = struct {
                 self.term.window_title = self.str.args[1];
                 self.term.window_title_dirty = true;
             },
+            8 => {}, // 设置图标名称和窗口标题。
             10 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
                 self.term.default_fg = c;
             },
@@ -1160,29 +1165,40 @@ pub const Parser = struct {
                 // Format: OSC 52 ; Pc ; Pd ST
                 // Pc: c=clipboard, p=primary, etc.
                 // Pd: Base64 encoded data
-                if (self.str.narg >= 3) {
-                    const params = self.str.args[1];
-                    const b64_data = self.str.args[2];
+                if (self.str.narg >= 2) {
+                    const params = if (self.str.narg >= 3) self.str.args[1] else "c";
+                    const b64_data = if (self.str.narg >= 3) self.str.args[2] else self.str.args[1];
 
-                    // Decode base64
+                    if (std.mem.eql(u8, b64_data, "?")) {
+                        // Query not supported for security, but we should log it
+                        std.log.info("OSC 52: Clipboard query ignored (params={s})", .{params});
+                        return;
+                    }
+
+                    // Decode base64 (leniently, skipping whitespace/newlines)
+                    const filtered = try self.allocator.alloc(u8, b64_data.len);
+                    defer self.allocator.free(filtered);
+                    var f_len: usize = 0;
+                    for (b64_data) |c| {
+                        if (std.ascii.isAlphanumeric(c) or c == '+' or c == '/' or c == '=') {
+                            filtered[f_len] = c;
+                            f_len += 1;
+                        }
+                    }
+
                     const Decoder = std.base64.standard.Decoder;
-                    const dest_len = Decoder.calcSizeForSlice(b64_data) catch 0;
+                    const clean_data = filtered[0..f_len];
+                    const dest_len = Decoder.calcSizeForSlice(clean_data) catch {
+                        std.log.err("OSC 52: Invalid base64 data (len={d})", .{clean_data.len});
+                        return;
+                    };
+
                     if (dest_len > 0) {
                         const decoded = try self.allocator.alloc(u8, dest_len);
                         defer self.allocator.free(decoded);
 
-                        try Decoder.decode(decoded, b64_data);
+                        try Decoder.decode(decoded, clean_data);
 
-                        // We need to pass this to the X11 selection owner.
-                        // Since Parser doesn't have direct access to X11/Selector,
-                        // we can't easily implement this without plumbing.
-                        // For now, we'll log it, but to do it properly we'd need a callback or shared state.
-                        // However, stz architecture has `main.zig` polling PTY.
-                        // A better way is to set a "clipboard_request" flag in Term, and main loop handles it.
-                        // Let's modify Term to hold a clipboard request.
-                        // For this iteration, we will skip full implementation to avoid large architectural changes
-                        // unless we are sure.
-                        // Actually, let's allow Term to store a "pending clipboard set" string.
                         if (self.term.clipboard_data) |old| {
                             self.allocator.free(old);
                         }
@@ -1194,6 +1210,10 @@ pub const Parser = struct {
                             if (p == 'c') self.term.clipboard_mask |= 1; // CLIPBOARD
                             if (p == 'p') self.term.clipboard_mask |= 2; // PRIMARY
                         }
+                        // Default to CLIPBOARD if params empty
+                        if (self.term.clipboard_mask == 0) self.term.clipboard_mask = 1;
+
+                        std.log.info("OSC 52: Received {d} bytes of clipboard data (mask={d})", .{ decoded.len, self.term.clipboard_mask });
                     }
                 }
             },

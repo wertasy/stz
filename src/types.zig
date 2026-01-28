@@ -309,23 +309,24 @@ pub const TermMode = packed struct(u32) {
     hide_cursor: bool = false, // 隐藏光标：不显示光标（播放动画时有用）
     reverse: bool = false, // 反色模式：DECSCNM - 全局反色（前景/背景互换）
     kbdlock: bool = false, // 键盘锁定：键盘输入被忽略（DECCKM）
-    mouse: bool = false, // 鼠标模式：捕获鼠标点击事件
-    mouse_btn: bool = false, // 鼠标按钮：捕获鼠标按下/释放（DECSET 9）
-    mouse_motion: bool = false, // 鼠标移动：捕获鼠标移动（DECSET 1002）
-    mouse_many: bool = false, // 鼠标频繁：不按按钮时也报告移动（DECSET 1003）
-    mouse_sgr: bool = false, // 鼠标 SGR：使用 SGR 格式报告鼠标（DECSET 1006）
-    mouse_focus: bool = false, // 鼠标焦点：报告窗口焦点变化（DECSET 1004）
-    brckt_paste: bool = false, // 括号粘贴：粘贴内容用特殊字符包裹（避免命令注入）
+    mouse: bool = false, // 鼠标模式：DECSET 1000 (X11 鼠标)
+    mouse_x10: bool = false, // X10 鼠标：DECSET 9 (仅报告按下)
+    mouse_btn: bool = false, // 按钮移动：DECSET 1002 (按住按钮时报告移动)
+    mouse_many: bool = false, // 所有移动：DECSET 1003 (无论是否按住都报告移动)
+    mouse_sgr: bool = false, // 鼠标 SGR：DECSET 1006 (SGR 格式报告)
+    mouse_focus: bool = false, // 鼠标焦点报告：DECSET 1004
+    brckt_paste: bool = false, // 括号粘贴：DECSET 2004 (粘贴内容用特殊字符包裹)
+    mouse_utf8: bool = false, // 鼠标 UTF-8: DECSET 1005 (已废弃，建议用 SGR)
+    mouse_urxvt: bool = false, // 鼠标 URXVT: DECSET 1015 (已废弃，建议用 SGR)
     num_lock: bool = false, // 数字锁定：小键盘锁定在数字模式
-    blink: bool = false, // 闪烁：光标/文本闪烁开关（DECSCBNM）
-    focused: bool = false, // 焦点状态：窗口是否有焦点（只读状态，非模式）
-    focused_report: bool = false, // 焦点报告：通知程序焦点变化（CSI ? 1004 h/l）
-    sync_update: bool = false, // 同步更新：批量更新模式（CSI ? 2026 h/l）
-    _padding: u8 = 0, // 填充位：确保对齐到32位边界
+    blink: bool = false, // 闪烁：光标/文本闪烁开关 (DECSCBNM)
+    focused: bool = false, // 焦点状态：窗口是否有焦点 (只读状态)
+    sync_update: bool = false, // 同步更新：DECSET 2026 (批量更新模式)
+    _padding: u7 = 0, // 填充位
 
     /// 检查是否启用了任意鼠标模式
     pub fn isMouseEnabled(self: TermMode) bool {
-        return self.mouse or self.mouse_btn or self.mouse_motion or self.mouse_many;
+        return self.mouse or self.mouse_x10 or self.mouse_btn or self.mouse_many;
     }
 };
 

@@ -50,8 +50,6 @@ pub const InputError = error{
 pub const Input = struct {
     pty: *PTY,
     term: *Terminal,
-    bracketed_paste_buffer: std.ArrayList(u8) = .empty,
-    in_bracketed_paste: bool = false,
 
     /// 初始化输入处理器
     pub fn init(pty: *PTY, term: *Terminal) Input {
@@ -63,49 +61,34 @@ pub const Input = struct {
 
     /// 清理输入处理器
     pub fn deinit(self: *Input) void {
-        self.bracketed_paste_buffer.deinit(self.pty.allocator);
+        _ = self;
     }
 
-    /// 处理 bracketed paste 模式数据
-    pub fn handleBracketedPaste(self: *Input, data: []const u8) bool {
-        if (!self.term.mode.brckt_paste) {
-            _ = self.pty.write(data) catch {};
-            return true;
+    /// 发送粘贴内容到 PTY，支持括号粘贴模式
+    pub fn sendPaste(self: *Input, text: []const u8) !void {
+        if (self.term.mode.brckt_paste) {
+            _ = try self.pty.write("\x1b[200~");
         }
 
-        const start_seq = "\x1b[200~";
-        const end_seq = "\x1b[201~";
-
+        // 将 \n 转换为 \r 以适应终端输入
         var i: usize = 0;
-        while (i < data.len) {
-            if (!self.in_bracketed_paste and i + 6 <= data.len and
-                std.mem.eql(u8, data[i .. i + 6], start_seq))
-            {
-                self.in_bracketed_paste = true;
-                i += 6;
-                continue;
-            }
-
-            if (self.in_bracketed_paste and i + 6 <= data.len and
-                std.mem.eql(u8, data[i .. i + 6], end_seq))
-            {
-                self.in_bracketed_paste = false;
-                if (self.bracketed_paste_buffer.items.len > 0) {
-                    _ = self.pty.write(self.bracketed_paste_buffer.items) catch {};
-                    self.bracketed_paste_buffer.clearRetainingCapacity();
+        var start: usize = 0;
+        while (i < text.len) : (i += 1) {
+            if (text[i] == '\n') {
+                if (i > start) {
+                    _ = try self.pty.write(text[start..i]);
                 }
-                i += 6;
-                continue;
+                _ = try self.pty.write("\r");
+                start = i + 1;
             }
-
-            if (self.in_bracketed_paste) {
-                self.bracketed_paste_buffer.append(self.pty.allocator, data[i]) catch {};
-            } else {
-                _ = self.pty.write(data[i .. i + 1]) catch {};
-            }
-            i += 1;
         }
-        return true;
+        if (i > start) {
+            _ = try self.pty.write(text[start..i]);
+        }
+
+        if (self.term.mode.brckt_paste) {
+            _ = try self.pty.write("\x1b[201~");
+        }
     }
 
     /// 处理键盘事件
@@ -286,30 +269,48 @@ pub const Input = struct {
 
     pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, event_type: u8) !void {
         if (!self.term.mode.isMouseEnabled()) return;
+
         var code: u32 = 0;
-        if (event_type == 2) {
+        const btn = button;
+
+        if (event_type == 2) { // Motion
             if (!self.term.mode.mouse_many and !self.term.mode.mouse_btn) return;
+            // Motion events start with 32
             code = 32;
-            if (button >= 1 and button <= 3) {
-                code += button - 1;
+            if (btn >= 1 and btn <= 3) {
+                code += btn - 1;
+            } else if (btn >= 4 and btn <= 7) {
+                code += 64 + (btn - 4);
+            } else if (btn >= 8 and btn <= 11) {
+                code += 128 + (btn - 8);
             } else {
-                code += 3;
+                code += 3; // No button pressed or button 12+
             }
-        } else if (event_type == 1) {
-            if (button == 4 or button == 5) return;
-            code = 3;
-        } else {
-            if (button >= 4) {
-                code = 64 + (button - 4);
+        } else if (event_type == 1) { // Release
+            if (self.term.mode.mouse_x10) return;
+            if (btn == 4 or btn == 5) return; // Scroll wheels don't have release
+            if (self.term.mode.mouse_sgr) {
+                code = btn - 1;
             } else {
-                code = button - 1;
+                code = 3;
+            }
+        } else { // Press
+            if (btn >= 4 and btn <= 7) {
+                code = 64 + (btn - 4);
+            } else if (btn >= 8 and btn <= 11) {
+                code = 128 + (btn - 8);
+            } else {
+                code = btn - 1;
             }
         }
-        if (self.term.mode.mouse_sgr or (x < 223 and y < 223)) {
+
+        // Add modifiers if not in X10 mode
+        if (!self.term.mode.mouse_x10) {
             if ((state & x11.c.ShiftMask) != 0) code += 4;
             if ((state & x11.c.Mod1Mask) != 0) code += 8;
             if ((state & x11.c.ControlMask) != 0) code += 16;
         }
+
         if (self.term.mode.mouse_sgr) {
             const ch: u8 = if (event_type == 1) 'm' else 'M';
             var buf: [64]u8 = undefined;

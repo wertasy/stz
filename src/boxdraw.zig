@@ -25,7 +25,7 @@ pub const BoxDraw = struct {
     /// 获取绘制数据
     pub fn getDrawData(u: u21) u16 {
         if (u >= 0x2800 and u <= 0x28FF) {
-            return boxdraw_data.BRL | @as(u16, @as(u8, @truncate(u)));
+            return boxdraw_data.BRAILLE | @as(u16, @as(u8, @truncate(u)));
         }
         if (u >= 0x2500 and u <= 0x25FF) {
             return boxdraw_data.boxdata[u - 0x2500];

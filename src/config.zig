@@ -22,7 +22,7 @@ const CursorStyle = types.CursorStyle;
 
 // 字体配置
 pub const font = struct {
-    pub const name = "Maple Mono NF CN:pixelsize=20:antialias=true:autohint=false";
+    pub const name = "Maple Mono NF CN:pixelsize=18:antialias=true:autohint=false";
     pub const size: u32 = 20; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;
@@ -32,12 +32,12 @@ pub const font = struct {
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等
     pub const fallback_fonts = [_][:0]const u8{
-        "FreeMono:pixelsize=20:antialias=true",
-        "FreeSans:pixelsize=20:antialias=true",
-        "FreeSerif:pixelsize=20:antialias=true",
-        "Noto Sans Mono:pixelsize=20:antialias=true",
-        "Noto Sans CJK SC:pixelsize=20:antialias=true",
-        "Noto Color Emoji:pixelsize=20:antialias=true",
+        "FreeMono:pixelsize=18:antialias=true",
+        "FreeSans:pixelsize=18:antialias=true",
+        "FreeSerif:pixelsize=18:antialias=true",
+        "Noto Sans Mono:pixelsize=18:antialias=true",
+        "Noto Sans CJK SC:pixelsize=18:antialias=true",
+        "Noto Color Emoji:pixelsize=18:antialias=true",
     };
 };
 

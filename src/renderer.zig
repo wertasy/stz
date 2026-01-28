@@ -857,8 +857,8 @@ pub const Renderer = struct {
         const h2_line = @divTrunc(h - s + 1, 2);
         const midx = x + w2_line;
         const midy = y + h2_line;
-        const cat = data & ~@as(u16, boxdraw_data.BDB | 0xff);
-        if (cat == boxdraw_data.BTR) {
+        const cat = data & ~@as(u16, boxdraw_data.BOLD | 0xff);
+        if (cat == boxdraw_data.TRIANGLE) {
             const type_ = data & 0xFF;
 
             // 目标：宽度和高度都是 1 个字符的宽度 (W x W 正方形区域)
@@ -904,7 +904,7 @@ pub const Renderer = struct {
             _ = x11.c.XFillPolygon(self.window.dpy, self.window.buf, gc, &points, 3, x11.c.Convex, x11.c.CoordModeOrigin);
             return;
         }
-        if (cat == boxdraw_data.BRL) {
+        if (cat == boxdraw_data.BRAILLE) {
             const bw1 = @divTrunc(w + 1, 2);
             const bh1 = @divTrunc(h + 2, 4);
             const bh2 = @divTrunc(h + 1, 2);
@@ -920,33 +920,33 @@ pub const Renderer = struct {
             if (data & 128 != 0) x11.c.XftDrawRect(self.draw, color, x + bw1, y + bh3, @intCast(w - bw1), @intCast(h - bh3));
             return;
         }
-        if (cat == boxdraw_data.BBD) {
+        if (cat == boxdraw_data.BLOCK_DOWN) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
             x11.c.XftDrawRect(self.draw, color, x, y + d, @intCast(w), @intCast(h - d));
             return;
-        } else if (cat == boxdraw_data.BBU) {
+        } else if (cat == boxdraw_data.BLOCK_UPPER) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * h + 4, 8);
             x11.c.XftDrawRect(self.draw, color, x, y, @intCast(w), @intCast(d));
             return;
-        } else if (cat == boxdraw_data.BBL) {
+        } else if (cat == boxdraw_data.BLOCK_LEFT) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * w + 4, 8);
             x11.c.XftDrawRect(self.draw, color, x, y, @intCast(d), @intCast(h));
             return;
-        } else if (cat == boxdraw_data.BBR) {
+        } else if (cat == boxdraw_data.BLOCK_RIGHT) {
             const d = @divTrunc(@as(i32, @intCast(data & 0xFF)) * w + 4, 8);
             x11.c.XftDrawRect(self.draw, color, x + d, y, @intCast(w - d), @intCast(h));
             return;
         }
-        if (cat == boxdraw_data.BBQ) {
+        if (cat == boxdraw_data.BLOCK_QUADRANT) {
             const qw = @divTrunc(w + 1, 2);
             const qh = @divTrunc(h + 1, 2);
-            if (data & boxdraw_data.TL != 0) x11.c.XftDrawRect(self.draw, color, x, y, @intCast(qw), @intCast(qh));
-            if (data & boxdraw_data.TR != 0) x11.c.XftDrawRect(self.draw, color, x + qw, y, @intCast(w - qw), @intCast(qh));
-            if (data & boxdraw_data.BL != 0) x11.c.XftDrawRect(self.draw, color, x, y + qh, @intCast(qw), @intCast(h - qh));
-            if (data & boxdraw_data.BR != 0) x11.c.XftDrawRect(self.draw, color, x + qw, y + qh, @intCast(w - qw), @intCast(h - qh));
+            if (data & boxdraw_data.TOP_LEFT != 0) x11.c.XftDrawRect(self.draw, color, x, y, @intCast(qw), @intCast(qh));
+            if (data & boxdraw_data.TOP_RIGHT != 0) x11.c.XftDrawRect(self.draw, color, x + qw, y, @intCast(w - qw), @intCast(qh));
+            if (data & boxdraw_data.BOTTOM_LEFT != 0) x11.c.XftDrawRect(self.draw, color, x, y + qh, @intCast(qw), @intCast(h - qh));
+            if (data & boxdraw_data.BOTTOM_RIGHT != 0) x11.c.XftDrawRect(self.draw, color, x + qw, y + qh, @intCast(w - qw), @intCast(h - qh));
             return;
         }
-        if (data & boxdraw_data.BBS != 0) {
+        if (data & boxdraw_data.BLOCK_SHADE != 0) {
             const d = @as(u16, @intCast(data & 0xFF));
             var xrc = x11.c.XRenderColor{
                 .red = @intCast(@divTrunc(@as(u32, color.*.color.red) * d + @as(u32, bg_color.*.color.red) * (4 - d) + 2, 4)),
@@ -961,11 +961,11 @@ pub const Renderer = struct {
             }
             return;
         }
-        if (data & (boxdraw_data.BDL | boxdraw_data.BDA) != 0) {
-            const light = data & (boxdraw_data.LL | boxdraw_data.LU | boxdraw_data.LR | boxdraw_data.LD);
-            const double_ = data & (boxdraw_data.DL | boxdraw_data.DU | boxdraw_data.DR | boxdraw_data.DD);
+        if (data & (boxdraw_data.LINE | boxdraw_data.ARC) != 0) {
+            const light = data & (boxdraw_data.LIGHT_LEFT | boxdraw_data.LIGHT_UP | boxdraw_data.LIGHT_RIGHT | boxdraw_data.LIGHT_DOWN);
+            const double_ = data & (boxdraw_data.DOUBLE_LEFT | boxdraw_data.DOUBLE_UP | boxdraw_data.DOUBLE_RIGHT | boxdraw_data.DOUBLE_DOWN);
             if (light != 0) {
-                const arc = data & boxdraw_data.BDA != 0;
+                const arc = data & boxdraw_data.ARC != 0;
                 const multi_light = light & (light -% 1) != 0;
                 const multi_double = double_ & (double_ -% 1) != 0;
 
@@ -975,10 +975,10 @@ pub const Renderer = struct {
                 const d_len: i32 = if (arc or (multi_double and !multi_light)) -s else 0;
 
                 // // 先绘制直线（如果有）
-                if (data & boxdraw_data.LL != 0) x11.c.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
-                if (data & boxdraw_data.LU != 0) x11.c.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
-                if (data & boxdraw_data.LR != 0) x11.c.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
-                if (data & boxdraw_data.LD != 0) x11.c.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
+                if (data & boxdraw_data.LIGHT_LEFT != 0) x11.c.XftDrawRect(self.draw, color, x, midy, @intCast(w2_line + s + d_len), @intCast(s));
+                if (data & boxdraw_data.LIGHT_UP != 0) x11.c.XftDrawRect(self.draw, color, midx, y, @intCast(s), @intCast(h2_line + s + d_len));
+                if (data & boxdraw_data.LIGHT_RIGHT != 0) x11.c.XftDrawRect(self.draw, color, midx - d_len, midy, @intCast(w - w2_line + d_len), @intCast(s));
+                if (data & boxdraw_data.LIGHT_DOWN != 0) x11.c.XftDrawRect(self.draw, color, midx, midy - d_len, @intCast(s), @intCast(h - h2_line + d_len));
 
                 // // 绘制圆角弧
                 // if (arc and corner_radius > 0) {
@@ -1001,10 +1001,10 @@ pub const Renderer = struct {
                 // }
             }
             if (double_ != 0) {
-                const dl = data & boxdraw_data.DL != 0;
-                const du = data & boxdraw_data.DU != 0;
-                const dr = data & boxdraw_data.DR != 0;
-                const dd = data & boxdraw_data.DD != 0;
+                const dl = data & boxdraw_data.DOUBLE_LEFT != 0;
+                const du = data & boxdraw_data.DOUBLE_UP != 0;
+                const dr = data & boxdraw_data.DOUBLE_RIGHT != 0;
+                const dd = data & boxdraw_data.DOUBLE_DOWN != 0;
                 if (dl) {
                     const p: i32 = if (dd) -s else 0;
                     const n: i32 = if (du) -s else if (dd) s else 0;

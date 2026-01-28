@@ -28,6 +28,7 @@ pub const font = struct {
     pub const italic: bool = false;
     pub const cwscale: f32 = 1.0; // 字符宽度缩放
     pub const chscale: f32 = 1.0; // 字符高度缩放
+    pub const bold_weight: i32 = 210; // 粗体字体权重 (FontConfig: BOLD=200, EXTRABOLD=205, BLACK=210)
 
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等

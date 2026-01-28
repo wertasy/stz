@@ -155,7 +155,7 @@ pub const Renderer = struct {
         // Bold
         const bold_pattern = x11.c.FcPatternDuplicate(pattern);
         _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_WEIGHT);
-        _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
         var font_bold = x11.c.XftFontOpenPattern(window.dpy, bold_pattern);
         if (font_bold == null) font_bold = font;
 
@@ -164,7 +164,7 @@ pub const Renderer = struct {
         _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_SLANT);
         _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
         _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_WEIGHT);
-        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
         var font_italic_bold = x11.c.XftFontOpenPattern(window.dpy, ib_pattern);
         if (font_italic_bold == null) font_italic_bold = font;
 
@@ -320,7 +320,7 @@ pub const Renderer = struct {
         // Bold
         const bold_pattern = x11.c.FcPatternDuplicate(pattern);
         _ = x11.c.FcPatternDel(bold_pattern, x11.c.FC_WEIGHT);
-        _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        _ = x11.c.FcPatternAddInteger(bold_pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
         var font_bold = x11.c.XftFontOpenPattern(self.window.dpy, bold_pattern);
         if (font_bold == null) font_bold = self.font;
         self.font_bold = font_bold.?;
@@ -330,7 +330,7 @@ pub const Renderer = struct {
         _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_SLANT);
         _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
         _ = x11.c.FcPatternDel(ib_pattern, x11.c.FC_WEIGHT);
-        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+        _ = x11.c.FcPatternAddInteger(ib_pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
         var font_italic_bold = x11.c.XftFontOpenPattern(self.window.dpy, ib_pattern);
         if (font_italic_bold == null) font_italic_bold = self.font;
         self.font_italic_bold = font_italic_bold.?;
@@ -506,7 +506,7 @@ pub const Renderer = struct {
         }
         if (attr.bold) {
             _ = x11.c.FcPatternDel(pattern, x11.c.FC_WEIGHT);
-            _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_WEIGHT, x11.c.FC_WEIGHT_BOLD);
+            _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
         }
 
         _ = x11.c.FcConfigSubstitute(null, pattern, x11.c.FcMatchPattern);

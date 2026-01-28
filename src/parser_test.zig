@@ -11,6 +11,7 @@ const config = @import("config.zig");
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
+const expectEqualSlices = std.testing.expectEqualSlices;
 
 test "Parser initialization" {
     const allocator = std.testing.allocator;
@@ -259,4 +260,70 @@ test "Mouse mode toggles" {
     const seq6 = "\x1b[?9h";
     for (seq6) |c| try parser.putc(@intCast(c));
     try expect(term.mode.mouse_x10);
+}
+
+test "窗口标题 OSC 序列" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+
+    var parser = try Parser.init(&term, null, allocator);
+    defer parser.deinit();
+
+    // 初始标题应该是 "stz"
+    try expectEqualSlices(u8, "stz", term.window_title);
+
+    // 测试 OSC 2;Test Title BEL
+    const seq1 = "\x1B]2;Test Title\x07";
+    for (seq1) |c| try parser.putc(@intCast(c));
+
+    // 标题应该已更新
+    try expectEqualSlices(u8, "Test Title", term.window_title);
+    try expect(term.window_title_dirty);
+
+    // 标记脏位已处理
+    term.window_title_dirty = false;
+
+    // 设置另一个标题
+    const seq2 = "\x1B]2;Another Title\x07";
+    for (seq2) |c| try parser.putc(@intCast(c));
+    try expectEqualSlices(u8, "Another Title", term.window_title);
+}
+
+test "窗口标题使用 ESC \\ 终止符" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+
+    var parser = try Parser.init(&term, null, allocator);
+    defer parser.deinit();
+
+    // 使用 ESC \ 作为 ST 终止符
+    const seq1 = "\x1B]2;Title with ESC\x1B\\";
+    for (seq1) |c| try parser.putc(@intCast(c));
+    try expectEqualSlices(u8, "Title with ESC", term.window_title);
+}
+
+test "OSC 0 和 OSC 1 也应该正确设置标题" {
+    const allocator = std.testing.allocator;
+    var term = try Terminal.init(24, 80, allocator);
+    defer term.deinit();
+
+    var parser = try Parser.init(&term, null, allocator);
+    defer parser.deinit();
+
+    // 测试 OSC 0 (窗口标题和图标标题)
+    const seq0 = "\x1B]0;OSC 0 Title\x07";
+    for (seq0) |c| try parser.putc(@intCast(c));
+    try expectEqualSlices(u8, "OSC 0 Title", term.window_title);
+
+    // 测试 OSC 1 (图标标题)
+    const seq1 = "\x1B]1;OSC 1 Title\x07";
+    for (seq1) |c| try parser.putc(@intCast(c));
+    try expectEqualSlices(u8, "OSC 1 Title", term.window_title);
+
+    // 测试 OSC 2 (窗口标题)
+    const seq2 = "\x1B]2;OSC 2 Title\x07";
+    for (seq2) |c| try parser.putc(@intCast(c));
+    try expectEqualSlices(u8, "OSC 2 Title", term.window_title);
 }

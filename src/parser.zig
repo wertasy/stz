@@ -1145,11 +1145,25 @@ pub const Parser = struct {
 
     fn oscHandle(self: *Parser, par: i32) !void {
         switch (par) {
-            0, 1, 2 => if (self.str.narg > 1 and self.str.args[1].len > 0) {
-                self.term.window_title = self.str.args[1];
+            0, 1, 2 => if (self.str.narg > 1) {
+                // 释放旧的窗口标题
+                if (self.term.window_title.len > 0) {
+                    self.allocator.free(self.term.window_title);
+                }
+
+                if (self.str.args[1].len > 0) {
+                    // 设置新标题：使用 dupeZ 分配 null-terminated 副本
+                    self.term.window_title = try self.allocator.dupeZ(u8, self.str.args[1]);
+                } else {
+                    // 空字符串：重置为默认标题 "stz"
+                    self.term.window_title = try self.allocator.dupeZ(u8, "stz");
+                }
                 self.term.window_title_dirty = true;
             },
-            8 => {}, // 设置图标名称和窗口标题。
+            // OSC 21: 报告窗口标题（作为响应，不处理）
+            // Format: OSC 21 ; BEL (返回当前标题)
+            21 => {},
+            8 => {}, // OSC 8: 超链接（Hyperlinks）- 当前未实现
             10 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
                 self.term.default_fg = c;
             },

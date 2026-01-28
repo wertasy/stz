@@ -1071,6 +1071,12 @@ pub fn main() !u8 {
                 try parser.processBytes(read_buffer[0..n]);
                 pending_render = true;
 
+                // 更新窗口标题
+                if (term.window_title_dirty) {
+                    window.setTitle(term.window_title);
+                    term.window_title_dirty = false;
+                }
+
                 // 同步 OSC 52 剪贴板数据
                 if (term.clipboard_data) |data| {
                     // 仅在终端获得焦点时同步，避免在后台运行时干扰其他终端的剪切板

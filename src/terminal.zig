@@ -216,7 +216,7 @@ pub const Terminal = struct {
     lastc: u21 = 0, // 最后一个字符：某些模式需要（如某些字符集的字符映射）
 
     // ========== 窗口标题 ==========
-    window_title: []const u8 = "stz", // 窗口标题：显示在窗口标题栏的文字
+    window_title: [:0]u8 = @constCast(&[_:0]u8{}), // 窗口标题：动态分配的 null-terminated 字符串
     window_title_dirty: bool = false, // 标题脏标记：标题是否改变，需要更新窗口
 
     // ========== 颜色调色板 ==========
@@ -349,6 +349,9 @@ pub const Terminal = struct {
         term.top = 0;
         term.bot = row - 1;
 
+        // ========== 初始化窗口标题 ==========
+        term.window_title = try allocator.dupeZ(u8, "stz");
+
         return term;
     }
 
@@ -383,6 +386,14 @@ pub const Terminal = struct {
 
         if (self.tabs) |t| {
             allocator.free(t);
+        }
+
+        if (self.window_title.len > 0) {
+            allocator.free(self.window_title);
+        }
+
+        if (self.clipboard_data) |data| {
+            allocator.free(data);
         }
 
         self.screen = null;

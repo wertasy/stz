@@ -148,7 +148,14 @@ pub const Window = struct {
         const im = x11.c.XOpenIM(dpy, null, null, null);
         var ic: ?x11.c.XIC = null;
         if (im) |im_ptr| {
-            ic = x11.c.XCreateIC(im_ptr, x11.c.XNInputStyle, x11.c.XIMPreeditNothing | x11.c.XIMStatusNothing, x11.c.XNClientWindow, win, x11.c.XNFocusWindow, win, @as(?*anyopaque, null));
+            const spot = x11.c.XPoint{ .x = @intCast(border), .y = @intCast(border) };
+            const nested_list = x11.c.XVaCreateNestedList(0, x11.c.XNSpotLocation, &spot, @as(?*anyopaque, null)); // End of list for the spot location attributes
+
+            ic = x11.c.XCreateIC(im_ptr, x11.c.XNInputStyle, x11.c.XIMPreeditNothing | x11.c.XIMStatusNothing, x11.c.XNClientWindow, win, x11.c.XNFocusWindow, win, x11.c.XNPreeditAttributes, nested_list, @as(?*anyopaque, null)); // End of XCreateIC list
+
+            if (nested_list != null) {
+                _ = x11.c.XFree(nested_list);
+            }
         } else {
             std.log.warn("Failed to open X Input Method", .{});
         }
@@ -180,6 +187,23 @@ pub const Window = struct {
             .vborder_px = border,
             .allocator = allocator,
         };
+    }
+
+    pub fn updateImeSpot(self: *Window, cx: usize, cy: usize) void {
+        if (self.ic == null) return;
+
+        // 计算光标在窗口内的像素坐标 (相对于窗口)
+        const spot_x = @as(i16, @intCast(cx * self.cell_width + self.hborder_px));
+        const spot_y = @as(i16, @intCast(cy * self.cell_height + self.vborder_px));
+
+        const spot = x11.c.XPoint{ .x = spot_x, .y = spot_y };
+
+        const nested_list = x11.c.XVaCreateNestedList(0, x11.c.XNSpotLocation, &spot, @as(?*anyopaque, null));
+
+        if (nested_list != null) {
+            _ = x11.c.XSetICValues(self.ic.?, x11.c.XNPreeditAttributes, nested_list, @as(?*anyopaque, null));
+            _ = x11.c.XFree(nested_list);
+        }
     }
 
     pub fn deinit(self: *Window) void {

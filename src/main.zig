@@ -1029,6 +1029,7 @@ pub fn main() !u8 {
                 pending_render = true;
             }
         }
+        window.updateImeSpot(term.c.x, term.c.y); // 更新输入法光标位置
     }
 
     return 0;

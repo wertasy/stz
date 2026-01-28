@@ -193,6 +193,7 @@ pub const Terminal = struct {
     default_fg: u32 = config.colors.foreground, // 默认前景色 (RGB)
     default_bg: u32 = config.colors.background, // 默认背景色 (RGB)
     default_cs: u32 = config.colors.cursor, // 默认光标颜色 (RGB)
+    default_rev_cs: u32 = config.colors.cursor_text, // 反转光标颜色 (RGB)
 
     // ========== 光标样式 ==========
     cursor_style: CursorStyle = .blinking_bar, // 光标样式：闪烁竖线（默认）

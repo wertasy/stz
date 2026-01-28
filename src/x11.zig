@@ -15,11 +15,6 @@ pub const c = @cImport({
     @cInclude("hb-ft.h");
 });
 
-// Helper function to get clipboard atom
-pub fn getClipboardAtom(dpy: *c.Display) c.Atom {
-    return c.XInternAtom(dpy, "CLIPBOARD", c.False);
-}
-
 // HarfBuzz 辅助数据结构
 pub const HbTransformData = struct {
     buffer: ?*c.hb_buffer_t,
@@ -153,6 +148,11 @@ pub fn hbcleanup(data: *HbTransformData) void {
     data.glyphs = null;
     data.positions = null;
     data.count = 0;
+}
+
+// Helper function to get clipboard atom
+pub fn getClipboardAtom(dpy: *c.Display) c.Atom {
+    return c.XInternAtom(dpy, "CLIPBOARD", c.False);
 }
 
 pub fn getPrimaryAtom(dpy: *c.Display) c.Atom {

@@ -457,6 +457,8 @@ pub const Renderer = struct {
         }
         // 光标颜色
         if (index == config.colors.default_cursor_idx) return u32ToRgb(term.default_cs);
+        // 反转光标颜色
+        if (index == config.colors.reverse_cursor_idx) return u32ToRgb(term.default_rev_cs);
         // 前景色
         if (index == config.colors.default_foreground_idx) return u32ToRgb(term.default_fg);
         // 背景色
@@ -537,7 +539,7 @@ pub const Renderer = struct {
         if (term.line == null) return null;
 
         // Default background color
-        var default_bg = try self.getColor(term, 259);
+        var default_bg = try self.getColor(term, config.colors.default_background_idx);
 
         const hborder = @as(i32, @intCast(self.window.hborder_px));
         const vborder = @as(i32, @intCast(self.window.vborder_px));
@@ -670,15 +672,12 @@ pub const Renderer = struct {
             }
         }
 
-        const cursor_fg_idx: u32 = 259;
-        var cursor_bg_idx: u32 = 256;
+        var cursor_fg_idx: u32 = config.colors.default_background_idx;
+        var cursor_bg_idx: u32 = config.colors.default_cursor_idx;
 
         if (term.mode.reverse) {
-            if (is_blinking_style and self.cursor_blink_state) {
-                cursor_bg_idx = 258;
-            } else {
-                cursor_bg_idx = 259;
-            }
+            cursor_bg_idx = config.colors.reverse_cursor_idx;
+            cursor_fg_idx = config.colors.default_cursor_idx;
         }
 
         var draw_col = try self.getColor(term, cursor_bg_idx);
@@ -754,7 +753,7 @@ pub const Renderer = struct {
                 x11.c.XftDrawRect(self.draw, &draw_col, x_pos, y_pos, thickness, @intCast(self.char_height));
                 x11.c.XftDrawRect(self.draw, &draw_col, x_pos + @as(i32, @intCast(cursor_width)) - @as(i32, @intCast(thickness)), y_pos, thickness, @intCast(self.char_height));
                 if (glyph.u != ' ' and glyph.u != 0) {
-                    var fg = try self.getColor(term, 258);
+                    var fg = try self.getColor(term, cursor_fg_idx);
                     const codepoint = @as(u32, glyph.u);
                     const font = self.getFontForGlyph(glyph.u, glyph.attr);
 

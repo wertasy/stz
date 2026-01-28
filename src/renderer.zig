@@ -469,9 +469,11 @@ pub const Renderer = struct {
 
     fn getFontForGlyph(self: *Renderer, u: u21, attr: types.GlyphAttr) *x11.c.XftFont {
         var f = self.font;
-        if (attr.bold and attr.italic) {
+        const use_bold = attr.bold and !config.draw.disable_bold_font;
+
+        if (use_bold and attr.italic) {
             f = self.font_italic_bold;
-        } else if (attr.bold) {
+        } else if (use_bold) {
             f = self.font_bold;
         } else if (attr.italic) {
             f = self.font_italic;
@@ -504,7 +506,7 @@ pub const Renderer = struct {
             _ = x11.c.FcPatternDel(pattern, x11.c.FC_SLANT);
             _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_SLANT, x11.c.FC_SLANT_ITALIC);
         }
-        if (attr.bold) {
+        if (attr.bold and !config.draw.disable_bold_font) {
             _ = x11.c.FcPatternDel(pattern, x11.c.FC_WEIGHT);
             _ = x11.c.FcPatternAddInteger(pattern, x11.c.FC_WEIGHT, config.font.bold_weight);
         }

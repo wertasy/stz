@@ -1071,6 +1071,12 @@ pub fn main() !u8 {
                 try parser.processBytes(read_buffer[0..n]);
                 pending_render = true;
 
+                // 更新 URL 高亮
+                url_detector.clearHighlights();
+                url_detector.highlightUrls() catch |err| {
+                    std.log.err("URL 高亮失败: {}", .{err});
+                };
+
                 // 更新窗口标题
                 if (term.window_title_dirty) {
                     window.setTitle(term.window_title);

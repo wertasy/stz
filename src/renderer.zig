@@ -1282,6 +1282,84 @@ pub const Renderer = struct {
             x11.c.XftDrawRect(self.draw, &fg_col, hborder_x, winy + @divTrunc(self.ascent * 2, 3), @intCast(total_width * self.char_width), 1);
         }
 
+        if (base.attr.underline and base.ustyle == 3) {
+            const underline_y = winy + self.ascent + 1;
+            const width = @as(i32, @intCast(total_width * self.char_width));
+
+            // 创建 GC 用于绘制线条
+            var gc_values = std.mem.zeroes(x11.c.XGCValues);
+            gc_values.foreground = fg_col.pixel;
+            gc_values.line_width = @intCast(config.cursor.thickness); // 与下划线保持一致
+            gc_values.line_style = x11.c.LineSolid;
+            gc_values.cap_style = x11.c.CapButt;
+
+            const gc = x11.c.XCreateGC(
+                self.window.dpy,
+                x11.c.XftDrawDrawable(self.draw),
+                x11.c.GCForeground | x11.c.GCLineWidth | x11.c.GCLineStyle | x11.c.GCCapStyle,
+                &gc_values,
+            );
+            defer _ = x11.c.XFreeGC(self.window.dpy, gc);
+
+            // 计算波浪线参数
+            const wave_height = 3; // 波浪线高度（像素）
+            const wave_width = @as(i32, @intCast(@max(2, @divTrunc(self.char_width, 2)))); // 每个波浪的宽度
+
+            // 计算波浪线点数
+            const num_waves = @divTrunc(width, wave_width) + 2;
+            const num_points = @as(usize, @intCast(num_waves * 2));
+
+            // 分配点数组
+            var points = try term.allocator.alloc(x11.c.XPoint, num_points);
+            defer term.allocator.free(points);
+
+            var point_idx: usize = 0;
+            var current_x: i32 = hborder_x; // 从字符起始位置开始
+            const end_x = hborder_x + width;
+            var rising = true; // 当前是上升还是下降
+
+            // 生成波浪线点
+            while (current_x < end_x and point_idx < num_points) {
+                // 波浪线在 underline_y 到 underline_y + wave_height 之间波动
+                // 最高点对齐到下划线位置
+                const y_offset: i32 = if (rising)
+                    0 // 最高点，对齐到下划线
+                else
+                    wave_height; // 最低点
+
+                // 当前点
+                points[point_idx] = .{
+                    .x = @as(c_short, @intCast(current_x)),
+                    .y = @as(c_short, @intCast(underline_y + y_offset)),
+                };
+                point_idx += 1;
+
+                // 下一个点
+                current_x += wave_width;
+                if (current_x > end_x) current_x = end_x;
+
+                points[point_idx] = .{
+                    .x = @as(c_short, @intCast(current_x)),
+                    .y = @as(c_short, @intCast(underline_y + (wave_height - y_offset))), // 相反方向
+                };
+                point_idx += 1;
+
+                rising = !rising; // 切换方向
+            }
+
+            // 绘制波浪线
+            if (point_idx > 1) {
+                _ = x11.c.XDrawLines(
+                    self.window.dpy,
+                    x11.c.XftDrawDrawable(self.draw),
+                    gc,
+                    points.ptr,
+                    @intCast(point_idx),
+                    x11.c.CoordModeOrigin,
+                );
+            }
+        }
+
         // 清理 HarfBuzz 数据
         x11.hbcleanup(&self.hb_data);
     }

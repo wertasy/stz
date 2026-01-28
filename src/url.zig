@@ -28,7 +28,7 @@ pub const UrlDetector = struct {
 
     /// 高亮显示终端中的 URL
     pub fn highlightUrls(self: *UrlDetector) !void {
-        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.screen;
+        const screen = if (self.term.mode.alt_screen) self.term.alt_screen else self.term.screen;
         if (screen == null) return;
 
         const line_buffer = try self.allocator.alloc(u8, self.term.col + 1);
@@ -40,49 +40,65 @@ pub const UrlDetector = struct {
             for (0..self.term.col) |x| {
                 const glyph = screen.?[y][x];
                 const u_value = glyph.u;
-                line_buffer[line_len] = if (u_value < 128) @intCast(u_value) else ' ';
+                // 只保留可打印的 ASCII 字符用于 URL 检测
+                line_buffer[line_len] = if (u_value < 128 and u_value >= 32) @intCast(u_value) else ' ';
                 line_len += 1;
             }
             line_buffer[line_len] = 0;
 
             // 检测 URL
-            var url_start: ?usize = null;
-            for (0..line_len - 1) |i| {
+            var i: usize = 0;
+            while (i < line_len) {
+                var url_start: ?usize = null;
+                var prefix_len: usize = 0;
+
+                // 查找 URL 前缀
                 for (config.url.prefixes) |prefix| {
-                    if (std.mem.startsWith(u8, line_buffer[i..], prefix)) {
+                    if (i + prefix.len <= line_len and std.mem.startsWith(u8, line_buffer[i..], prefix)) {
                         url_start = i;
+                        prefix_len = prefix.len;
                         break;
                     }
                 }
 
-                if (url_start != null) {
-                    url_start = i;
-                    break;
-                }
-            }
+                if (url_start) |start| {
+                    // 找到 URL 前缀，继续查找 URL 结束
+                    var url_end: usize = start + prefix_len;
+                    while (url_end < line_len) {
+                        const c = line_buffer[url_end];
+                        const is_url_char = for (config.url.chars) |ch| {
+                            if (c == ch) {
+                                break true;
+                            }
+                        } else false;
 
-            if (url_start) |start| {
-                // 找到 URL 前缀，继续查找 URL 结束
-                var url_end: usize = start;
-                while (url_end < line_len) {
-                    const c = line_buffer[url_end];
-                    const is_url_char = for (config.url.chars) |ch| {
-                        if (c == ch) {
-                            break true;
+                        if (!is_url_char) {
+                            break;
                         }
-                    } else false;
-
-                    if (!is_url_char) {
-                        break;
+                        url_end += 1;
                     }
-                    url_end += 1;
-                }
 
-                // 标记 URL 字符
-                for (start..url_end) |x| {
-                    if (x < self.term.col and x < screen.?[y].len) {
-                        screen.?[y][x].attr.url = true;
+                    // 确保 URL 不以标点符号结尾（除非是 URL 字符的一部分）
+                    while (url_end > start + prefix_len) {
+                        const last_char = line_buffer[url_end - 1];
+                        if (last_char == '.' or last_char == ',' or last_char == ';' or last_char == ':' or last_char == '!' or last_char == '?') {
+                            url_end -= 1;
+                        } else {
+                            break;
+                        }
                     }
+
+                    // 标记 URL 字符
+                    for (start..url_end) |x| {
+                        if (x < self.term.col and x < screen.?[y].len) {
+                            screen.?[y][x].attr.url = true;
+                            screen.?[y][x].attr.underline = true;
+                        }
+                    }
+
+                    i = url_end; // 跳过已处理的 URL
+                } else {
+                    i += 1;
                 }
             }
         }
@@ -90,12 +106,13 @@ pub const UrlDetector = struct {
 
     /// 清除 URL 高亮
     pub fn clearHighlights(self: *UrlDetector) void {
-        const screen = if (self.term.mode.alt_screen) self.term.alt else self.term.screen;
+        const screen = if (self.term.mode.alt_screen) self.term.alt_screen else self.term.screen;
         if (screen == null) return;
 
         for (0..@min(self.term.row, screen.?.len)) |y| {
             for (0..@min(self.term.col, screen.?[y].len)) |x| {
                 screen.?[y][x].attr.url = false;
+                screen.?[y][x].attr.underline = false;
             }
         }
     }
@@ -123,18 +140,22 @@ pub const UrlDetector = struct {
 
         // 向前查找 URL 开始
         var sx = x;
+        // 如果当前位置不是 URL，直接返回错误
+        if (!screen.?[y][sx].attr.url) {
+            return error.NoUrlFound;
+        }
+
+        // 向前查找直到找到 URL 开始边界
         while (sx > 0) {
-            if (!screen.?[y][sx].attr.url) {
-                if (sx + 1 < self.term.col and screen.?[y][sx + 1].attr.url) {
-                    url_start = sx + 1;
-                    break;
-                }
+            if (!screen.?[y][sx - 1].attr.url) {
+                url_start = sx;
+                break;
             }
             sx -= 1;
         }
 
         if (url_start == null) {
-            url_start = x;
+            url_start = 0; // URL 从行首开始
         }
 
         // 向后查找 URL 结束
@@ -151,14 +172,21 @@ pub const UrlDetector = struct {
             url_end = self.term.col;
         }
 
+        // 确保 URL 结束位置大于开始位置
+        if (url_end.? <= url_start.?) {
+            return error.NoUrlFound;
+        }
+
         // 提取 URL 字符
         const url_len = url_end.? - url_start.?;
         const url = try self.allocator.alloc(u8, url_len);
-        defer self.allocator.free(url);
+        errdefer self.allocator.free(url);
 
         for (0..url_len) |i| {
-            if (screen.?[y][url_start.? + i].u < 128) {
-                url[i] = @intCast(screen.?[y][url_start.? + i].u);
+            const u_value = screen.?[y][url_start.? + i].u;
+            // 只保留可打印的 ASCII 字符
+            if (u_value >= 32 and u_value < 127) {
+                url[i] = @intCast(u_value);
             } else {
                 url[i] = ' ';
             }
@@ -171,6 +199,9 @@ pub const UrlDetector = struct {
     pub fn openUrlAt(self: *UrlDetector, x: usize, y: usize) !void {
         const url = try self.getUrlAt(x, y);
         defer self.allocator.free(url);
+
+        // 调试：打印检测到的 URL
+        std.log.debug("Detected URL at ({}, {}): '{s}' (len={})", .{ x, y, url, url.len });
 
         // 移除可能的控制字符
         const len: usize = url.len;

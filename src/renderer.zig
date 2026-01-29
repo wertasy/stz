@@ -604,12 +604,11 @@ pub const Renderer = struct {
             // 脏标记检查逻辑优化：
             // 只有在非滚动查看状态且没有活动的文本选择时，才通过脏标记跳过渲染。
             // 在备用屏幕 (vi/btop) 下，脏标记仍然是有效的，因为 Parser 同样会正确设置 dirty 标志。
-            // DEBUG: 暂时禁用脏标记检查，强制重绘以排查显示问题
-            // if (term.scr == 0 and term.selection.mode == .idle) {
-            //     if (term.dirty) |dirty| {
-            //         if (y < dirty.len and !dirty[y]) continue;
-            //     }
-            // }
+            if (term.scroll == 0 and term.selection.mode == .idle) {
+                if (term.dirty) |dirty| {
+                    if (y < dirty.len and !dirty[y]) continue;
+                }
+            }
 
             // Update dirty range
             if (min_y == null) min_y = y;

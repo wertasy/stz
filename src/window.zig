@@ -269,7 +269,7 @@ pub const Window = struct {
     pub fn present(self: *Window) void {
         if (self.buf != 0) {
             _ = x11.c.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
-            _ = x11.c.XSync(self.dpy, x11.c.False); // Or XFlush
+            _ = x11.c.XFlush(self.dpy);
         }
     }
 
@@ -278,7 +278,7 @@ pub const Window = struct {
         if (self.buf != 0) {
             // st-style: always sync to ensure consistency
             _ = x11.c.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
-            _ = x11.c.XSync(self.dpy, x11.c.False);
+            _ = x11.c.XFlush(self.dpy);
         }
     }
 

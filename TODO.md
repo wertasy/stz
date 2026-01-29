@@ -1,102 +1,42 @@
 # stz 开发计划 (TODO)
 
-## 已完成功能
+## 核心待办事项 (High Priority)
 
-### 核心架构
-- [x] Zig build system (build.zig) 配置
-- [x] 模块化架构 (Terminal, Parser, Renderer, Window, PTY, Selection, Input)
-- [x] 核心数据类型定义 (Glyph, GlyphAttr, Mode, EscapeState)
+### 功能补全 (Gaps)
+- [ ] **响铃 (Bell)**: 实现 `XBell` 支持 (Visual/Audible bell)，处理 `Ctrl+G` (BEL)。
+- [ ] **字体缩放**: 实现 `ZoomIn` / `ZoomOut` / `ZoomReset` 逻辑。
+  - 快捷键已在 `config.zig` 定义 (Ctrl+Shift+PgUp/PgDn)，但 `main.zig` 未处理。
+- [ ] **透明度 (Transparency)**: 窗口透明度支持 (Alpha Channel)。
+  - `window.zig` 中需配置 32-bit visual。
+- [ ] **OSC 104 部分支持**: 目前 OSC 104 强制重置整个调色板，不支持按索引重置特定颜色。
 
-### X11 后端
-- [x] X11 窗口创建和事件循环
-- [x] 双缓冲渲染 (Pixmap)
-- [x] XIM/XIC 输入法集成 (支持中文输入)
-- [x] 窗口标题设置 (OSC 0/1/2)
-- [x] 窗口大小调整和 PTY resize 通知
+### 缺陷修复 (Bugs)
+- [ ] **Resize 闪烁**: 调整窗口大小时可能有短暂黑屏 (Known Issue)。
 
-### 终端模拟
-- [x] VT100/VT220 转义序列解析
-- [x] CSI 序列处理 (光标移动、清屏、颜色设置)
-- [x] CSI 冒号子参数解析 (用于 SGR 扩展颜色)
-- [x] OSC 序列处理 (窗口标题、调色板)
-- [x] 私有模式处理 (DECSET/DECRST)
-- [x] 字符集切换 (G0-G3, SI/SO)
-- [x] 控制字符处理 (BS, CR, LF, HT, BEL)
-- [x] 备用屏幕切换 (TUI 程序支持)
-- [x] 滚动区域管理
+### 测试与质量
+- [ ] 增加单元测试覆盖率 (Parser, Terminal 逻辑)。
+- [ ] 完善错误处理和日志 (消除 `catch unreachable` 或未处理的 `void` 返回)。
 
-### 字符渲染
-- [x] Xft/FreeType 字体渲染
-- [x] UTF-8 编解码
-- [x] 宽字符 (CJK) 支持
-- [x] 字体回退机制 (Fallback)
-- [x] 粗体/斜体/下划线/删除线样式
-- [x] 反色显示
-- [x] TrueColor (24 位真彩色)
-- [x] 256 色调色板
-- [x] Box Drawing 字符手动绘制 (单线、双线、重线、Braille)
-- [x] HarfBuzz 连字支持
+## 已完成功能 (Completed Features)
 
-### 光标
-- [x] 多种光标样式 (Block, Underline, Bar, Hollow)
-- [x] 光标闪烁
-- [x] 文本闪烁属性
-- [x] 焦点状态处理
+> 核心功能已稳定，可满足日常使用。
 
-### 键盘输入
-- [x] 普通字符输入
-- [x] 功能键映射 (F1-F12, Home, End, PageUp, PageDown)
-- [x] 组合键支持 (Ctrl/Alt/Shift + Key)
-- [x] Application Keypad/Cursor 模式
-- [x] 括号粘贴模式
+### 终端核心
+- [x] **VT100/VT220 兼容**: 完整支持 ANSI 转义序列、光标移动、SGR 属性。
+- [x] **UTF-8 / CJK**: 完美支持多字节字符、宽字符渲染、G0-G3 字符集切换。
+- [x] **TrueColor**: 24位真彩色支持 (SGR 38/48;2)。
+- [x] **Box Drawing**: 内置手动绘制逻辑，不依赖字体即可完美绘制制表符。
 
-### 鼠标支持
-- [x] 鼠标点击报告 (X10, URXVT, SGR 1006)
-- [x] 鼠标滚轮滚动
-- [x] 鼠标拖拽选择
+### 交互体验
+- [x] **输入法 (IME)**: XIM/XIC 集成，支持 fcitx5 等中文输入法。
+- [x] **鼠标支持**: 点击、滚动、SGR 1006 扩展模式。
+- [x] **文本选择**: 双击选词、三击选行、自动吸附、跨行选择。
+- [x] **剪贴板**: 支持 PRIMARY (选中即复制) 和 CLIPBOARD (Ctrl+Shift+C/V)。
+- [x] **URL 检测**: 自动识别 URL，Ctrl+点击 打开。
 
-### 文本选择
-- [x] 鼠标拖选文本
-- [x] 双击选词 (Word Snap)
-- [x] 三击选行 (Line Snap)
-- [x] X11 PRIMARY Selection
-- [x] X11 CLIPBOARD Selection
-- [x] 中键粘贴
-- [x] Ctrl+Shift+V 粘贴
-
-### 滚动
-- [x] 滚动缓冲区 (Scrollback)
-- [x] Shift+PgUp/PgDn 查看历史
-- [x] 鼠标滚轮滚动历史
-
-### 其他功能
-- [x] URL 自动检测 (http://, https://, ftp://)
-- [x] Ctrl+点击打开 URL (xdg-open)
-- [x] 打印屏幕内容 (Shift+Print)
-- [x] 打印选择内容 (Print)
-- [x] 切换自动打印模式 (Ctrl+Print)
-- [x] OSC 52 剪贴板 (远程复制到本地剪贴板)
-
-## 待完善 / 技术债
-
-### 功能差距
-- [ ] **OSC 104 颜色重置**: 目前强制重置整个调色板，不支持按索引重置特定颜色
-- [ ] **字体缩放**: config.zig 已定义快捷键 (Ctrl+Shift+PgUp/PgDn)，但功能未实现
-
-### 性能优化
-- [x] **渲染脏行优化**: 重新启用 dirty 标记检查，避免每一帧全屏重绘 (Renderer)
-- [x] **X11 同步优化**: 将热路径(present)中的 XSync 替换为 XFlush，减少阻塞
-- [x] **URL 检测优化**: 避免在处理 PTY 数据的主循环中频繁触发正则扫描，改为空闲/节流触发
-- [x] **渲染内存分配**: 优化波浪线绘制等热路径的堆内存分配 (Renderer)
-- [x] **字体回退缓存**: 缓存字符到字体的映射，减少 XftCharExists 和 FcFontMatch 调用
-
-### 高级特性
-- [ ] **透明度**: X11 Alpha 通道支持 (window.zig 有 TODO 注释)
-
-### 代码质量
-- [ ] 增加单元测试覆盖率
-- [ ] 完善错误处理和日志
-
-## 已知问题
-
-1. **Resize 闪烁**: 调整窗口大小时可能有短暂黑屏
+### 性能与架构
+- [x] **双缓冲 (Double Buffering)**: 使用 Pixmap 彻底解决渲染撕裂。
+- [x] **渲染优化**: 脏行检测 (Dirty rects)、XFlush 替代 XSync、Glyph 缓存。
+- [x] **模块化**: 清晰分离 Parser, Terminal, Renderer, Window, PTY 模块。
+- [x] **HarfBuzz**: 集成文本整形库，支持连字 (Ligatures)。
+- [x] **打印/导出**: 支持屏幕内容导出 (Printer)。

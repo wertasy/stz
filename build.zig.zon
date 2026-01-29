@@ -1,0 +1,30 @@
+.{
+    .name = .stz,
+    .fingerprint = 0x52752bcb6bd2524a,
+    // 版本号应遵循 Semantic Versioning (语义化版本)
+    // 建议与 TODO.md 或发布计划保持同步
+    .version = "0.1.0",
+
+    // 最低支持的 Zig 版本
+    .minimum_zig_version = "0.15.2",
+
+    // 项目依赖项
+    // 目前 stz 依赖系统 C 库 (X11 等)，不依赖外部 Zig 包，因此此处为空。
+    // 如果未来需要引入 Zig 库，可在此处添加，例如：
+    // .dependencies = .{
+    //     .zap = .{
+    //         .url = "https://github.com/zigzap/zap/archive/refs/tags/v0.8.0.tar.gz",
+    //         .hash = "..."
+    //     },
+    // },
+    .dependencies = .{},
+
+    // 指定哪些文件包含在包中（如果是库项目，这很重要；对于应用项目，这有助于源码分发）
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        // "LICENSE",
+        // "README.md",
+    },
+}

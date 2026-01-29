@@ -117,6 +117,8 @@ const Input = @import("input.zig").Input;
 const Selector = @import("selection.zig").Selector;
 const UrlDetector = @import("url.zig").UrlDetector;
 const Printer = @import("printer.zig").Printer;
+const Args = @import("args.zig").Args;
+const runtime_config = @import("runtime_config.zig");
 const config = @import("config.zig");
 const types = @import("types.zig");
 const c_locale = @cImport({
@@ -155,12 +157,131 @@ pub fn main() !u8 {
     _ = c_locale.setlocale(c_locale.LC_CTYPE, "");
 
     // ========== 解析命令行参数 ==========
-    //
-    // 当前实现：从配置文件读取行列数
-    // 未来扩展：可以添加命令行参数支持（如 --cols 120 --rows 35）
-    const cols = config.window.cols;
-    const rows = config.window.rows;
-    const shell_path = config.shell;
+    var args = Args.init(allocator);
+    defer args.deinit();
+
+    // 获取命令行参数
+    var args_iter = try std.process.argsWithAllocator(allocator);
+    defer args_iter.deinit();
+
+    // 跳过程序名
+    _ = args_iter.next();
+
+    // 将参数复制到数组中
+    var args_list = std.ArrayList([:0]const u8).initCapacity(allocator, 0) catch unreachable;
+    defer {
+        for (args_list.items) |arg| {
+            allocator.free(arg);
+        }
+        args_list.deinit(allocator);
+    }
+
+    while (args_iter.next()) |arg| {
+        const arg_dup = try allocator.dupeZ(u8, arg);
+        try args_list.append(allocator, arg_dup);
+    }
+
+    const argv = args_list.items;
+
+    // 解析参数
+    args.parse(argv) catch |err| {
+        switch (err) {
+            error.MissingArgument => {
+                std.debug.print("错误: 选项缺少参数\n", .{});
+            },
+            error.UnknownOption => {
+                std.debug.print("错误: 未知的选项\n", .{});
+            },
+            error.InvalidGeometry => {
+                std.debug.print("错误: 无效的几何尺寸格式 (应为 colsxrows)\n", .{});
+            },
+            else => {
+                std.debug.print("错误: {}\n", .{err});
+            },
+        }
+        const help_text =
+            \\用法: stz [选项]
+            \\
+            \\选项:
+            \\  -a              禁用备用屏幕
+            \\  -c class        设置窗口类 (X11 资源类)
+            \\  -e command [args] 执行指定命令
+            \\  -f font         设置字体 (FontConfig 格式)
+            \\  -g geometry     设置窗口几何尺寸 (colsxrows, 如 120x35)
+            \\  -h, --help      显示此帮助信息
+            \\  -i              固定窗口大小
+            \\  -l line         指定终端行号
+            \\  -n name         设置窗口名称 (X11 资源名)
+            \\  -o file         指定 I/O 文件
+            \\  -T title        设置窗口标题
+            \\  -t title        设置窗口标题 (同 -T)
+            \\  -v              显示版本号
+            \\  -w windowid     嵌入到指定窗口 ID
+            \\
+        ;
+        std.debug.print("{s}", .{help_text});
+        return 1;
+    };
+
+    // 处理帮助和版本请求
+    if (args.show_help) {
+        const help_text =
+            \\用法: stz [选项]
+            \\
+            \\选项:
+            \\  -a              禁用备用屏幕
+            \\  -c class        设置窗口类 (X11 资源类)
+            \\  -e command [args] 执行指定命令
+            \\  -f font         设置字体 (FontConfig 格式)
+            \\  -g geometry     设置窗口几何尺寸 (colsxrows, 如 120x35)
+            \\  -h, --help      显示此帮助信息
+            \\  -i              固定窗口大小
+            \\  -l line         指定终端行号
+            \\  -n name         设置窗口名称 (X11 资源名)
+            \\  -o file         指定 I/O 文件
+            \\  -T title        设置窗口标题
+            \\  -t title        设置窗口标题 (同 -T)
+            \\  -v              显示版本号
+            \\  -w windowid     嵌入到指定窗口 ID
+            \\
+        ;
+        std.debug.print("{s}", .{help_text});
+        return 0;
+    }
+
+    if (args.show_version) {
+        std.debug.print("stz 0.1.0\n", .{});
+        return 0;
+    }
+
+    // 获取配置值（命令行参数优先）
+    const cols = args.getCols(config.window.cols);
+    const rows = args.getRows(config.window.rows);
+
+    // 应用命令行配置
+    runtime_config.allow_altscreen = args.allow_altscreen;
+
+    // 构建命令行
+    var shell_path: ?[:0]const u8 = config.shell;
+
+    // 创建命令行参数列表（以 null 结尾的字符串）
+    var shell_cmd_args_list = std.ArrayList([:0]const u8).initCapacity(allocator, 0) catch unreachable;
+    defer {
+        for (shell_cmd_args_list.items) |arg| {
+            allocator.free(arg);
+        }
+        shell_cmd_args_list.deinit(allocator);
+    }
+
+    if (args.shell_cmd) |cmd| {
+        shell_path = cmd;
+        for (args.shell_args.items) |arg| {
+            const arg_dup = try allocator.dupeZ(u8, arg);
+            try shell_cmd_args_list.append(allocator, arg_dup);
+        }
+    }
+
+    const shell_cmd_args: []const [:0]const u8 = shell_cmd_args_list.items;
 
     std.log.info("stz - Zig 终端模拟器 v0.1.0", .{});
     std.log.info("配置尺寸: {d}x{d}", .{ cols, rows });
@@ -172,7 +293,8 @@ pub fn main() !u8 {
     // 1. 连接到 X11 服务器
     // 2. 创建窗口（使用默认大小）
     // 3. 设置输入法上下文（IC，用于中文输入）
-    var window = try Window.init("stz", cols, rows, allocator);
+    const window_title = if (args.title) |t| t else "stz";
+    var window = try Window.init(window_title, cols, rows, allocator);
     defer window.deinit();
 
     // ========== 初始化渲染器 ==========
@@ -269,7 +391,7 @@ pub fn main() !u8 {
     // 注意：此时使用配置的行列数初始化。
     // 如果窗口管理器不遵守我们请求的大小，
     // 后续的 ConfigureNotify 事件会修正 PTY 大小。
-    var pty = try PTY.init(shell_path, cols, rows);
+    var pty = try PTY.initWithArgs(shell_path, cols, rows, shell_cmd_args);
     defer pty.close();
 
     // ========== 初始化终端 ==========

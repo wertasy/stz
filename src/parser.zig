@@ -113,6 +113,7 @@
 const std = @import("std");
 const types = @import("types.zig");
 const config = @import("config.zig");
+const runtime_config = @import("runtime_config.zig");
 const terminal = @import("terminal.zig");
 
 const Glyph = types.Glyph;
@@ -1070,7 +1071,7 @@ pub const Parser = struct {
             2004 => self.term.mode.brckt_paste = set,
             2026 => self.term.mode.sync_update = set,
             47, 1047 => {
-                if (self.term.alt_screen != null) {
+                if (runtime_config.allow_altscreen and self.term.alt_screen != null) {
                     const alt = self.term.mode.alt_screen;
                     if (alt) {
                         try self.term.clearScreen(2);
@@ -1085,40 +1086,42 @@ pub const Parser = struct {
             },
             1048 => try self.cursorSaveRestore(if (set) .save else .load),
             1049 => {
-                if (set) {
-                    try self.cursorSaveRestore(.save);
-                    if (self.term.alt_screen != null and !self.term.mode.alt_screen) {
-                        // 进入备用屏幕时，虽然 st 是在退出时清除，但为了稳健性，
-                        // 我们在进入时也确保清除（防止上次异常退出残留）
-                        if (self.term.alt_screen) |alt| {
-                            var g = self.term.c.attr;
-                            g.u = ' ';
-                            g.fg = config.colors.default_foreground_idx;
-                            g.bg = config.colors.default_background_idx;
-                            g.attr = .{};
-                            for (alt) |l| {
-                                for (l) |*cell| {
-                                    cell.* = g;
+                if (runtime_config.allow_altscreen) {
+                    if (set) {
+                        try self.cursorSaveRestore(.save);
+                        if (self.term.alt_screen != null and !self.term.mode.alt_screen) {
+                            // 进入备用屏幕时，虽然 st 是在退出时清除，但为了稳健性，
+                            // 我们在进入时也确保清除（防止上次异常退出残留）
+                            if (self.term.alt_screen) |alt| {
+                                var g = self.term.c.attr;
+                                g.u = ' ';
+                                g.fg = config.colors.default_foreground_idx;
+                                g.bg = config.colors.default_background_idx;
+                                g.attr = .{};
+                                for (alt) |l| {
+                                    for (l) |*cell| {
+                                        cell.* = g;
+                                    }
                                 }
                             }
+                            // 重置滚动区域 (st 对齐: treset)
+                            self.term.top = 0;
+                            self.term.bot = self.term.row - 1;
+
+                            try self.term.swapScreen();
+                            // 移除 moveTo(0, 0)，与 st 保持一致，光标位置由应用控制
                         }
-                        // 重置滚动区域 (st 对齐: treset)
-                        self.term.top = 0;
-                        self.term.bot = self.term.row - 1;
+                    } else {
+                        if (self.term.alt_screen != null and self.term.mode.alt_screen) {
+                            try self.term.clearScreen(2); // 退出前清除备用屏幕 (匹配 st 行为)
+                            try self.term.swapScreen();
 
-                        try self.term.swapScreen();
-                        // 移除 moveTo(0, 0)，与 st 保持一致，光标位置由应用控制
-                    }
-                } else {
-                    if (self.term.alt_screen != null and self.term.mode.alt_screen) {
-                        try self.term.clearScreen(2); // 退出前清除备用屏幕 (匹配 st 行为)
-                        try self.term.swapScreen();
+                            // 重置滚动区域 (st 对齐)
+                            self.term.top = 0;
+                            self.term.bot = self.term.row - 1;
 
-                        // 重置滚动区域 (st 对齐)
-                        self.term.top = 0;
-                        self.term.bot = self.term.row - 1;
-
-                        try self.cursorSaveRestore(.load);
+                            try self.cursorSaveRestore(.load);
+                        }
                     }
                 }
             },

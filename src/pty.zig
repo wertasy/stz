@@ -62,6 +62,11 @@ pub const PTY = struct {
 
     /// 初始化伪终端
     pub fn init(shell: ?[:0]const u8, cols: usize, rows: usize) !PTY {
+        return initWithArgs(shell, cols, rows, &[_][:0]const u8{});
+    }
+
+    /// 初始化伪终端（支持命令行参数）
+    pub fn initWithArgs(shell: ?[:0]const u8, cols: usize, rows: usize, shell_args: []const [:0]const u8) !PTY {
         var pty = PTY{
             .cols = cols,
             .rows = rows,
@@ -87,7 +92,7 @@ pub const PTY = struct {
 
         if (pid == 0) {
             // 子进程
-            try pty.runChild(shell);
+            try pty.runChild(shell, shell_args);
         } else {
             // 父进程
             pty.pid = pid;
@@ -101,7 +106,7 @@ pub const PTY = struct {
     }
 
     /// 运行子进程
-    fn runChild(self: *PTY, shell: ?[:0]const u8) !void {
+    fn runChild(self: *PTY, shell: ?[:0]const u8, shell_args: []const []const u8) !void {
         // 设置会话 ID
         const sid = c.setsid();
         if (sid < 0) return error.ForkFailed;
@@ -154,10 +159,17 @@ pub const PTY = struct {
             shell_path = std.mem.span(pw.*.pw_shell);
         }
 
-        // 准备参数
-        const argv = [_]?[*:0]const u8{ shell_path, null };
+        // 准备参数：第一个参数是命令本身
+        var argv_list = std.ArrayList(?[*:0]const u8).initCapacity(std.heap.page_allocator, 8) catch unreachable;
+        defer argv_list.deinit(std.heap.page_allocator);
 
-        _ = c.execvp(shell_path, @ptrCast(&argv));
+        try argv_list.append(std.heap.page_allocator, shell_path.ptr);
+        for (shell_args) |arg| {
+            try argv_list.append(std.heap.page_allocator, @ptrCast(arg.ptr));
+        }
+        try argv_list.append(std.heap.page_allocator, null);
+
+        _ = c.execvp(shell_path, @ptrCast(argv_list.items.ptr));
 
         // 如果 execvp 失败
         std.log.err("execvp failed for {s}: {d}", .{ shell_path, std.posix.errno(0) });

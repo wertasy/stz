@@ -98,6 +98,10 @@ pub const Renderer = struct {
     // HarfBuzz transform data for ligatures
     hb_data: x11.HbTransformData,
 
+    // Font cache: (u21 << 16 | u16) -> *XftFont
+    // Caches which font is used for a specific character and attribute combination
+    font_cache: std.AutoHashMap(u64, *x11.c.XftFont),
+
     pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
         // Initialize buffer in window if not already
         window.resizeBuffer(window.width, window.height);
@@ -278,6 +282,7 @@ pub const Renderer = struct {
             .truecolor_cache = std.AutoArrayHashMap(u32, x11.c.XftColor).init(allocator),
             .specs_buffer = specs_buffer,
             .hb_data = .{ .buffer = null, .glyphs = null, .positions = null, .count = 0 },
+            .font_cache = std.AutoHashMap(u64, *x11.c.XftFont).init(allocator),
         };
     }
 
@@ -371,6 +376,9 @@ pub const Renderer = struct {
         // Update window metrics
         self.window.cell_width = self.char_width;
         self.window.cell_height = self.char_height;
+
+        // Clear font cache as old fonts are closed
+        self.font_cache.clearRetainingCapacity();
     }
 
     pub fn deinit(self: *Renderer) void {
@@ -400,6 +408,7 @@ pub const Renderer = struct {
         // 清理 HarfBuzz 数据和缓存
         x11.hbcleanup(&self.hb_data);
         x11.deinitHbCache();
+        self.font_cache.deinit();
     }
 
     fn getColor(self: *Renderer, term: *Terminal, index: u32) !x11.c.XftColor {
@@ -490,6 +499,12 @@ pub const Renderer = struct {
     }
 
     fn getFontForGlyph(self: *Renderer, u: u21, attr: types.GlyphAttr) *x11.c.XftFont {
+        // Check cache first
+        const key = (@as(u64, u) << 16) | @as(u16, @bitCast(attr));
+        if (self.font_cache.get(key)) |cached_font| {
+            return cached_font;
+        }
+
         var f = self.font;
         const use_bold = attr.bold and !config.draw.disable_bold_font;
 
@@ -507,11 +522,13 @@ pub const Renderer = struct {
         // }
 
         if (x11.c.XftCharExists(self.window.dpy, f, u) != 0) {
+            self.font_cache.put(key, f) catch {};
             return f;
         }
 
         for (self.fallbacks.items) |fb| {
             if (x11.c.XftCharExists(self.window.dpy, fb, u) != 0) {
+                self.font_cache.put(key, fb) catch {};
                 return fb;
             }
         }
@@ -519,14 +536,23 @@ pub const Renderer = struct {
         // Dynamic fallback via FontConfig
         const fc_charset = x11.c.FcCharSetCreate();
         defer x11.c.FcCharSetDestroy(fc_charset);
-        if (x11.c.FcCharSetAddChar(fc_charset, u) == 0) return f;
+        if (x11.c.FcCharSetAddChar(fc_charset, u) == 0) {
+            self.font_cache.put(key, f) catch {};
+            return f;
+        }
 
         const pattern = x11.c.FcPatternDuplicate(self.font.pattern);
-        if (pattern == null) return f;
+        if (pattern == null) {
+            self.font_cache.put(key, f) catch {};
+            return f;
+        }
         defer x11.c.FcPatternDestroy(pattern);
 
         _ = x11.c.FcPatternDel(pattern, x11.c.FC_CHARSET);
-        if (x11.c.FcPatternAddCharSet(pattern, x11.c.FC_CHARSET, fc_charset) == 0) return f;
+        if (x11.c.FcPatternAddCharSet(pattern, x11.c.FC_CHARSET, fc_charset) == 0) {
+            self.font_cache.put(key, f) catch {};
+            return f;
+        }
 
         // Add style attributes
         if (attr.italic) {
@@ -550,8 +576,10 @@ pub const Renderer = struct {
                 if (x11.c.XftCharExists(self.window.dpy, new_font, u) != 0) {
                     self.fallbacks.append(self.allocator, new_font) catch {
                         x11.c.XftFontClose(self.window.dpy, new_font);
+                        self.font_cache.put(key, f) catch {};
                         return f;
                     };
+                    self.font_cache.put(key, new_font) catch {};
                     return new_font;
                 }
                 x11.c.XftFontClose(self.window.dpy, new_font);
@@ -560,6 +588,7 @@ pub const Renderer = struct {
             }
         }
 
+        self.font_cache.put(key, f) catch {};
         return f;
     }
 
@@ -1308,9 +1337,20 @@ pub const Renderer = struct {
             const num_waves = @divTrunc(width, wave_width) + 2;
             const num_points = @as(usize, @intCast(num_waves * 2));
 
-            // 分配点数组
-            var points = try term.allocator.alloc(x11.c.XPoint, num_points);
-            defer term.allocator.free(points);
+            // 使用栈内存优化：绝大多数情况使用固定缓冲区
+            // 2048 个点足以覆盖约 8000 像素宽度的波浪线 (假设波浪宽 8px)
+            var stack_points: [2048]x11.c.XPoint = undefined;
+            var heap_points: ?[]x11.c.XPoint = null;
+            defer if (heap_points) |ptr| term.allocator.free(ptr);
+
+            var points_slice: []x11.c.XPoint = undefined;
+
+            if (num_points <= stack_points.len) {
+                points_slice = stack_points[0..num_points];
+            } else {
+                heap_points = try term.allocator.alloc(x11.c.XPoint, num_points);
+                points_slice = heap_points.?;
+            }
 
             var point_idx: usize = 0;
             var current_x: i32 = hborder_x; // 从字符起始位置开始
@@ -1327,7 +1367,7 @@ pub const Renderer = struct {
                     wave_height; // 最低点
 
                 // 当前点
-                points[point_idx] = .{
+                points_slice[point_idx] = .{
                     .x = @as(c_short, @intCast(current_x)),
                     .y = @as(c_short, @intCast(underline_y + y_offset)),
                 };
@@ -1337,7 +1377,7 @@ pub const Renderer = struct {
                 current_x += wave_width;
                 if (current_x > end_x) current_x = end_x;
 
-                points[point_idx] = .{
+                points_slice[point_idx] = .{
                     .x = @as(c_short, @intCast(current_x)),
                     .y = @as(c_short, @intCast(underline_y + (wave_height - y_offset))), // 相反方向
                 };
@@ -1352,7 +1392,7 @@ pub const Renderer = struct {
                     self.window.dpy,
                     x11.c.XftDrawDrawable(self.draw),
                     gc,
-                    points.ptr,
+                    points_slice.ptr,
                     @intCast(point_idx),
                     x11.c.CoordModeOrigin,
                 );

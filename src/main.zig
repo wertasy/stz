@@ -387,6 +387,11 @@ pub fn main() !u8 {
     var last_render_time: i64 = std.time.milliTimestamp(); // 上次渲染时间
     var pending_render: bool = false; // 待渲染标志
 
+    // URL 检测节流
+    var last_url_check_time: i64 = 0;
+    var url_check_pending: bool = false;
+    const url_check_interval_ms: i64 = 500; // 500ms 节流
+
     // ========== 初始渲染 ==========
     //
     // 渲染初始屏幕（全空格），然后显示窗口。
@@ -971,6 +976,16 @@ pub fn main() !u8 {
         // 渲染检查: 如果有待处理的渲染请求且时间间隔已到，则渲染
         if (pending_render and (now - last_render_time >= min_frame_time_ms)) {
             if (!terminal.mode.sync_update) {
+                // 如果有待处理的 URL 检测且时间已到，先执行检测
+                if (url_check_pending and (now - last_url_check_time >= url_check_interval_ms)) {
+                    url_detector.clearHighlights();
+                    url_detector.highlightUrls() catch |err| {
+                        std.log.err("URL 高亮失败: {}", .{err});
+                    };
+                    last_url_check_time = now;
+                    url_check_pending = false;
+                }
+
                 const rect = try renderer.render(&terminal, &selector);
                 try renderer.renderCursor(&terminal);
 
@@ -1026,6 +1041,16 @@ pub fn main() !u8 {
             }
         }
 
+        // 如果有待处理的 URL 检测，确保我们在超时后唤醒
+        if (url_check_pending) {
+            const time_since = std.time.milliTimestamp() - last_url_check_time;
+            const remaining = url_check_interval_ms - time_since;
+            const wait_ms: i32 = if (remaining > 0) @intCast(remaining) else 0;
+            if (timeout_ms == -1 or wait_ms < timeout_ms) {
+                timeout_ms = wait_ms;
+            }
+        }
+
         // 2. Poll 等待新数据
         var fds = [_]std.posix.pollfd{
             .{
@@ -1070,12 +1095,7 @@ pub fn main() !u8 {
             if (n > 0) {
                 try parser.processBytes(read_buffer[0..n]);
                 pending_render = true;
-
-                // 更新 URL 高亮
-                url_detector.clearHighlights();
-                url_detector.highlightUrls() catch |err| {
-                    std.log.err("URL 高亮失败: {}", .{err});
-                };
+                url_check_pending = true;
 
                 // 更新窗口标题
                 if (term.window_title_dirty) {

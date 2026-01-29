@@ -69,7 +69,7 @@ pub const colors = struct {
         0xFD971F, // darkyellow     #FD971F
         0x266C98, // darkblue       #266C98
         0xcd00cd, // darkmagenta    #AC0CB1
-        0xAE81FF, // darkcyan       #AE81FF
+        0x56ADBC, // darkcyan       #56ADBC
         0xCCCCCC, // gray           #CCCCCC
     };
 
@@ -91,9 +91,9 @@ pub const colors = struct {
     pub const reverse_cursor_idx = 256 + 3;
 
     // 特殊颜色（RGB值）
-    pub const foreground = 0xFCFCFA; // default foreground  #FCFCFA
+    pub const foreground = 0xF8F8F2; // default foreground  #F8F8F2
     pub const background = 0x1B1D1E; // default background  #1B1D1E
-    pub const cursor = 0xCCCCCC; // cursor                  #CCCCCC
+    pub const cursor = 0xf8f8f0; // cursor                  #f8f8f0
     pub const cursor_text = 0x555555; // rev cursor         #555555
 };
 

@@ -136,10 +136,11 @@ pub const Glyph = struct {
     bg: u32 = config.colors.default_background_idx, // 背景色索引：默认背景色
     ustyle: i32 = -1, // 下划线样式：-1 表示使用默认样式
     ucolor: [3]i32 = [_]i32{ -1, -1, -1 }, // 下划线颜色 RGB：-1 表示使用默认颜色
+    url_id: u32 = 0, // OSC 8 URL ID (0 = none)
 
     // 比较两个字符的属性是否相同（st 对齐）
     pub fn attrsCmp(a: Glyph, b: Glyph) bool {
-        return a.attr.cmp(b.attr) or a.fg != b.fg or a.bg != b.bg;
+        return a.attr.cmp(b.attr) or a.fg != b.fg or a.bg != b.bg or a.url_id != b.url_id;
     }
 };
 

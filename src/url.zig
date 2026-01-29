@@ -124,7 +124,8 @@ pub const UrlDetector = struct {
         if (y >= screen.?.len) return false;
         if (x >= self.term.col) return false;
 
-        return screen.?[y][x].attr.url;
+        const glyph = screen.?[y][x];
+        return glyph.attr.url or glyph.url_id > 0;
     }
 
     /// 获取指定位置的 URL
@@ -133,6 +134,16 @@ pub const UrlDetector = struct {
         if (screen == null) return error.NoUrlFound;
         if (y >= screen.?.len) return error.NoUrlFound;
         if (x >= self.term.col) return error.NoUrlFound;
+
+        // 优先检查 OSC 8 URL
+        const glyph = screen.?[y][x];
+        if (glyph.url_id > 0) {
+            // ID 从 1 开始，所以索引是 ID - 1
+            if (glyph.url_id - 1 < self.term.url_store.items.len) {
+                const url = self.term.url_store.items[glyph.url_id - 1];
+                return try self.allocator.dupe(u8, url);
+            }
+        }
 
         // 查找 URL 的开始和结束
         var url_start: ?usize = null;

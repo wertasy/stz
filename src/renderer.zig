@@ -1265,7 +1265,7 @@ pub const Renderer = struct {
         }
 
         // 绘制下划线
-        if (base.attr.underline) {
+        if (base.attr.underline or base.url_id > 0) {
             const thickness = config.cursor.thickness;
             const underline_y = winy + self.ascent + 1;
 

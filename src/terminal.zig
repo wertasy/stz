@@ -239,6 +239,10 @@ pub const Terminal = struct {
     clipboard_data: ?[]u8 = null, // 剪贴板数据：OSC 52 设置的剪贴板内容
     clipboard_mask: u8 = 0, // 剪贴板掩码：Bit 0=CLIPBOARD, Bit 1=PRIMARY
 
+    // ========== URL Store (OSC 8) ==========
+    url_store: std.ArrayList([]const u8),
+    url_map: std.StringHashMap(u32),
+
     allocator: std.mem.Allocator,
     printer: ?*Printer = null,
 
@@ -247,6 +251,8 @@ pub const Terminal = struct {
         var term = Terminal{
             .allocator = allocator,
             .printer = null,
+            .url_store = try std.ArrayList([]const u8).initCapacity(allocator, 16),
+            .url_map = std.StringHashMap(u32).init(allocator),
         };
 
         // ========== 屏幕尺寸 ==========
@@ -355,6 +361,18 @@ pub const Terminal = struct {
         return term;
     }
 
+    /// Add URL to store and return ID (1-based)
+    pub fn addUrl(self: *Terminal, url: []const u8) !u32 {
+        if (self.url_map.get(url)) |id| {
+            return id;
+        }
+        const url_copy = try self.allocator.dupe(u8, url);
+        try self.url_store.append(self.allocator, url_copy);
+        const id = @as(u32, @intCast(self.url_store.items.len)); // 1-based ID (index 0 -> ID 1)
+        try self.url_map.put(url_copy, id);
+        return id;
+    }
+
     /// 清理终端资源
     pub fn deinit(self: *Terminal) void {
         const allocator = self.allocator;
@@ -395,6 +413,13 @@ pub const Terminal = struct {
         if (self.clipboard_data) |data| {
             allocator.free(data);
         }
+
+        // Clean up URL store
+        for (self.url_store.items) |url| {
+            allocator.free(url);
+        }
+        self.url_store.deinit(allocator);
+        self.url_map.deinit();
 
         self.screen = null;
         self.alt_screen = null;
@@ -608,6 +633,7 @@ pub const Terminal = struct {
                     .attr = glyph_attr,
                     .fg = self.c.attr.fg,
                     .bg = self.c.attr.bg,
+                    .url_id = self.c.attr.url_id,
                 };
             }
 

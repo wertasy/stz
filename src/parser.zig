@@ -1160,10 +1160,28 @@ pub const Parser = struct {
                 }
                 self.term.window_title_dirty = true;
             },
-            // OSC 21: 报告窗口标题（作为响应，不处理）
-            // Format: OSC 21 ; BEL (返回当前标题)
-            21 => {},
-            8 => {}, // OSC 8: 超链接（Hyperlinks）- 当前未实现
+            // OSC 8: 超链接（Hyperlinks）
+            // Format: OSC 8 ; params ; url ST
+            // params: key=value 键值对，可选
+            // url: URL 字符串。如果为空，表示结束超链接。
+            8 => {
+                if (self.str.narg >= 3) {
+                    const url_part = self.str.args[2];
+                    if (url_part.len > 0) {
+                        const id = self.term.addUrl(url_part) catch |err| {
+                            std.log.err("Failed to add URL: {}", .{err});
+                            return;
+                        };
+                        self.term.c.attr.url_id = id;
+                    } else {
+                        // Empty URL means end of hyperlink
+                        self.term.c.attr.url_id = 0;
+                    }
+                } else if (self.str.narg == 2) {
+                    // OSC 8 ; ; ST (Close link)
+                    self.term.c.attr.url_id = 0;
+                }
+            },
             10 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
                 self.term.default_fg = c;
             },

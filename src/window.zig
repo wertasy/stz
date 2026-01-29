@@ -244,11 +244,17 @@ pub const Window = struct {
     pub fn resizeBuffer(self: *Window, w: u32, h: u32) void {
         if (self.buf != 0 and self.buf_w == w and self.buf_h == h) return;
 
+        const new_buf = x11.c.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.c.XDefaultDepth(self.dpy, self.screen)));
+        if (new_buf == 0) {
+            std.log.err("Failed to create new pixmap for resize", .{});
+            return;
+        }
+
         if (self.buf != 0) {
             _ = x11.c.XFreePixmap(self.dpy, self.buf);
         }
 
-        self.buf = x11.c.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.c.XDefaultDepth(self.dpy, self.screen)));
+        self.buf = new_buf;
         self.buf_w = w;
         self.buf_h = h;
     }

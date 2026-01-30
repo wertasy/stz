@@ -50,44 +50,51 @@ pub fn build(b: *std.Build) void {
     run_step.dependOn(&run_cmd.step);
 
     // 测试步骤
-    const unit_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/stz/parser_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "stz", .module = mod },
-            },
-        }),
-    });
-    unit_tests.linkLibC();
-    unit_tests.linkSystemLibrary("X11");
-    unit_tests.linkSystemLibrary("Xft");
-    unit_tests.linkSystemLibrary("fontconfig");
-    unit_tests.linkSystemLibrary("freetype");
-    unit_tests.linkSystemLibrary("harfbuzz");
+    const test_step = b.step("test", "Run all unit tests");
 
-    const run_unit_tests = b.addRunArtifact(unit_tests);
+    // 自动发现 tests 目录下的所有测试文件
+    const tests_dir_path = "tests";
+    var tests_dir = std.fs.cwd().openDir(tests_dir_path, .{ .iterate = true }) catch |err| {
+        // 如果目录不存在，打印警告但不要崩溃
+        std.debug.print("Warning: tests directory not found: {}\n", .{err});
+        return;
+    };
+    defer tests_dir.close();
 
-    const selection_tests = b.addTest(.{
-        .root_module = b.createModule(.{
-            .root_source_file = b.path("src/stz/selection_test.zig"),
-            .target = target,
-            .optimize = optimize,
-            .imports = &.{
-                .{ .name = "stz", .module = mod },
-            },
-        }),
-    });
-    selection_tests.linkLibC();
-    selection_tests.linkSystemLibrary("X11");
-    selection_tests.linkSystemLibrary("Xft");
-    selection_tests.linkSystemLibrary("fontconfig");
-    selection_tests.linkSystemLibrary("freetype");
-    selection_tests.linkSystemLibrary("harfbuzz");
-    const run_selection_tests = b.addRunArtifact(selection_tests);
+    var walker = tests_dir.walk(b.allocator) catch |err| {
+        std.debug.print("Error walking tests directory: {}\n", .{err});
+        return;
+    };
+    defer walker.deinit();
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_unit_tests.step);
-    test_step.dependOn(&run_selection_tests.step);
+    while (walker.next() catch |err| {
+        std.debug.print("Error iterating tests directory: {}\n", .{err});
+        return;
+    }) |entry| {
+        if (entry.kind == .file and std.mem.endsWith(u8, entry.basename, ".zig")) {
+            const path = b.fmt("{s}/{s}", .{ tests_dir_path, entry.path });
+
+            const t = b.addTest(.{
+                .root_module = b.createModule(.{
+                    .root_source_file = b.path(path),
+                    .target = target,
+                    .optimize = optimize,
+                    .imports = &.{
+                        .{ .name = "stz", .module = mod },
+                    },
+                }),
+            });
+
+            // 链接依赖
+            t.linkLibC();
+            t.linkSystemLibrary("X11");
+            t.linkSystemLibrary("Xft");
+            t.linkSystemLibrary("fontconfig");
+            t.linkSystemLibrary("freetype");
+            t.linkSystemLibrary("harfbuzz");
+
+            const run_t = b.addRunArtifact(t);
+            test_step.dependOn(&run_t.step);
+        }
+    }
 }

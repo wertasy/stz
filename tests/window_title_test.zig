@@ -1,8 +1,8 @@
 const std = @import("std");
 const testing = std.testing;
 
-const Terminal = @import("../src/terminal.zig").Terminal;
-const Parser = @import("../src/parser.zig").Parser;
+const Terminal = @import("stz").Terminal;
+const Parser = @import("stz").Parser;
 
 test "窗口标题内存管理" {
     // 使用 GPA 检查内存泄漏
@@ -16,12 +16,12 @@ test "窗口标题内存管理" {
     try testing.expectEqualSlices(u8, "stz", terminal.window_title);
 
     // 创建解析器
-    var parser = try Parser.init(&terminal, gpa);
+    var parser = try Parser.init(&terminal, null, gpa);
     defer parser.deinit();
 
     // 模拟 OSC 2;测试标题 BEL
     const seq1 = "\x1B]2;测试标题\x07";
-    try parser.processBytes(seq1[0..]);
+    try parser.parseBytes(seq1[0..]);
 
     // 标题应该已更新
     try testing.expectEqualSlices(u8, "测试标题", terminal.window_title);
@@ -32,7 +32,7 @@ test "窗口标题内存管理" {
 
     // 模拟 OSC 2; (空字符串，重置标题)
     const seq2 = "\x1B]2;\x07";
-    try parser.processBytes(seq2[0..]);
+    try parser.parseBytes(seq2[0..]);
 
     // 标题应该已重置为 "stz"
     try testing.expectEqualSlices(u8, "stz", terminal.window_title);
@@ -42,7 +42,7 @@ test "窗口标题内存管理" {
     for (0..100) |i| {
         const seq = std.fmt.allocPrint(gpa, "\x1B]2;标题{d}\x07", .{i}) catch unreachable;
         defer gpa.free(seq);
-        try parser.processBytes(seq[0..]);
+        try parser.parseBytes(seq[0..]);
         terminal.window_title_dirty = false;
     }
 
@@ -58,18 +58,18 @@ test "OSC 0 和 OSC 1 也应该正确设置标题" {
     var terminal = try Terminal.init(24, 80, gpa);
     defer terminal.deinit();
 
-    var parser = try Parser.init(&terminal, gpa);
+    var parser = try Parser.init(&terminal, null, gpa);
     defer parser.deinit();
 
     // 测试 OSC 0 (窗口标题和图标标题)
-    try parser.processBytes("\x1B]0;OSC 0 标题\x07");
+    try parser.parseBytes("\x1B]0;OSC 0 标题\x07");
     try testing.expectEqualSlices(u8, "OSC 0 标题", terminal.window_title);
 
     // 测试 OSC 1 (图标标题)
-    try parser.processBytes("\x1B]1;OSC 1 标题\x07");
+    try parser.parseBytes("\x1B]1;OSC 1 标题\x07");
     try testing.expectEqualSlices(u8, "OSC 1 标题", terminal.window_title);
 
     // 测试 OSC 2 (窗口标题)
-    try parser.processBytes("\x1B]2;OSC 2 标题\x07");
+    try parser.parseBytes("\x1B]2;OSC 2 标题\x07");
     try testing.expectEqualSlices(u8, "OSC 2 标题", terminal.window_title);
 }

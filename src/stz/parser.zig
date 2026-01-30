@@ -1344,12 +1344,16 @@ fn strParse(self: *Parser) !void {
     self.str.narg = 0;
     if (self.str.len >= self.str.siz) return;
     self.str.buf[self.str.len] = 0;
-    while (self.str.narg < 16 and start < self.str.len) {
+    while (self.str.narg < 16) {
         const arg_start = start;
         while (start < self.str.len and self.str.buf[start] != 0 and self.str.buf[start] != ';') start += 1;
         self.str.args[self.str.narg] = self.str.buf[arg_start..start];
-        if (start < self.str.len and self.str.buf[start] == ';') start += 1;
         self.str.narg += 1;
+        if (start < self.str.len and self.str.buf[start] == ';') {
+            start += 1;
+        } else {
+            break;
+        }
     }
 }
 

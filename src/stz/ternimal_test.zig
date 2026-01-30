@@ -1,8 +1,9 @@
 //! Terminal 模块单元测试
 
 const std = @import("std");
-const types = @import("types.zig");
-const terminal = @import("terminal.zig");
+const stz = @import("stz");
+const types = stz.types;
+const terminal = stz.Terminal;
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;

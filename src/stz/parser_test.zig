@@ -1,13 +1,14 @@
 //! Parser 模块单元测试
 
 const std = @import("std");
+const stz = @import("stz");
 const libc = @cImport({
     @cInclude("locale.h");
 });
-const Terminal = @import("terminal.zig").Terminal;
-const Parser = @import("parser.zig").Parser;
-const types = @import("types.zig");
-const config = @import("config.zig");
+const Terminal = stz.Terminal;
+const Parser = stz.Parser;
+const types = stz.types;
+const config = stz.Config;
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
@@ -124,7 +125,7 @@ test "Wide character wrapping" {
     try expectEqual(@as(usize, 2), term.c.x);
     try expect(!term.c.state.wrap_next);
     // 字符应该被写入到下一行开头
-    try expectEqual(wide_char, term.screen.?[1][0].u);
+    try expectEqual(wide_char, term.screen.?[1][0].codepoint);
     // 且应该是 wide
     try expect(term.screen.?[1][0].attr.wide);
 }

@@ -38,10 +38,11 @@ rm -rf .zig-cache zig-out
 - **排序**：标准库 > 第三方库 > 本地模块，各组间空行分隔。
 ```zig
 const std = @import("std");
-const x11 = @import("x11.zig");
 
-const types = @import("types.zig");
-const terminal = @import("terminal.zig");
+const stz = @import("stz");
+const x11 = stz.x11;
+
+const Terminal = stz.Terminal;
 ```
 
 ### 2. 命名约定

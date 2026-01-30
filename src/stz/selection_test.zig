@@ -1,9 +1,10 @@
 //! Selection 模块单元测试
 
 const std = @import("std");
-const types = @import("types.zig");
-const selection = @import("selection.zig");
-const Terminal = @import("terminal.zig").Terminal;
+const stz = @import("stz");
+const types = stz.types;
+const selection = stz.Selector;
+const Terminal = stz.Terminal;
 
 const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
@@ -16,10 +17,10 @@ test "Selection word snap" {
     // 准备数据: "hello world test"
     const text = "hello world test";
     for (text, 0..) |c, i| {
-        term.screen.?[0][i].u = @intCast(c);
+        term.screen.?[0][i].codepoint = @intCast(c);
     }
 
-    var selector = selection.Selector.init(allocator);
+    var selector = selection.init(allocator);
     defer selector.deinit();
 
     // 在 "hello" 中间点击 (x=2)
@@ -45,7 +46,7 @@ test "Selection line snap" {
     var term = try Terminal.init(1, 20, allocator);
     defer term.deinit();
 
-    var selector = selection.Selector.init(allocator);
+    var selector = selection.init(allocator);
     defer selector.deinit();
 
     // 在中间点击并启用行吸附

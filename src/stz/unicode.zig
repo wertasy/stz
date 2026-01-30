@@ -52,6 +52,7 @@
 //! - 普通字符根据宽度（1列或2列）占用相应数量的单元格
 
 const std = @import("std");
+const stz = @import("stz");
 const utf8 = std.unicode;
 const libc = @cImport({
     @cDefine("_XOPEN_SOURCE", "700");

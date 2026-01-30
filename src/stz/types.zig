@@ -30,7 +30,8 @@
 //! - 所有 packed struct 与 C 语言的结构体位字段对齐
 
 const std = @import("std");
-const config = @import("config.zig");
+const stz = @import("stz");
+const config = stz.Config;
 
 /// 字符属性标志位
 ///
@@ -130,7 +131,7 @@ pub const GlyphAttr = packed struct(u16) {
 /// };
 /// ```
 pub const Glyph = struct {
-    u: u21 = ' ', // Unicode 码点：默认空格
+    codepoint: u21 = ' ', // Unicode 码点：默认空格
     attr: GlyphAttr = .{}, // 字符属性：默认无特殊样式
     fg: u32 = config.colors.default_foreground_idx, // 前景色索引：默认前景色
     bg: u32 = config.colors.default_background_idx, // 背景色索引：默认背景色
@@ -865,4 +866,4 @@ pub const STREscape = struct {
 /// └── 调色板
 ///     └── palette[256]: 颜色调色板
 /// ```
-pub const Term = @import("terminal.zig").Terminal;
+pub const Term = stz.Terminal;

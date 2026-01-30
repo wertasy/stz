@@ -1,0 +1,313 @@
+//! X11 窗口系统抽象层
+//!
+//! Window 模块负责创建和管理 X11 窗口，处理窗口事件。
+//!
+//! 核心功能：
+//! - 窗口创建和配置：创建 X11 窗口，设置属性、事件掩码、鼠标光标
+//! - 双缓冲管理：创建和管理 Pixmap（离屏缓冲区）
+//! - 窗口大小调整：响应 ConfigureNotify 事件，调整窗口和缓冲区大小
+//! - 事件轮询：使用 XNextEvent 或 XPending 获取窗口事件
+//! - 输入法支持：创建 XIM/XIC 上下文，支持中文输入法
+//! - 窗口标题：设置和更新窗口标题
+//! - 显示和刷新：显示窗口、将 Pixmap 复制到窗口
+//!
+//! 双缓冲机制：
+//! - Pixmap: 离屏缓冲区，所有绘图操作都在 Pixmap 上完成
+//! - buf_w, buf_h: Pixmap 的尺寸
+//! - renderer 渲染到 Pixmap
+//! - present() 或 presentPartial() 将 Pixmap 复制到窗口
+//! - 优点：避免闪烁、提高性能
+//!
+//! 窗口大小调整流程：
+//! 1. 用户调整窗口大小 → WM 发送 ConfigureNotify 事件
+//! 2. 计算新的行列数：cols = (width - 2*border) / cell_width
+//! 3. 调整 PTY 大小：pty.resize(new_cols, new_rows)
+//! 4. 调整终端大小：terminal.resize(new_rows, new_cols)
+//! 5. 调整 Pixmap 大小：resizeBuffer(new_width, new_height)
+//! 6. 重新渲染：renderer.render()
+//!
+//! 输入法支持 (XIM/XIC)：
+//! - XIM (Input Method): 输入法上下文，与输入法服务器通信
+//! - XIC (Input Context): 输入法上下文，处理特定窗口的输入
+//! - 支持中文输入法（如 fcitx、ibus）
+//! - 使用 Xutf8LookupString 获取输入的 UTF-8 字符
+//!
+//! 窗口属性：
+//! - 背景色、边框色、光标
+//! - 事件掩码：注册感兴趣的事件类型
+//! - 重力方向：窗口调整时的对齐方式
+//! - Colormap：颜色映射表
+//!
+//! 事件处理：
+//! - KeyPress/KeyRelease: 键盘输入
+//! - ButtonPress/ButtonRelease: 鼠标点击
+//! - MotionNotify: 鼠标移动
+//! - ConfigureNotify: 窗口大小调整
+//! - Expose: 窗口重绘
+//! - FocusIn/FocusOut: 焦点变化
+//! - SelectionRequest/Notify: 剪贴板
+//! - ClientMessage: 窗口管理器消息（如关闭窗口）
+
+const std = @import("std");
+const stz = @import("stz");
+
+const x11 = stz.c.x11;
+const x11_utils = stz.x11_utils;
+const config = stz.Config;
+
+pub const WindowError = error{
+    OpenDisplayFailed,
+    CreateColormapFailed,
+    CreateWindowFailed,
+    CreateGCFailed,
+};
+
+const Window = @This();
+
+dpy: *x11.Display,
+win: x11.Window,
+screen: i32,
+root: x11.Window,
+vis: *x11.Visual,
+cmap: x11.Colormap,
+gc: x11.GC,
+im: ?x11.XIM = null,
+ic: ?x11.XIC = null,
+cursor: x11.Cursor = 0,
+wm_delete_window: x11.Atom = 0,
+
+// Double buffering
+buf: x11.Pixmap = 0,
+buf_w: u32 = 0,
+buf_h: u32 = 0,
+
+// Dimensions
+width: u32,
+height: u32,
+cell_width: u32,
+cell_height: u32,
+cols: usize,
+rows: usize,
+
+// Dynamic borders for centering
+hborder_px: u32,
+vborder_px: u32,
+
+allocator: std.mem.Allocator,
+
+pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Allocator) !Window {
+    const dpy = x11.XOpenDisplay(null) orelse return error.OpenDisplayFailed;
+    const screen = x11.XDefaultScreen(dpy);
+    const root = x11.XRootWindow(dpy, screen);
+    const vis = x11.XDefaultVisual(dpy, screen);
+
+    // TODO: Try to find a visual with alpha channel support for transparency?
+    // For now use default
+
+    const cmap = x11.XCreateColormap(dpy, root, vis, x11.AllocNone);
+
+    // Calculate size using estimated cell dimensions
+    // Note: These will be updated by renderer.init() after font is loaded
+    const font_size = config.font.size;
+    // Conservative estimates to ensure window is large enough
+    // Actual font metrics will be loaded and cell_* will be updated
+    const cell_w = @max(@as(u32, font_size / 2), 1);
+    const cell_h = @as(u32, font_size);
+    const border = config.window.border_pixels;
+
+    const win_w = cols * cell_w + border * 2;
+    const win_h = rows * cell_h + border * 2;
+
+    // Set default mouse cursor (I-beam)
+    const mouse_cursor = x11.XCreateFontCursor(dpy, x11.XC_xterm);
+
+    var attrs: x11.XSetWindowAttributes = undefined;
+    attrs.background_pixel = 0; // Black
+    attrs.border_pixel = 0;
+    attrs.bit_gravity = x11.NorthWestGravity;
+    attrs.colormap = cmap;
+    attrs.cursor = mouse_cursor;
+    attrs.event_mask = x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask |
+        x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask |
+        x11.ExposureMask | x11.FocusChangeMask | x11.EnterWindowMask | x11.LeaveWindowMask;
+
+    const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWBitGravity | x11.CWEventMask | x11.CWColormap | x11.CWCursor, &attrs);
+
+    if (win == 0) return error.CreateWindowFailed;
+
+    // Apply cursor
+    if (mouse_cursor != 0) {
+        _ = x11.XDefineCursor(dpy, win, mouse_cursor);
+    }
+
+    // Set title
+    _ = x11.XStoreName(dpy, win, title);
+
+    // Create GC
+    const gc = x11.XCreateGC(dpy, win, 0, null);
+    if (gc == null) return error.CreateGCFailed;
+
+    // Initialize IME
+    _ = x11.XSetLocaleModifiers("");
+    const im = x11.XOpenIM(dpy, null, null, null);
+    var ic: ?x11.XIC = null;
+    if (im) |im_ptr| {
+        const spot = x11.XPoint{ .x = @intCast(border), .y = @intCast(border) };
+        const nested_list = x11.XVaCreateNestedList(0, x11.XNSpotLocation, &spot, @as(?*anyopaque, null)); // End of list for the spot location attributes
+
+        ic = x11.XCreateIC(im_ptr, x11.XNInputStyle, x11.XIMPreeditNothing | x11.XIMStatusNothing, x11.XNClientWindow, win, x11.XNFocusWindow, win, x11.XNPreeditAttributes, nested_list, @as(?*anyopaque, null)); // End of XCreateIC list
+
+        if (nested_list != null) {
+            _ = x11.XFree(nested_list);
+        }
+    } else {
+        std.log.warn("Failed to open X Input Method", .{});
+    }
+
+    // Setup WM_DELETE_WINDOW protocol
+    const wm_delete_window = x11_utils.getDeleteWindowAtom(dpy);
+    var protocols = [_]x11.Atom{wm_delete_window};
+    _ = x11.XSetWMProtocols(dpy, win, &protocols, protocols.len);
+
+    return Window{
+        .dpy = dpy,
+        .win = win,
+        .screen = screen,
+        .root = root,
+        .vis = vis,
+        .cmap = cmap,
+        .gc = gc,
+        .im = im,
+        .ic = ic,
+        .cursor = mouse_cursor,
+        .wm_delete_window = wm_delete_window,
+        .width = @intCast(win_w),
+        .height = @intCast(win_h),
+        .cell_width = @intCast(cell_w),
+        .cell_height = @intCast(cell_h),
+        .cols = cols,
+        .rows = rows,
+        .hborder_px = border,
+        .vborder_px = border,
+        .allocator = allocator,
+    };
+}
+
+pub fn updateImeSpot(self: *Window, cx: usize, cy: usize) void {
+    if (self.ic == null) return;
+
+    // 计算光标在窗口内的像素坐标 (相对于窗口)
+    const spot_x = @as(i16, @intCast(cx * self.cell_width + self.hborder_px));
+    const spot_y = @as(i16, @intCast(cy * self.cell_height + self.vborder_px));
+
+    const spot = x11.XPoint{ .x = spot_x, .y = spot_y };
+
+    const nested_list = x11.XVaCreateNestedList(0, x11.XNSpotLocation, &spot, @as(?*anyopaque, null));
+
+    if (nested_list != null) {
+        _ = x11.XSetICValues(self.ic.?, x11.XNPreeditAttributes, nested_list, @as(?*anyopaque, null));
+        _ = x11.XFree(nested_list);
+    }
+}
+
+pub fn deinit(self: *Window) void {
+    if (self.cursor != 0) {
+        _ = x11.XFreeCursor(self.dpy, self.cursor);
+    }
+    if (self.ic) |ic| {
+        _ = x11.XDestroyIC(ic);
+    }
+    if (self.im) |im| {
+        _ = x11.XCloseIM(im);
+    }
+    if (self.buf != 0) {
+        _ = x11.XFreePixmap(self.dpy, self.buf);
+    }
+    _ = x11.XFreeGC(self.dpy, self.gc);
+    _ = x11.XDestroyWindow(self.dpy, self.win);
+    _ = x11.XCloseDisplay(self.dpy);
+}
+
+pub fn show(self: *Window) void {
+    _ = x11.XMapWindow(self.dpy, self.win);
+    if (self.cursor != 0) {
+        _ = x11.XDefineCursor(self.dpy, self.win, self.cursor);
+    }
+    _ = x11.XSync(self.dpy, x11.False);
+}
+
+pub fn pollEvent(self: *Window) ?x11.XEvent {
+    if (x11.XPending(self.dpy) > 0) {
+        var event: x11.XEvent = undefined;
+        _ = x11.XNextEvent(self.dpy, &event);
+        return event;
+    }
+    return null;
+}
+
+pub fn resizeBuffer(self: *Window, w: u32, h: u32) void {
+    if (self.buf != 0 and self.buf_w == w and self.buf_h == h) return;
+
+    const new_buf = x11.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.XDefaultDepth(self.dpy, self.screen)));
+    if (new_buf == 0) {
+        std.log.err("Failed to create new pixmap for resize", .{});
+        return;
+    }
+
+    if (self.buf != 0) {
+        _ = x11.XFreePixmap(self.dpy, self.buf);
+    }
+
+    self.buf = new_buf;
+    self.buf_w = w;
+    self.buf_h = h;
+}
+
+// Clear buffer (fills with bg color)
+pub fn clear(self: *Window) void {
+    _ = self;
+    // This should probably be done via XftDrawRect in renderer
+}
+
+// Copy buffer to window
+pub fn present(self: *Window) void {
+    if (self.buf != 0) {
+        _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
+        _ = x11.XFlush(self.dpy);
+    }
+}
+
+// Copy partial buffer to window
+pub fn presentPartial(self: *Window, rect: x11.XRectangle) void {
+    if (self.buf != 0) {
+        // st-style: always sync to ensure consistency
+        _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
+        _ = x11.XFlush(self.dpy);
+    }
+}
+
+/// 设置窗口标题
+pub fn setTitle(self: *Window, title: [:0]const u8) void {
+    _ = x11.XStoreName(self.dpy, self.win, title);
+}
+
+/// 设置图标标题
+pub fn setIconTitle(self: *Window, title: [:0]const u8) void {
+    _ = x11.XSetIconName(self.dpy, self.win, title);
+}
+
+/// 调整窗口大小以匹配期望的行列数（在加载实际字体后调用）
+pub fn resizeToGrid(self: *Window, cols: usize, rows: usize) void {
+    // Note: st 在 xinit() 中计算窗口时不添加 border（因为 hborderpx/vborderpx = 0）
+    // 窗口管理器可能会稍后调整窗口，那时才在 cresize() 中计算实际的边框
+    // 因此这里也不添加 border * 2，与 st 的行为对齐
+    const new_w = @as(u32, @intCast(cols * self.cell_width));
+    const new_h = @as(u32, @intCast(rows * self.cell_height));
+
+    if (new_w != self.width or new_h != self.height) {
+        _ = x11.XResizeWindow(self.dpy, self.win, @intCast(new_w), @intCast(new_h));
+        self.width = new_w;
+        self.height = new_h;
+        _ = x11.XSync(self.dpy, x11.False);
+    }
+}

@@ -4,11 +4,30 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    // 创建 stz module
+    const mod = b.createModule(.{
+        .root_source_file = b.path("src/stz/mod.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+
+    // 链接 X11 和相关库
+    mod.addImport("stz", mod);
+    mod.linkSystemLibrary("X11", .{});
+    mod.linkSystemLibrary("Xft", .{});
+    mod.linkSystemLibrary("fontconfig", .{});
+    mod.linkSystemLibrary("harfbuzz", .{});
+
     // 创建 root module
     const root_module = b.createModule(.{
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
+        .imports = &.{
+            .{ .name = "stz", .module = mod },
+        },
     });
 
     // 创建可执行文件
@@ -16,14 +35,6 @@ pub fn build(b: *std.Build) void {
         .name = "stz",
         .root_module = root_module,
     });
-
-    // 链接 X11 和相关库
-    exe.linkLibC();
-    exe.linkSystemLibrary("X11");
-    exe.linkSystemLibrary("Xft");
-    exe.linkSystemLibrary("fontconfig");
-    exe.linkSystemLibrary("freetype");
-    exe.linkSystemLibrary("harfbuzz");
 
     b.installArtifact(exe);
 
@@ -41,9 +52,12 @@ pub fn build(b: *std.Build) void {
     // 测试步骤
     const unit_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/parser_test.zig"),
+            .root_source_file = b.path("src/stz/parser_test.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "stz", .module = mod },
+            },
         }),
     });
     unit_tests.linkLibC();
@@ -57,9 +71,12 @@ pub fn build(b: *std.Build) void {
 
     const selection_tests = b.addTest(.{
         .root_module = b.createModule(.{
-            .root_source_file = b.path("src/selection_test.zig"),
+            .root_source_file = b.path("src/stz/selection_test.zig"),
             .target = target,
             .optimize = optimize,
+            .imports = &.{
+                .{ .name = "stz", .module = mod },
+            },
         }),
     });
     selection_tests.linkLibC();

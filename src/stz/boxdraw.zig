@@ -2,7 +2,9 @@
 //! 绘制 Unicode 框线字符 (U+2500-U+259F)
 
 const std = @import("std");
-const types = @import("types.zig");
+const stz = @import("stz");
+
+const types = stz.types;
 const boxdraw_data = @import("boxdraw_data.zig");
 
 const Glyph = types.Glyph;
@@ -35,7 +37,7 @@ pub const BoxDraw = struct {
 
     /// 检查字符是否需要特殊处理
     pub fn needsSpecialDraw(glyph: *const Glyph) bool {
-        return glyph.attr.boxdraw and isBoxDraw(glyph.u);
+        return glyph.attr.boxdraw and isBoxDraw(glyph.codepoint);
     }
 };
 

@@ -1,7 +1,8 @@
 //! Unicode 宽度计算测试
 
 const std = @import("std");
-const unicode = @import("unicode.zig");
+const stz = @import("stz");
+const unicode = stz.unicode;
 
 test "Powerline symbols should have width 1" {
     // Powerline 符号 (Private Use Area) 应该返回宽度 1

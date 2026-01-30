@@ -105,25 +105,25 @@ const c = @cImport({
     @cInclude("stdlib.h");
     @cInclude("signal.h");
     @cInclude("unistd.h");
-});
-const x11 = @import("x11.zig");
-
-const Terminal = @import("terminal.zig").Terminal;
-const Parser = @import("parser.zig").Parser;
-const PTY = @import("pty.zig").PTY;
-const Window = @import("window.zig").Window;
-const Renderer = @import("renderer.zig").Renderer;
-const Input = @import("input.zig").Input;
-const Selector = @import("selection.zig").Selector;
-const UrlDetector = @import("url.zig").UrlDetector;
-const Printer = @import("printer.zig").Printer;
-const Args = @import("args.zig").Args;
-const runtime_config = @import("runtime_config.zig");
-const config = @import("config.zig");
-const types = @import("types.zig");
-const c_locale = @cImport({
     @cInclude("locale.h");
 });
+
+const stz = @import("stz");
+const x11 = stz.c.x11;
+const x11_utils = stz.x11_utils;
+
+const Terminal = stz.Terminal;
+const Parser = stz.Parser;
+const PTY = stz.PTY;
+const Window = stz.Window;
+const Renderer = stz.Renderer;
+const Input = stz.Input;
+const Selector = stz.Selector;
+const UrlDetector = stz.UrlDetector;
+const Printer = stz.Printer;
+const Args = stz.Args;
+const config = stz.Config;
+const SelectionSnap = stz.types.SelectionSnap;
 
 pub fn main() !u8 {
     // ========== 获取内存分配器 ==========
@@ -154,7 +154,7 @@ pub fn main() !u8 {
     // 什么是本地化？
     // - 本地化决定了字符编码、字符分类（如大写字母、小写字母、数字等）
     // - 对中文输入法非常重要
-    _ = c_locale.setlocale(c_locale.LC_CTYPE, "");
+    _ = c.setlocale(c.LC_CTYPE, "");
 
     // ========== 解析命令行参数 ==========
     var args = Args.init(allocator);
@@ -199,53 +199,13 @@ pub fn main() !u8 {
                 std.debug.print("错误: {}\n", .{err});
             },
         }
-        const help_text =
-            \\用法: stz [选项]
-            \\
-            \\选项:
-            \\  -a              禁用备用屏幕
-            \\  -c class        设置窗口类 (X11 资源类)
-            \\  -e command [args] 执行指定命令
-            \\  -f font         设置字体 (FontConfig 格式)
-            \\  -g geometry     设置窗口几何尺寸 (colsxrows, 如 120x35)
-            \\  -h, --help      显示此帮助信息
-            \\  -i              固定窗口大小
-            \\  -l line         指定终端行号
-            \\  -n name         设置窗口名称 (X11 资源名)
-            \\  -o file         指定 I/O 文件
-            \\  -T title        设置窗口标题
-            \\  -t title        设置窗口标题 (同 -T)
-            \\  -v              显示版本号
-            \\  -w windowid     嵌入到指定窗口 ID
-            \\
-        ;
-        std.debug.print("{s}", .{help_text});
+        try args.printHelp(std.fs.File.stderr());
         return 1;
     };
 
     // 处理帮助和版本请求
     if (args.show_help) {
-        const help_text =
-            \\用法: stz [选项]
-            \\
-            \\选项:
-            \\  -a              禁用备用屏幕
-            \\  -c class        设置窗口类 (X11 资源类)
-            \\  -e command [args] 执行指定命令
-            \\  -f font         设置字体 (FontConfig 格式)
-            \\  -g geometry     设置窗口几何尺寸 (colsxrows, 如 120x35)
-            \\  -h, --help      显示此帮助信息
-            \\  -i              固定窗口大小
-            \\  -l line         指定终端行号
-            \\  -n name         设置窗口名称 (X11 资源名)
-            \\  -o file         指定 I/O 文件
-            \\  -T title        设置窗口标题
-            \\  -t title        设置窗口标题 (同 -T)
-            \\  -v              显示版本号
-            \\  -w windowid     嵌入到指定窗口 ID
-            \\
-        ;
-        std.debug.print("{s}", .{help_text});
+        try args.printHelp(std.fs.File.stderr());
         return 0;
     }
 
@@ -257,9 +217,6 @@ pub fn main() !u8 {
     // 获取配置值（命令行参数优先）
     const cols = args.getCols(config.window.cols);
     const rows = args.getRows(config.window.rows);
-
-    // 应用命令行配置
-    runtime_config.allow_altscreen = args.allow_altscreen;
 
     // 构建命令行
     var shell_path: ?[:0]const u8 = config.shell;
@@ -335,15 +292,15 @@ pub fn main() !u8 {
     // 同时处理可能的 ConfigureNotify 事件，以获取准确的窗口尺寸。
     var mapped = false;
     while (!mapped) {
-        var event: x11.c.XEvent = undefined;
-        _ = x11.c.XNextEvent(window.dpy, &event);
-        if (x11.c.XFilterEvent(&event, x11.c.None) != 0) continue;
+        var event: x11.XEvent = undefined;
+        _ = x11.XNextEvent(window.dpy, &event);
+        if (x11.XFilterEvent(&event, x11.None) != 0) continue;
 
         switch (event.type) {
-            x11.c.MapNotify => {
+            x11.MapNotify => {
                 mapped = true;
             },
-            x11.c.ConfigureNotify => {
+            x11.ConfigureNotify => {
                 // 窗口管理器可能已经调整了窗口尺寸
                 const width = @as(u32, @intCast(event.xconfigure.width));
                 const height = @as(u32, @intCast(event.xconfigure.height));
@@ -413,6 +370,9 @@ pub fn main() !u8 {
     // - PTY: 某些转义序列需要向 PTY 发送响应（如终端标识查询）
     var parser = try Parser.init(&terminal, &pty, allocator);
     defer parser.deinit();
+
+    // 应用命令行配置
+    parser.allow_altscreen = args.allow_altscreen;
 
     // ========== 设置 PTY 为非阻塞模式 ==========
     //
@@ -544,13 +504,13 @@ pub fn main() !u8 {
         // - 如果事件被输入法处理，返回非零，跳过该事件
         while (window.pollEvent()) |event| {
             var ev = event;
-            if (x11.c.XFilterEvent(&ev, x11.c.None) != 0) continue;
+            if (x11.XFilterEvent(&ev, x11.None) != 0) continue;
 
             switch (ev.type) {
                 // ========== ClientMessage: 窗口关闭请求 ==========
                 // 窗口管理器（如 i3、GNOME Shell）发送关闭请求
-                x11.c.ClientMessage => {
-                    if (@as(x11.c.Atom, @intCast(ev.xclient.data.l[0])) == window.wm_delete_window) {
+                x11.ClientMessage => {
+                    if (@as(x11.Atom, @intCast(ev.xclient.data.l[0])) == window.wm_delete_window) {
                         quit = true;
                         break;
                     }
@@ -562,14 +522,14 @@ pub fn main() !u8 {
                 // - 特殊键（方向键、Backspace、Delete 等）
                 // - 功能键（F1-F12）
                 // - 组合键（Ctrl+C、Ctrl+Shift+V 等）
-                x11.c.KeyPress => {
+                x11.KeyPress => {
                     renderer.resetCursorBlink(); // Reset blink on input
 
                     // Check for scroll shortcuts (Shift + PageUp/PageDown)
                     const state = ev.xkey.state;
-                    const shift = (state & x11.c.ShiftMask) != 0;
+                    const shift = (state & x11.ShiftMask) != 0;
                     const keycode = ev.xkey.keycode;
-                    const keysym = x11.c.XkbKeycodeToKeysym(window.dpy, @intCast(keycode), 0, if (shift) 1 else 0);
+                    const keysym = x11.XkbKeycodeToKeysym(window.dpy, @intCast(keycode), 0, if (shift) 1 else 0);
 
                     const XK_Prior = 0xFF55; // PageUp
                     const XK_Next = 0xFF56; // PageDown
@@ -583,7 +543,7 @@ pub fn main() !u8 {
                     const XK_C = 0x0043;
                     const XK_c = 0x0063;
 
-                    const ctrl = (state & x11.c.ControlMask) != 0;
+                    const ctrl = (state & x11.ControlMask) != 0;
 
                     if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
                         selector.clear(term);
@@ -606,8 +566,7 @@ pub fn main() !u8 {
                         };
                     } else if (ctrl and shift and (keysym == XK_V or keysym == XK_v)) {
                         // Ctrl+Shift+V: 从 CLIPBOARD 粘贴
-                        const dpy = window.dpy;
-                        const clipboard = x11.getClipboardAtom(dpy);
+                        const clipboard = x11_utils.getClipboardAtom(window.dpy);
                         selector.requestSelection(clipboard) catch |err| {
                             std.log.err("Clipboard paste request failed: {}", .{err});
                         };
@@ -640,9 +599,9 @@ pub fn main() !u8 {
                         if (try input.handleKey(&ev.xkey)) {
                             // 如果 handleKey 处理了该按键，直接跳过
                         } else if (window.ic) |ic| {
-                            var status: x11.c.Status = undefined;
+                            var status: x11.Status = undefined;
                             var kbuf: [32]u8 = undefined;
-                            const n = x11.c.Xutf8LookupString(ic, &ev.xkey, &kbuf, kbuf.len, null, &status);
+                            const n = x11.Xutf8LookupString(ic, &ev.xkey, &kbuf, kbuf.len, null, &status);
 
                             // Debug logging for input troubleshooting
                             // std.log.debug("XIM Input: n={d}, status={d}", .{n, status});
@@ -652,7 +611,7 @@ pub fn main() !u8 {
                             // 这与原版 st 的行为一致 (st 忽略 status，仅检查 len)
                             if (n > 0 and n <= kbuf.len) {
                                 // 处理 Alt+单字节字符：在字符前添加 ESC (\x1B)
-                                if (n == 1 and (ev.xkey.state & x11.c.Mod1Mask) != 0) {
+                                if (n == 1 and (ev.xkey.state & x11.Mod1Mask) != 0) {
                                     var alt_buf: [2]u8 = undefined;
                                     alt_buf[0] = 0x1B;
                                     alt_buf[1] = kbuf[0];
@@ -664,7 +623,7 @@ pub fn main() !u8 {
                                 // Fallback: If XIM returns nothing (e.g. broken locale), try raw XLookupString
                                 // This ensures basic ASCII input works even if IME is misconfigured
                                 var buf: [32]u8 = undefined;
-                                const len = x11.c.XLookupString(&ev.xkey, &buf, buf.len, null, null);
+                                const len = x11.XLookupString(&ev.xkey, &buf, buf.len, null, null);
                                 if (len > 0) {
                                     std.log.info("XIM fallback used for keycode {d}: '{s}'", .{ ev.xkey.keycode, buf[0..@as(usize, @intCast(len))] });
                                     _ = try pty.write(buf[0..@as(usize, @intCast(len))]);
@@ -672,10 +631,10 @@ pub fn main() !u8 {
                             }
                         } else {
                             var kbuf: [32]u8 = undefined;
-                            const n = x11.c.XLookupString(&ev.xkey, &kbuf, kbuf.len, null, null);
+                            const n = x11.XLookupString(&ev.xkey, &kbuf, kbuf.len, null, null);
                             if (n > 0) {
                                 // 处理 Alt+单字节字符：在字符前添加 ESC (\x1B)
-                                if (n == 1 and (ev.xkey.state & x11.c.Mod1Mask) != 0) {
+                                if (n == 1 and (ev.xkey.state & x11.Mod1Mask) != 0) {
                                     var alt_buf: [2]u8 = undefined;
                                     alt_buf[0] = 0x1B;
                                     alt_buf[1] = kbuf[0];
@@ -687,7 +646,7 @@ pub fn main() !u8 {
                         }
                     }
                 },
-                x11.c.ConfigureNotify => {
+                x11.ConfigureNotify => {
                     const width = @as(u32, @intCast(ev.xconfigure.width));
                     const height = @as(u32, @intCast(ev.xconfigure.height));
 
@@ -719,7 +678,7 @@ pub fn main() !u8 {
                         }
                     }
                 },
-                x11.c.Expose => {
+                x11.Expose => {
                     if (!terminal.mode.sync_update) {
                         if (try renderer.render(&terminal, &selector)) |_| {
                             try renderer.renderCursor(&terminal);
@@ -730,9 +689,9 @@ pub fn main() !u8 {
                         }
                     }
                 },
-                x11.c.ButtonPress => {
+                x11.ButtonPress => {
                     const e = ev.xbutton;
-                    const shift = (e.state & x11.c.ShiftMask) != 0;
+                    const shift = (e.state & x11.ShiftMask) != 0;
 
                     const border_x = @as(c_int, @intCast(window.hborder_px));
                     const border_y = @as(c_int, @intCast(window.vborder_px));
@@ -752,8 +711,8 @@ pub fn main() !u8 {
                     const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
 
                     // Ctrl + Left Click: 打开 URL
-                    if (e.button == x11.c.Button1 and
-                        (e.state & x11.c.ControlMask) != 0)
+                    if (e.button == x11.Button1 and
+                        (e.state & x11.ControlMask) != 0)
                     {
                         if (url_detector.isUrlAt(cx, cy)) {
                             url_detector.openUrlAt(cx, cy) catch |err| {
@@ -775,7 +734,7 @@ pub fn main() !u8 {
                         continue;
                     }
 
-                    if (e.button == x11.c.Button1) {
+                    if (e.button == x11.Button1) {
                         // 检测双击/三击
                         const now = std.time.milliTimestamp();
                         if (e.button == last_button and now - last_click_time < config.selection.double_click_timeout_ms) {
@@ -786,7 +745,7 @@ pub fn main() !u8 {
                         last_click_time = now;
                         last_button = e.button;
 
-                        const snap_mode: types.SelectionSnap = switch (click_count) {
+                        const snap_mode: SelectionSnap = switch (click_count) {
                             2 => .word,
                             3 => .line,
                             else => .none,
@@ -808,17 +767,17 @@ pub fn main() !u8 {
                         if (try renderer.render(term, &selector)) |rect| {
                             window.presentPartial(rect);
                         }
-                    } else if (e.button == x11.c.Button2) {
+                    } else if (e.button == x11.Button2) {
                         // Middle click: paste from PRIMARY selection
                         selector.requestPaste() catch |err| {
                             std.log.err("Paste request failed: {}", .{err});
                         };
-                    } else if (e.button == x11.c.Button3) {
+                    } else if (e.button == x11.Button3) {
                         // Right click: extend selection or copy
                         mouse_pressed = true;
                         pressed_button = e.button;
                         selector.start(term, cx, cy, .none);
-                    } else if (e.button == x11.c.Button4) { // Scroll Up
+                    } else if (e.button == x11.Button4) { // Scroll Up
                         if (term.mode.isMouseEnabled() and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
@@ -834,7 +793,7 @@ pub fn main() !u8 {
                                 }
                             }
                         }
-                    } else if (e.button == x11.c.Button5) { // Scroll Down
+                    } else if (e.button == x11.Button5) { // Scroll Down
                         if (term.mode.isMouseEnabled() and !shift) {
                             try input.sendMouseReport(cx, cy, e.button, e.state, 0);
                         } else {
@@ -852,9 +811,9 @@ pub fn main() !u8 {
                         }
                     }
                 },
-                x11.c.ButtonRelease => {
+                x11.ButtonRelease => {
                     const e = ev.xbutton;
-                    const shift = (e.state & x11.c.ShiftMask) != 0;
+                    const shift = (e.state & x11.ShiftMask) != 0;
 
                     const border_x = @as(c_int, @intCast(window.hborder_px));
                     const border_y = @as(c_int, @intCast(window.vborder_px));
@@ -885,7 +844,7 @@ pub fn main() !u8 {
                         mouse_pressed = false;
                         pressed_button = 0;
 
-                        if (e.button == x11.c.Button1) {
+                        if (e.button == x11.Button1) {
                             // 仅在非鼠标模式或按住 Shift 时复制到剪贴板
                             // st 对齐：在鼠标模式下不设置 X11 选区，让应用程序自己管理
                             if (!term.mode.isMouseEnabled() or shift) {
@@ -908,9 +867,9 @@ pub fn main() !u8 {
                         }
                     }
                 },
-                x11.c.MotionNotify => {
+                x11.MotionNotify => {
                     const e = ev.xmotion;
-                    const shift = (e.state & x11.c.ShiftMask) != 0;
+                    const shift = (e.state & x11.ShiftMask) != 0;
 
                     const border_x = @as(c_int, @intCast(window.hborder_px));
                     const border_y = @as(c_int, @intCast(window.vborder_px));
@@ -939,7 +898,7 @@ pub fn main() !u8 {
                         // 不 continue，继续执行下面的选择高亮逻辑
                     }
 
-                    if (mouse_pressed and pressed_button == x11.c.Button1) {
+                    if (mouse_pressed and pressed_button == x11.Button1) {
                         // Update selection
                         selector.extend(term, cx, cy, .regular, false);
                         term.setFullDirty();
@@ -948,12 +907,12 @@ pub fn main() !u8 {
                         }
                     }
                 },
-                x11.c.SelectionRequest => {
+                x11.SelectionRequest => {
                     const e = ev.xselectionrequest;
                     // std.log.info("SelectionRequest received (target={d})", .{e.target});
 
-                    var notify: x11.c.XEvent = undefined;
-                    notify.type = x11.c.SelectionNotify;
+                    var notify: x11.XEvent = undefined;
+                    notify.type = x11.SelectionNotify;
                     notify.xselection.display = e.display;
                     notify.xselection.requestor = e.requestor;
                     notify.xselection.selection = e.selection;
@@ -963,27 +922,27 @@ pub fn main() !u8 {
 
                     if (notify.xselection.property == 0) notify.xselection.property = e.target;
 
-                    const utf8 = x11.getUtf8Atom(window.dpy);
-                    const targets = x11.getTargetsAtom(window.dpy);
-                    const xa_string = x11.getStringAtom(window.dpy);
+                    const utf8 = x11_utils.getUtf8Atom(window.dpy);
+                    const targets = x11_utils.getTargetsAtom(window.dpy);
+                    const xa_string = x11_utils.getStringAtom(window.dpy);
 
                     var success = false;
                     if (e.target == targets) {
-                        const supported = [_]x11.c.Atom{ targets, utf8, xa_string, x11.c.XA_STRING };
-                        _ = x11.c.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.c.XA_ATOM, 32, x11.c.PropModeReplace, @ptrCast(&supported), supported.len);
+                        const supported = [_]x11.Atom{ targets, utf8, xa_string, x11.XA_STRING };
+                        _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.XA_ATOM, 32, x11.PropModeReplace, @ptrCast(&supported), supported.len);
                         success = true;
-                    } else if (e.target == utf8 or e.target == xa_string or e.target == x11.c.XA_STRING) {
+                    } else if (e.target == utf8 or e.target == xa_string or e.target == x11.XA_STRING) {
                         if (selector.selected_text) |text| {
-                            _ = x11.c.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.c.PropModeReplace, text.ptr, @intCast(text.len));
+                            _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.PropModeReplace, text.ptr, @intCast(text.len));
                             success = true;
                         }
                     }
 
                     if (!success) notify.xselection.property = 0;
 
-                    _ = x11.c.XSendEvent(window.dpy, e.requestor, 1, 0, &notify);
+                    _ = x11.XSendEvent(window.dpy, e.requestor, 1, 0, &notify);
                 },
-                x11.c.SelectionNotify => {
+                x11.SelectionNotify => {
                     const e = ev.xselection;
 
                     if (e.property != 0) {
@@ -991,16 +950,16 @@ pub fn main() !u8 {
                         var rem: c_ulong = 1;
 
                         while (rem > 0) {
-                            var actual_type: x11.c.Atom = undefined;
+                            var actual_type: x11.Atom = undefined;
                             var actual_format: c_int = undefined;
                             var nitems: c_ulong = undefined;
                             var data: ?[*]u8 = null;
 
                             // Use XGetWindowProperty to read selection data (matching st's approach)
                             // We read in chunks (1024 words at a time) to handle large selections
-                            if (x11.c.XGetWindowProperty(window.dpy, window.win, e.property, @intCast(ofs), 1024, x11.c.False, x11.c.AnyPropertyType, &actual_type, &actual_format, &nitems, &rem, @ptrCast(&data)) == 0) {
+                            if (x11.XGetWindowProperty(window.dpy, window.win, e.property, @intCast(ofs), 1024, x11.False, x11.AnyPropertyType, &actual_type, &actual_format, &nitems, &rem, @ptrCast(&data)) == 0) {
                                 if (data) |value| {
-                                    defer _ = x11.c.XFree(value);
+                                    defer _ = x11.XFree(value);
 
                                     if (nitems > 0) {
                                         const len = @as(usize, @intCast(nitems)) * @as(usize, @intCast(actual_format)) / 8;
@@ -1024,7 +983,7 @@ pub fn main() !u8 {
                             }
                         }
                         // 读取后立即删除属性，避免残留旧数据影响下一次粘贴 (ICCCM 推荐)
-                        _ = x11.c.XDeleteProperty(window.dpy, window.win, e.property);
+                        _ = x11.XDeleteProperty(window.dpy, window.win, e.property);
                     } else {
                         // std.log.info("SelectionNotify: Conversion failed (property=None)", .{});
                     }
@@ -1037,7 +996,7 @@ pub fn main() !u8 {
                         window.presentPartial(rect);
                     }
                 },
-                x11.c.SelectionClear => {
+                x11.SelectionClear => {
                     const e = ev.xselectionclear;
                     std.log.info("SelectionClear received", .{});
                     selector.handleSelectionClear(term, &e);
@@ -1046,10 +1005,10 @@ pub fn main() !u8 {
                         window.presentPartial(rect);
                     }
                 },
-                x11.c.FocusIn => {
+                x11.FocusIn => {
                     // std.log.info("FocusIn", .{});
                     term.mode.focused = true;
-                    if (window.ic) |ic| x11.c.XSetICFocus(ic);
+                    if (window.ic) |ic| x11.XSetICFocus(ic);
                     if (term.mode.mouse_focus) {
                         _ = pty.write("\x1B[I") catch {};
                     }
@@ -1060,10 +1019,10 @@ pub fn main() !u8 {
                         try renderer.renderCursor(term);
                     }
                 },
-                x11.c.FocusOut => {
+                x11.FocusOut => {
                     // std.log.info("FocusOut", .{});
                     term.mode.focused = false;
-                    if (window.ic) |ic| x11.c.XUnsetICFocus(ic);
+                    if (window.ic) |ic| x11.XUnsetICFocus(ic);
                     if (term.mode.mouse_focus) {
                         _ = pty.write("\x1B[O") catch {};
                     }
@@ -1074,12 +1033,12 @@ pub fn main() !u8 {
                         try renderer.renderCursor(term);
                     }
                 },
-                x11.c.EnterNotify,
-                x11.c.LeaveNotify,
-                x11.c.ReparentNotify,
-                x11.c.MapNotify,
-                x11.c.NoExpose,
-                x11.c.KeyRelease,
+                x11.EnterNotify,
+                x11.LeaveNotify,
+                x11.ReparentNotify,
+                x11.MapNotify,
+                x11.NoExpose,
+                x11.KeyRelease,
                 => {
                     // 忽略这些常见但当前无需处理的事件，避免日志刷屏
                 },
@@ -1181,7 +1140,7 @@ pub fn main() !u8 {
                 .revents = 0,
             },
             .{
-                .fd = x11.c.XConnectionNumber(window.dpy),
+                .fd = x11.XConnectionNumber(window.dpy),
                 .events = std.posix.POLL.IN,
                 .revents = 0,
             },
@@ -1215,7 +1174,7 @@ pub fn main() !u8 {
             };
 
             if (n > 0) {
-                try parser.processBytes(read_buffer[0..n]);
+                try parser.parseBytes(read_buffer[0..n]);
                 pending_render = true;
                 url_check_pending = true;
 

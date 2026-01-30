@@ -1187,14 +1187,14 @@ fn oscHandle(self: *Parser, par: i32) !void {
                 self.term.c.attr.url_id = 0;
             }
         },
-        10 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
-            self.term.default_fg = c;
+        10 => if (self.str.narg >= 2) {
+            self.term.default_fg = try self.parseOscColor(self.str.args[1]);
         },
-        11 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
-            self.term.default_bg = c;
+        11 => if (self.str.narg >= 2) {
+            self.term.default_bg = try self.parseOscColor(self.str.args[1]);
         },
-        12 => if (self.str.narg >= 2) if (try self.parseOscColor(self.str.args[1])) |c| {
-            self.term.default_cs = c;
+        12 => if (self.str.narg >= 2) {
+            self.term.default_cs = try self.parseOscColor(self.str.args[1]);
         },
         52 => {
             // OSC 52: Set clipboard
@@ -1265,9 +1265,9 @@ fn oscHandle(self: *Parser, par: i32) !void {
                     if (idx < 256) {
                         if (idx < 16) {
                             if (idx < 8) {
-                                self.term.palette[idx] = config.colors.normal[idx];
+                                self.term.palette[idx] = try self.parseOscColor(config.colors.normal[idx]);
                             } else {
-                                self.term.palette[idx] = config.colors.bright[idx - 8];
+                                self.term.palette[idx] = try self.parseOscColor(config.colors.bright[idx - 8]);
                             }
                         } else {
                             // For 256 colors, we don't have a "default" beyond 16 stored in config.
@@ -1293,12 +1293,12 @@ fn oscHandle(self: *Parser, par: i32) !void {
     }
 }
 
-fn parseOscColor(self: *Parser, color_str: []const u8) !?u32 {
+fn parseOscColor(self: *Parser, color_str: []const u8) !u32 {
     _ = self;
     var start: usize = 0;
     while (start < color_str.len and color_str[start] == ' ') : (start += 1) {}
 
-    if (start >= color_str.len) return null;
+    if (start >= color_str.len) return 0;
     const trimmed = color_str[start..];
 
     if (std.mem.startsWith(u8, trimmed, "rgb:")) {
@@ -1314,12 +1314,23 @@ fn parseOscColor(self: *Parser, color_str: []const u8) !?u32 {
     }
     if (trimmed[0] == '#' and trimmed.len >= 7) return (0xFF << 24) | (std.fmt.parseInt(u32, trimmed[1..7], 16) catch 0);
     if (std.ascii.isDigit(trimmed[0])) return @as(u32, @intCast(std.fmt.parseInt(usize, trimmed, 10) catch 0));
-    return null;
+    return 0;
 }
 
 fn resetPalette(self: *Parser) void {
-    for (0..8) |i| self.term.palette[i] = config.colors.normal[i];
-    for (8..16) |i| self.term.palette[i] = config.colors.bright[i - 8];
+    for (0..8) |i| {
+        self.term.palette[i] = try self.parseOscColor(config.colors.normal[i]);
+    }
+    for (8..16) |i| {
+        self.term.palette[i] = try self.parseOscColor(config.colors.bright[i - 8]);
+    }
+
+    // 初始化默认颜色
+    self.term.default_fg = try self.parseOscColor(config.colors.foreground);
+    self.term.default_bg = try self.parseOscColor(config.colors.background);
+    self.term.default_cs = try self.parseOscColor(config.colors.cursor);
+    self.term.default_rev_cs = try self.parseOscColor(config.colors.cursor_text);
+
     var color_idx: u32 = 16;
     while (color_idx < 232) : (color_idx += 1) {
         const c = color_idx - 16;

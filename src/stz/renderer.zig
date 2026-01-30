@@ -452,17 +452,46 @@ fn getColor(self: *Renderer, term: *Terminal, index: u32) !x11.XftColor {
     }
 
     // Allocate color
-    // Map index to RGB
-    const rgb = self.getIndexColor(term, index);
-    const render_color = x11.XRenderColor{
-        .red = @as(u16, rgb[0]) * 257,
-        .green = @as(u16, rgb[1]) * 257,
-        .blue = @as(u16, rgb[2]) * 257,
-        .alpha = 0xFFFF,
-    };
+    var allocated = false;
 
-    if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &self.colors[index]) == 0) {
-        return error.ColorAllocFailed;
+    // Try allocating by name first (for config colors)
+    var name: ?[:0]const u8 = null;
+
+    if (index < 8) {
+        name = config.colors.normal[index];
+    } else if (index < 16) {
+        name = config.colors.bright[index - 8];
+    } else if (index == config.colors.default_foreground_idx) {
+        if (term.default_fg == 0) name = config.colors.foreground;
+    } else if (index == config.colors.default_background_idx) {
+        if (term.default_bg == 0) name = config.colors.background;
+    } else if (index == config.colors.default_cursor_idx) {
+        if (term.default_cs == 0) name = config.colors.cursor;
+    } else if (index == config.colors.reverse_cursor_idx) {
+        if (term.default_rev_cs == 0) name = config.colors.cursor_text;
+    }
+
+    if (name) |n| {
+        if (x11.XftColorAllocName(self.window.dpy, self.window.vis, self.window.cmap, n, &self.colors[index]) != 0) {
+            allocated = true;
+        } else {
+            std.log.warn("Failed to allocate color by name: {s}", .{n});
+        }
+    }
+
+    if (!allocated) {
+        // Map index to RGB
+        const rgb = self.getIndexColor(term, index);
+        const render_color = x11.XRenderColor{
+            .red = @as(u16, rgb[0]) * 257,
+            .green = @as(u16, rgb[1]) * 257,
+            .blue = @as(u16, rgb[2]) * 257,
+            .alpha = 0xFFFF,
+        };
+
+        if (x11.XftColorAllocValue(self.window.dpy, self.window.vis, self.window.cmap, &render_color, &self.colors[index]) == 0) {
+            return error.ColorAllocFailed;
+        }
     }
 
     self.loaded_colors[index] = true;
@@ -480,15 +509,11 @@ fn getIndexColor(self: *Renderer, term: *Terminal, index: u32) [3]u8 {
         return .{ r, g, b };
     }
 
-    // 标准颜色 (0-7)
-    if (index < 8) return u32ToRgb(config.colors.normal[index]); // Note: Config colors are u32 0xRRGGBB
-    // 明亮颜色 (8-15)
-    if (index < 16) return u32ToRgb(config.colors.bright[index - 8]);
-    // 256 色扩展 (16-255)
+    // 256 色调色板 (0-255)
     if (index < 256) {
-        // 从调色板读取 RGB 值
         return u32ToRgb(term.palette[index]);
     }
+
     // 光标颜色
     if (index == config.colors.default_cursor_idx) return u32ToRgb(term.default_cs);
     // 反转光标颜色

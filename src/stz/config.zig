@@ -63,27 +63,27 @@ pub const stty_args = "stty raw pass8 nl -echo -iexten -cstopb 38400";
 
 // 颜色配置
 pub const colors = struct {
-    // 标准颜色 (16色) - 使用与 st 一致的 RGB 值
-    pub const normal = [_]u32{
-        0x1B1D1E, // black          #1B1D1E
-        0xcd0000, // darkred        #FF0044
-        0x82B414, // darkgreen      #82B414
-        0xFD971F, // darkyellow     #FD971F
-        0x266C98, // darkblue       #266C98
-        0xcd00cd, // darkmagenta    #AC0CB1
-        0x56ADBC, // darkcyan       #56ADBC
-        0xCCCCCC, // gray           #CCCCCC
+    // 标准颜色 (16色) - 使用字符串表示
+    pub const normal = [_][:0]const u8{
+        "#1B1D1E", // black
+        "#cd0000", // darkred
+        "#82B414", // darkgreen
+        "#FD971F", // darkyellow
+        "#266C98", // darkblue
+        "#cd00cd", // darkmagenta
+        "#56ADBC", // darkcyan
+        "#CCCCCC", // gray
     };
 
-    pub const bright = [_]u32{
-        0x808080, // darkgray       #808080
-        0xF92672, // red            #F92672
-        0xA6E22E, // green          #A6E22E
-        0xE6DB74, // yellow         #E6DB74
-        0xFF6188, // blue           #7070F0
-        0xD63AE1, // magenta        #D63AE1
-        0x66D9EF, // cyan           #66D9EF
-        0xF8F8F2, // white          #F8F8F2
+    pub const bright = [_][:0]const u8{
+        "#808080", // darkgray
+        "#F92672", // red
+        "#A6E22E", // green
+        "#E6DB74", // yellow
+        "#FF6188", // blue
+        "#D63AE1", // magenta
+        "#66D9EF", // cyan
+        "#F8F8F2", // white
     };
 
     // 特殊颜色索引常量
@@ -92,11 +92,11 @@ pub const colors = struct {
     pub const default_cursor_idx = 256 + 2;
     pub const reverse_cursor_idx = 256 + 3;
 
-    // 特殊颜色（RGB值）
-    pub const foreground = 0xF8F8F2; // default foreground  #F8F8F2
-    pub const background = 0x1B1D1E; // default background  #1B1D1E
-    pub const cursor = 0xf8f8f0; // cursor                  #f8f8f0
-    pub const cursor_text = 0x555555; // rev cursor         #555555
+    // 特殊颜色
+    pub const foreground: [:0]const u8 = "#F8F8F2"; // default foreground
+    pub const background: [:0]const u8 = "#1B1D1E"; // default background
+    pub const cursor: [:0]const u8 = "#f8f8f0"; // cursor
+    pub const cursor_text: [:0]const u8 = "#555555"; // rev cursor
 };
 
 // 光标配置

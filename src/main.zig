@@ -531,51 +531,39 @@ pub fn main() !u8 {
                     const keycode = ev.xkey.keycode;
                     const keysym = x11.XkbKeycodeToKeysym(window.dpy, @intCast(keycode), 0, if (shift) 1 else 0);
 
-                    const XK_Prior = 0xFF55; // PageUp
-                    const XK_Next = 0xFF56; // PageDown
-                    const XK_KP_Prior = 0xFF9A;
-                    const XK_KP_Next = 0xFF9B;
-                    const XK_Print = 0xFF61; // Print/SysRq
-                    const XK_Insert = 0xFF63;
-                    const XK_KP_Insert = 0xFF9E;
-                    const XK_V = 0x0056;
-                    const XK_v = 0x0076;
-                    const XK_C = 0x0043;
-                    const XK_c = 0x0063;
-
                     const ctrl = (state & x11.ControlMask) != 0;
 
-                    if (shift and (keysym == XK_Prior or keysym == XK_KP_Prior)) {
+                    if (shift and (keysym == x11.XK_Prior or keysym == x11.XK_KP_Prior)) {
                         selector.clear(term);
                         terminal.kscrollUp(term.row); // Scroll one screen up
                         if (try renderer.render(term, &selector)) |rect| {
                             try renderer.renderCursor(term);
                             window.presentPartial(rect);
                         }
-                    } else if (shift and (keysym == XK_Next or keysym == XK_KP_Next)) {
+                    } else if (shift and (keysym == x11.XK_Next or keysym == x11.XK_KP_Next)) {
                         selector.clear(term);
                         terminal.kscrollDown(term.row); // Scroll one screen down
                         if (try renderer.render(term, &selector)) |rect| {
                             try renderer.renderCursor(term);
                             window.presentPartial(rect);
                         }
-                    } else if (ctrl and shift and (keysym == XK_C or keysym == XK_c)) {
+                    } else if (ctrl and shift and (keysym == x11.XK_C or keysym == x11.XK_c)) {
                         // Ctrl+Shift+C: 复制到 CLIPBOARD
                         selector.copyToClipboard() catch |err| {
                             std.log.err("Clipboard copy failed: {}", .{err});
                         };
-                    } else if (ctrl and shift and (keysym == XK_V or keysym == XK_v)) {
+                    } else if (ctrl and shift and (keysym == x11.XK_V or keysym == x11.XK_v)) {
                         // Ctrl+Shift+V: 从 CLIPBOARD 粘贴
                         const clipboard = x11_utils.getClipboardAtom(window.dpy);
                         selector.requestSelection(clipboard) catch |err| {
                             std.log.err("Clipboard paste request failed: {}", .{err});
                         };
-                    } else if (shift and (keysym == XK_Insert or keysym == XK_KP_Insert)) {
+                    } else if (shift and (keysym == x11.XK_Insert or keysym == x11.XK_KP_Insert)) {
                         // Shift+Insert: 从 PRIMARY 粘贴 (经典 X11 行为)
                         selector.requestPaste() catch |err| {
                             std.log.err("Primary paste request failed: {}", .{err});
                         };
-                    } else if (keysym == XK_Print) {
+                    } else if (keysym == x11.XK_Print) {
                         // Print key handling
                         if (ctrl) {
                             // Ctrl+Print: toggle printer mode
@@ -1134,16 +1122,8 @@ pub fn main() !u8 {
 
         // 2. Poll 等待新数据
         var fds = [_]std.posix.pollfd{
-            .{
-                .fd = pty.master,
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            },
-            .{
-                .fd = x11.XConnectionNumber(window.dpy),
-                .events = std.posix.POLL.IN,
-                .revents = 0,
-            },
+            .{ .fd = pty.master, .events = std.posix.POLL.IN, .revents = 0 },
+            .{ .fd = x11.XConnectionNumber(window.dpy), .events = std.posix.POLL.IN, .revents = 0 },
         };
 
         _ = std.posix.poll(&fds, timeout_ms) catch |err| {

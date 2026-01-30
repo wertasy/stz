@@ -120,86 +120,49 @@ pub fn handleKey(self: *Input, event: *const x11.XKeyEvent) !bool {
 }
 
 fn handleSpecialKey(self: *Input, keysym: x11.KeySym, ctrl: bool, alt: bool, shift: bool) !bool {
-    const XK_BackSpace = 0xFF08;
-    const XK_Tab = 0xFF09;
-    const XK_Return = 0xFF0D;
-    const XK_Escape = 0xFF1B;
-    const XK_Delete = 0xFFFF;
-    const XK_Home = 0xFF50;
-    const XK_Left = 0xFF51;
-    const XK_Up = 0xFF52;
-    const XK_Right = 0xFF53;
-    const XK_Down = 0xFF54;
-    const XK_Prior = 0xFF55;
-    const XK_Next = 0xFF56;
-    const XK_End = 0xFF57;
-    const XK_Insert = 0xFF63;
-    const XK_ISO_Left_Tab = 0xFE20;
-    const XK_F1 = 0xFFBE;
-    const XK_F12 = 0xFFC9;
-    const XK_KP_Enter = 0xFF8D;
-    const XK_KP_Home = 0xFF95;
-    const XK_KP_Left = 0xFF96;
-    const XK_KP_Up = 0xFF97;
-    const XK_KP_Right = 0xFF98;
-    const XK_KP_Down = 0xFF99;
-    const XK_KP_Prior = 0xFF9A;
-    const XK_KP_Next = 0xFF9B;
-    const XK_KP_End = 0xFF9C;
-    const XK_KP_Insert = 0xFF9E;
-    const XK_KP_Delete = 0xFF9F;
-    const XK_KP_Multiply = 0xFFAA;
-    const XK_KP_Add = 0xFFAB;
-    const XK_KP_Separator = 0xFFAC;
-    const XK_KP_Subtract = 0xFFAD;
-    const XK_KP_Decimal = 0xFFAE;
-    const XK_KP_Divide = 0xFFAF;
-    const XK_KP_0 = 0xFFB0;
-    const XK_KP_9 = 0xFFB9;
-
     switch (keysym) {
-        XK_Return => try self.writeReturn(alt),
-        XK_KP_Enter => try self.writeReturn(alt),
-        XK_Escape => try self.writeEsc(),
-        XK_BackSpace => try self.writeBackspace(alt, ctrl, shift),
-        XK_Tab => try self.writeTab(alt),
-        XK_ISO_Left_Tab => try self.writeTab(alt),
-        XK_Delete => try self.writeDelete(alt, ctrl),
-        XK_KP_Delete => try self.writeDelete(alt, ctrl),
-        XK_Up => try self.writeArrow(alt, 'A', ctrl, shift),
-        XK_Down => try self.writeArrow(alt, 'B', ctrl, shift),
-        XK_Left => try self.writeArrow(alt, 'D', ctrl, shift),
-        XK_Right => try self.writeArrow(alt, 'C', ctrl, shift),
-        XK_KP_Up => try self.writeArrow(alt, 'A', ctrl, shift),
-        XK_KP_Down => try self.writeArrow(alt, 'B', ctrl, shift),
-        XK_KP_Left => try self.writeArrow(alt, 'D', ctrl, shift),
-        XK_KP_Right => try self.writeArrow(alt, 'C', ctrl, shift),
-        XK_Home => try self.writeHome(alt, ctrl, shift),
-        XK_KP_Home => try self.writeHome(alt, ctrl, shift),
-        XK_End => try self.writeEnd(alt, ctrl, shift),
-        XK_KP_End => try self.writeEnd(alt, ctrl, shift),
-        XK_Prior => try self.writePageUp(alt, ctrl, shift),
-        XK_KP_Prior => try self.writePageUp(alt, ctrl, shift),
-        XK_Next => try self.writePageDown(alt, ctrl, shift),
-        XK_KP_Next => try self.writePageDown(alt, ctrl, shift),
-        XK_Insert => {},
-        XK_KP_Insert => {},
+        x11.XK_Return => try self.writeReturn(alt),
+        x11.XK_KP_Enter => try self.writeReturn(alt),
+        x11.XK_Escape => try self.writeEsc(),
+        x11.XK_BackSpace => try self.writeBackspace(alt, ctrl, shift),
+        x11.XK_Tab => try self.writeTab(alt),
+        x11.XK_ISO_Left_Tab => try self.writeTab(alt),
+        x11.XK_Delete => try self.writeDelete(alt, ctrl),
+        x11.XK_KP_Delete => try self.writeDelete(alt, ctrl),
+        x11.XK_Up => try self.writeArrow(alt, 'A', ctrl, shift),
+        x11.XK_Down => try self.writeArrow(alt, 'B', ctrl, shift),
+        x11.XK_Left => try self.writeArrow(alt, 'D', ctrl, shift),
+        x11.XK_Right => try self.writeArrow(alt, 'C', ctrl, shift),
+        x11.XK_KP_Up => try self.writeArrow(alt, 'A', ctrl, shift),
+        x11.XK_KP_Down => try self.writeArrow(alt, 'B', ctrl, shift),
+        x11.XK_KP_Left => try self.writeArrow(alt, 'D', ctrl, shift),
+        x11.XK_KP_Right => try self.writeArrow(alt, 'C', ctrl, shift),
+        x11.XK_Home => try self.writeHome(alt, ctrl, shift),
+        x11.XK_KP_Home => try self.writeHome(alt, ctrl, shift),
+        x11.XK_End => try self.writeEnd(alt, ctrl, shift),
+        x11.XK_KP_End => try self.writeEnd(alt, ctrl, shift),
+        x11.XK_Prior => try self.writePageUp(alt, ctrl, shift),
+        x11.XK_KP_Prior => try self.writePageUp(alt, ctrl, shift),
+        x11.XK_Next => try self.writePageDown(alt, ctrl, shift),
+        x11.XK_KP_Next => try self.writePageDown(alt, ctrl, shift),
+        x11.XK_Insert => {},
+        x11.XK_KP_Insert => {},
         else => {
-            if (keysym >= XK_F1 and keysym <= XK_F12) {
-                try self.writeFunction(@intCast(keysym - XK_F1 + 1), shift, ctrl, alt);
+            if (keysym >= x11.XK_F1 and keysym <= x11.XK_F12) {
+                try self.writeFunction(@intCast(keysym - x11.XK_F1 + 1), shift, ctrl, alt);
                 return true;
             }
-            if (keysym >= XK_KP_0 and keysym <= XK_KP_9) {
+            if (keysym >= x11.XK_KP_0 and keysym <= x11.XK_KP_9) {
                 return try self.writeKeypad(keysym, shift, ctrl, alt);
             }
-            if (keysym == XK_KP_Add or keysym == XK_KP_Subtract or keysym == XK_KP_Multiply or
-                keysym == XK_KP_Divide or keysym == XK_KP_Decimal or keysym == XK_KP_Separator)
+            if (keysym == x11.XK_KP_Add or keysym == x11.XK_KP_Subtract or keysym == x11.XK_KP_Multiply or
+                keysym == x11.XK_KP_Divide or keysym == x11.XK_KP_Decimal or keysym == x11.XK_KP_Separator)
             {
                 return try self.writeKeypad(keysym, shift, ctrl, alt);
             }
 
             // 忽略普通 ASCII 字符和修饰键的日志，避免刷屏
-            if (keysym < 0x80 or (keysym >= 0xFFE1 and keysym <= 0xFFEE)) {
+            if (keysym < 0x80 or (keysym >= x11.XK_Shift_L and keysym <= x11.XK_Hyper_R)) {
                 return false;
             }
 
@@ -212,28 +175,20 @@ fn handleSpecialKey(self: *Input, keysym: x11.KeySym, ctrl: bool, alt: bool, shi
 
 fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: bool) !bool {
     if (self.term.mode.app_keypad) {
-        const XK_KP_0 = 0xFFB0;
-        const XK_KP_Multiply = 0xFFAA;
-        const XK_KP_Add = 0xFFAB;
-        const XK_KP_Separator = 0xFFAC;
-        const XK_KP_Subtract = 0xFFAD;
-        const XK_KP_Decimal = 0xFFAE;
-        const XK_KP_Divide = 0xFFAF;
-
         var c: u8 = 0;
-        if (keysym >= XK_KP_0 and keysym <= 0xFFB9) {
-            c = 'p' + @as(u8, @intCast(keysym - XK_KP_0));
-        } else if (keysym == XK_KP_Multiply) {
+        if (keysym >= x11.XK_KP_0 and keysym <= x11.XK_KP_9) {
+            c = 'p' + @as(u8, @intCast(keysym - x11.XK_KP_0));
+        } else if (keysym == x11.XK_KP_Multiply) {
             c = 'j';
-        } else if (keysym == XK_KP_Add) {
+        } else if (keysym == x11.XK_KP_Add) {
             c = 'k';
-        } else if (keysym == XK_KP_Separator) {
+        } else if (keysym == x11.XK_KP_Separator) {
             c = 'l';
-        } else if (keysym == XK_KP_Subtract) {
+        } else if (keysym == x11.XK_KP_Subtract) {
             c = 'm';
-        } else if (keysym == XK_KP_Decimal) {
+        } else if (keysym == x11.XK_KP_Decimal) {
             c = 'n';
-        } else if (keysym == XK_KP_Divide) {
+        } else if (keysym == x11.XK_KP_Divide) {
             c = 'o';
         } else {
             std.log.debug("未处理的 keypad 键 (AppKeypad): 0x{x}", .{keysym});
@@ -244,21 +199,20 @@ fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: b
         _ = try self.pty.write(s);
         return true;
     } else {
-        const XK_KP_0 = 0xFFB0;
         var char: u8 = 0;
-        if (keysym >= XK_KP_0 and keysym <= 0xFFB9) {
-            char = '0' + @as(u8, @intCast(keysym - XK_KP_0));
-        } else if (keysym == 0xFFAA) {
+        if (keysym >= x11.XK_KP_0 and keysym <= x11.XK_KP_9) {
+            char = '0' + @as(u8, @intCast(keysym - x11.XK_KP_0));
+        } else if (keysym == x11.XK_KP_Multiply) {
             char = '*';
-        } else if (keysym == 0xFFAB) {
+        } else if (keysym == x11.XK_KP_Add) {
             char = '+';
-        } else if (keysym == 0xFFAC) {
+        } else if (keysym == x11.XK_KP_Separator) {
             char = ',';
-        } else if (keysym == 0xFFAD) {
+        } else if (keysym == x11.XK_KP_Subtract) {
             char = '-';
-        } else if (keysym == 0xFFAE) {
+        } else if (keysym == x11.XK_KP_Decimal) {
             char = '.';
-        } else if (keysym == 0xFFAF) {
+        } else if (keysym == x11.XK_KP_Divide) {
             char = '/';
         } else {
             std.log.debug("未处理的 keypad 键 (Normal): 0x{x}", .{keysym});

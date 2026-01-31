@@ -833,21 +833,29 @@ pub fn deleteChars(self: *Terminal, n: usize) !void {
     const count = @min(n, self.col - self.cursor.x);
     const screen_buf = self.screen;
 
+    // 当光标在wrap状态且在行尾时，DCH应该先取消wrap状态
+    if (self.cursor.x >= self.col) {
+        self.cursor.state.wrap_next = false;
+        return;
+    }
+
     if (screen_buf) |scr| {
         if (self.cursor.y < scr.len) {
             const row = scr[self.cursor.y];
 
             // 宽字符清理：检查删除起始位置
-            if (self.cursor.x > 0 and row[self.cursor.x].attr.wide_dummy) {
+            if (self.cursor.x > 0 and self.cursor.x < self.col and row[self.cursor.x].attr.wide_dummy) {
                 row[self.cursor.x - 1].codepoint = ' ';
                 row[self.cursor.x - 1].attr.wide = false;
             }
             // 检查删除范围的末尾
-            const last_deleted_idx = self.cursor.x + count - 1;
-            if (row[last_deleted_idx].attr.wide) {
-                if (last_deleted_idx + 1 < self.col) {
-                    row[last_deleted_idx + 1].codepoint = ' ';
-                    row[last_deleted_idx + 1].attr.wide_dummy = false;
+            if (count > 0) {
+                const last_deleted_idx = self.cursor.x + count - 1;
+                if (last_deleted_idx < self.col and row[last_deleted_idx].attr.wide) {
+                    if (last_deleted_idx + 1 < self.col) {
+                        row[last_deleted_idx + 1].codepoint = ' ';
+                        row[last_deleted_idx + 1].attr.wide_dummy = false;
+                    }
                 }
             }
 
@@ -880,12 +888,18 @@ pub fn insertBlanks(self: *Terminal, n: usize) !void {
     const count = @min(n, self.col - self.cursor.x);
     const screen_buf = self.screen;
 
+    // 当光标在wrap状态且在行尾时，ICH应该先取消wrap状态
+    if (self.cursor.x >= self.col) {
+        self.cursor.state.wrap_next = false;
+        return;
+    }
+
     if (screen_buf) |scr| {
         if (self.cursor.y < scr.len) {
             const row = scr[self.cursor.y];
 
             // 宽字符清理：如果插入点是 wide_dummy，清理其前面的 wide 头
-            if (self.cursor.x > 0 and row[self.cursor.x].attr.wide_dummy) {
+            if (self.cursor.x > 0 and self.cursor.x < self.col and row[self.cursor.x].attr.wide_dummy) {
                 row[self.cursor.x - 1].codepoint = ' ';
                 row[self.cursor.x - 1].attr.wide = false;
             }

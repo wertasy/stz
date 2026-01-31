@@ -947,6 +947,29 @@ fn csiHandle(self: *Parser) !void {
                 self.ptyWrite(s);
                 return;
             },
+            '*' => if (mode == 'y') {
+                // DECRQCRA - Request Checksum of Rectangular Area (VT420+)
+                // CSI Pid ; Pp ; Pt ; Pl ; Pb ; Pr * y
+                // Pid: Page ID, Pp: Parameter, Pt/Pl/Pb/Pr: rectangle (1-based)
+                // Response: DCS Pid !~ XXXX ST (XXXX = 4-digit hex checksum)
+                if (self.csi.narg >= 5) {
+                    const pid = self.csi.arg[0];
+                    const top = @as(usize, @intCast(@max(1, self.csi.arg[1]))) - 1;
+                    const left = @as(usize, @intCast(@max(1, self.csi.arg[2]))) - 1;
+                    const bottom = @as(usize, @intCast(@max(1, self.csi.arg[3]))) - 1;
+                    const right = @as(usize, @intCast(@max(1, self.csi.arg[4]))) - 1;
+
+                    // 计算校验和（16位）
+                    const checksum = self.calcRectChecksumCSICode(top, left, bottom, right);
+
+                    // 响应: DCS Pid !~ XXXX ST
+                    var response_buf: [64]u8 = undefined;
+                    const response = std.fmt.bufPrint(&response_buf, "\x1BP{d}!~{X:0>4}\x1B\\", .{ pid, checksum }) catch "\x1BP0!~0000\x1B\\";
+
+                    self.ptyWrite(response);
+                }
+                return;
+            },
             else => {
                 std.log.debug("未处理的 CSI 私有序列: {c}{c}", .{ self.csi.mode[1], mode });
             },
@@ -1403,4 +1426,26 @@ fn strReset(self: *Parser) !void {
 fn csiReset(self: *Parser) void {
     const bytes = @as([*]u8, @ptrCast(&self.csi));
     for (0..@sizeOf(CSIEscape)) |i| bytes[i] = 0;
+}
+
+/// 计算矩形区域的校验和（用于 DECRQCRA）
+/// 根据 VT420/VT520 规范：XOR 所有字符的字节，然后按位取反
+fn calcRectChecksumCSICode(self: *Parser, top: usize, left: usize, bottom: usize, right: usize) u16 {
+    var checksum: u16 = 0;
+
+    if (self.term.screen) |lines| {
+        var row = top;
+        while (row <= bottom and row < lines.len) : (row += 1) {
+            const line = lines[row];
+            var col = left;
+            while (col <= right and col < line.len) : (col += 1) {
+                // XOR 字符码点（低8位）
+                const cp = line[col].codepoint;
+                checksum ^= @as(u16, @intCast(cp & 0xFF));
+            }
+        }
+    }
+
+    // 按位取反
+    return ~checksum;
 }

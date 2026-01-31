@@ -33,19 +33,19 @@ test "SGR reset sequence" {
     defer parser.deinit();
 
     // Set some attributes
-    term.c.attr.attr.bold = true;
-    term.c.attr.attr.underline = true;
-    term.c.attr.fg = 3; // Yellow
+    term.cursor.attr.attr.bold = true;
+    term.cursor.attr.attr.underline = true;
+    term.cursor.attr.fg = 3; // Yellow
 
     // Send reset sequence
     const sequence = "\x1B[0m";
     for (sequence) |c| try parser.putc(@intCast(c));
 
     // Check attributes are reset
-    try expect(!term.c.attr.attr.bold);
-    try expect(!term.c.attr.attr.underline);
+    try expect(!term.cursor.attr.attr.bold);
+    try expect(!term.cursor.attr.attr.underline);
     // 258 是 config.zig 中的默认前景色
-    try expectEqual(@as(u32, config.colors.default_foreground_idx), term.c.attr.fg);
+    try expectEqual(@as(u32, config.colors.default_foreground_idx), term.cursor.attr.fg);
 }
 
 test "CSI colon arguments" {
@@ -58,13 +58,13 @@ test "CSI colon arguments" {
     // 测试 38:5:123 (使用冒号的 256 色前景色)
     const seq1 = "\x1b[38:5:123m";
     for (seq1) |c| try parser.putc(@intCast(c));
-    try expectEqual(@as(u32, 123), term.c.attr.fg);
+    try expectEqual(@as(u32, 123), term.cursor.attr.fg);
 
     // 测试 48:2:255:128:64 (使用冒号的真彩色背景色)
     const seq2 = "\x1b[48:2:255:128:64m";
     for (seq2) |c| try parser.putc(@intCast(c));
     const expected_bg = (0xFF << 24) | (@as(u32, 255) << 16) | (@as(u32, 128) << 8) | 64;
-    try expectEqual(expected_bg, term.c.attr.bg);
+    try expectEqual(expected_bg, term.cursor.attr.bg);
 }
 
 test "SGR 4 and 58 underline style and color" {
@@ -77,8 +77,8 @@ test "SGR 4 and 58 underline style and color" {
     // Test 4:3 (Curly Underline)
     const seq_curly = "\x1b[4:3m";
     for (seq_curly) |c| try parser.putc(@intCast(c));
-    try expect(term.c.attr.attr.underline);
-    try expectEqual(@as(i32, 3), term.c.attr.ustyle);
+    try expect(term.cursor.attr.attr.underline);
+    try expectEqual(@as(i32, 3), term.cursor.attr.ustyle);
 
     // Test 58:5:1 (Set Underline Color to Red/Index 1)
     // Index 1 (Red) in normal colors is usually 0xFF0000 (RGB) or similar
@@ -87,14 +87,14 @@ test "SGR 4 and 58 underline style and color" {
     for (seq_ucolor) |c| try parser.putc(@intCast(c));
 
     // Check that ucolor is set (not default -1)
-    try expect(term.c.attr.ucolor[0] != -1);
+    try expect(term.cursor.attr.ucolor[0] != -1);
 
     // Test 59 (Reset Underline Color)
     const seq_reset_ucolor = "\x1b[59m";
     for (seq_reset_ucolor) |c| try parser.putc(@intCast(c));
-    try expectEqual(@as(i32, -1), term.c.attr.ucolor[0]);
-    try expectEqual(@as(i32, -1), term.c.attr.ucolor[1]);
-    try expectEqual(@as(i32, -1), term.c.attr.ucolor[2]);
+    try expectEqual(@as(i32, -1), term.cursor.attr.ucolor[0]);
+    try expectEqual(@as(i32, -1), term.cursor.attr.ucolor[1]);
+    try expectEqual(@as(i32, -1), term.cursor.attr.ucolor[2]);
 }
 
 test "Wide character wrapping" {
@@ -121,9 +121,9 @@ test "Wide character wrapping" {
     // 更新：移除了"智能挤压" hack，恢复标准 wrapping 行为 (st 兼容)
     // 如果宽字符在行尾溢出，应该换行。
     // 所以光标应该移动到下一行 (y=1)，x=0 开始写入，写完后 x=2。
-    try expectEqual(@as(usize, 1), term.c.y);
-    try expectEqual(@as(usize, 2), term.c.x);
-    try expect(!term.c.state.wrap_next);
+    try expectEqual(@as(usize, 1), term.cursor.y);
+    try expectEqual(@as(usize, 2), term.cursor.x);
+    try expect(!term.cursor.state.wrap_next);
     // 字符应该被写入到下一行开头
     try expectEqual(wide_char, term.screen.?[1][0].codepoint);
     // 且应该是 wide
@@ -139,24 +139,24 @@ test "LF behavior (LNM)" {
 
     // 1. 默认 LNM 关闭
     term.mode.crlf = false;
-    term.c.x = 5;
-    term.c.y = 5;
+    term.cursor.x = 5;
+    term.cursor.y = 5;
 
     // 发送 LF -> 光标应该在 (5, 6)
     try parser.putc('\x0A');
-    try expectEqual(@as(usize, 6), term.c.y);
-    try expectEqual(@as(usize, 5), term.c.x);
+    try expectEqual(@as(usize, 6), term.cursor.y);
+    try expectEqual(@as(usize, 5), term.cursor.x);
 
     // 2. 开启 LNM
     term.mode.crlf = true;
-    term.c.x = 5;
-    term.c.y = 5;
+    term.cursor.x = 5;
+    term.cursor.y = 5;
 
     // 发送 LF -> 光标应该在 (0, 6)
     try parser.putc('\x0A');
 
-    try expectEqual(@as(usize, 6), term.c.y);
-    try expectEqual(@as(usize, 0), term.c.x);
+    try expectEqual(@as(usize, 6), term.cursor.y);
+    try expectEqual(@as(usize, 0), term.cursor.x);
 }
 
 test "Parser setScrollRegion" {
@@ -196,15 +196,15 @@ test "Private CSI handling" {
     // SGR 4 sets underline
     const seq_sgr = "\x1b[4m";
     for (seq_sgr) |c| try parser.putc(@intCast(c));
-    try expect(term.c.attr.attr.underline);
+    try expect(term.cursor.attr.attr.underline);
 
     // Reset
-    term.c.attr.attr.underline = false;
+    term.cursor.attr.attr.underline = false;
 
     // CSI > 4 m should NOT set underline (XTMODKEYS)
     const seq_priv = "\x1b[>4m";
     for (seq_priv) |c| try parser.putc(@intCast(c));
-    try expect(!term.c.attr.attr.underline);
+    try expect(!term.cursor.attr.attr.underline);
 }
 
 test "SGR empty arguments (Reset)" {
@@ -215,14 +215,14 @@ test "SGR empty arguments (Reset)" {
     defer parser.deinit();
 
     // Set underline
-    term.c.attr.attr.underline = true;
+    term.cursor.attr.attr.underline = true;
 
     // SGR m (no args) should equivalent to SGR 0 -> Reset
     const seq = "\x1b[m";
     for (seq) |c| try parser.putc(@intCast(c));
 
     // Should be reset
-    try expect(!term.c.attr.attr.underline);
+    try expect(!term.cursor.attr.attr.underline);
 }
 
 test "Mouse mode toggles" {

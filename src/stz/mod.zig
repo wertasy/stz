@@ -7,6 +7,7 @@ pub const Input = @import("input.zig");
 pub const Selector = @import("selector.zig");
 pub const UrlDetector = @import("url.zig");
 pub const Printer = @import("printer.zig");
+pub const Recorder = @import("recorder.zig");
 pub const Args = @import("args.zig");
 pub const Config = @import("config.zig");
 pub const types = @import("types.zig");

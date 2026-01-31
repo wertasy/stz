@@ -367,7 +367,7 @@ pub const TermMode = packed struct(u32) {
 /// - ESC ) C: 选择 G1 字符集
 /// - ESC ( 0: 选择 G0 为 graphic0
 /// - ESC ( B: 选择 G0 为 USA
-pub const Charset = enum(u8) {
+pub const CharSet = enum(u8) {
     graphic0, // VT100 制表符（Line Drawing Character Set）
     graphic1, // 备用图形字符集（未广泛使用）
     uk, // 英国 ASCII（UK ASCII）
@@ -457,19 +457,19 @@ pub const EscapeState = packed struct(u16) {
 ///
 /// 移动光标到屏幕中心：
 /// ```zig
-/// term.c.x = term.col / 2;
-/// term.c.y = term.row / 2;
+/// term.cursor.x = term.col / 2;
+/// term.cursor.y = term.row / 2;
 /// ```
 ///
 /// 保存光标位置：
 /// ```zig
-/// const saved_x = term.c.x;
-/// const saved_y = term.c.y;
+/// const saved_x = term.cursor.x;
+/// const saved_y = term.cursor.y;
 /// // ... 执行操作 ...
-/// term.c.x = saved_x;
-/// term.c.y = saved_y;
+/// term.cursor.x = saved_x;
+/// term.cursor.y = saved_y;
 /// ```
-pub const TCursor = struct {
+pub const Cursor = struct {
     attr: Glyph = .{}, // 字符属性：光标位置的字符属性（颜色、粗体等）
     x: usize = 0, // 列位置：从 0 开始，最大值为 col-1
     y: usize = 0, // 行位置：从 0 开始，最大值为 row-1
@@ -508,7 +508,7 @@ pub const SavedCursor = struct {
     y: usize = 0, // 保存的行位置
     state: CursorState = .default, // 保存的光标状态
     style: CursorStyle = .blinking_block_default, // 保存的光标样式
-    trantbl: [4]Charset = [_]Charset{.usa} ** 4, // 字符集映射表：G0-G3 的字符集
+    trantbl: [4]CharSet = [_]CharSet{.usa} ** 4, // 字符集映射表：G0-G3 的字符集
     charset: u8 = 0, // 当前字符集索引：0-3（G0-G3）
 };
 

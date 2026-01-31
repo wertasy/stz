@@ -155,12 +155,12 @@ const boxdraw = @import("boxdraw.zig");
 
 const Glyph = types.Glyph;
 const GlyphAttr = types.GlyphAttr;
-const TCursor = types.TCursor;
+const Cursor = types.Cursor;
 const Parser = @import("parser.zig").Parser;
 const config = stz.Config;
 const TermMode = types.TermMode;
 const EscapeState = types.EscapeState;
-const Charset = types.Charset;
+const Charset = types.CharSet;
 const CursorStyle = types.CursorStyle;
 const SavedCursor = types.SavedCursor;
 const Selection = types.Selection;
@@ -195,7 +195,7 @@ scroll: usize = 0, // 滚动偏移：向上滚动的行数（0 = 底部，查看
 dirty: ?[]bool = null, // 脏标记：dirty[i]=true 表示第 i 行需要重新渲染
 
 // ========== 光标 ==========
-c: TCursor = .{}, // 当前光标：位置、属性、状态
+cursor: Cursor = .{}, // 当前光标：位置、属性、状态
 ocx: usize = 0, // 旧光标列：上一帧光标所在的列
 ocy: usize = 0, // 旧光标行：上一帧光标所在的行
 
@@ -334,13 +334,13 @@ pub fn init(row: usize, col: usize, allocator: std.mem.Allocator) !Terminal {
     term.icharset = 0;
 
     // ========== 初始化光标 ==========
-    term.c = TCursor{};
+    term.cursor = Cursor{};
 
     // ========== 初始化保存的光标状态 ==========
     term.cursor_style = config.cursor.style;
     for (0..2) |i| {
         term.saved_cursor[i] = types.SavedCursor{
-            .attr = term.c.attr,
+            .attr = term.cursor.attr,
             .x = 0,
             .y = 0,
             .state = .default,
@@ -577,7 +577,7 @@ fn controlCode(self: *Terminal, c: u8) !void {
     switch (c) {
         '\x09' => try self.putTab(), // HT
         '\x08' => try self.moveCursor(-1, 0), // BS
-        '\x0D' => self.moveTo(0, @as(isize, self.c.y)), // CR
+        '\x0D' => self.moveTo(0, @as(isize, self.cursor.y)), // CR
         '\x0A', '\x0B', '\x0C' => try self.newLine(self.mode.crlf), // LF, VT, FF
         '\x07' => { // BEL
             // 触发铃声
@@ -593,37 +593,37 @@ fn putchar(self: *Terminal, u: u21) !void {
     const width = unicode.runeWidth(u);
 
     // 检查自动换行
-    if (self.mode.wrap and self.c.state.wrap_next) {
+    if (self.mode.wrap and self.cursor.state.wrap_next) {
         if (width > 0) {
             try self.newLine(true);
         }
-        self.c.state.wrap_next = false;
+        self.cursor.state.wrap_next = false;
     }
 
     // 检查是否需要换行
-    if (self.c.x + width > self.col) {
+    if (self.cursor.x + width > self.col) {
         if (self.mode.wrap) {
             try self.newLine(true);
         } else {
-            self.c.x = @max(self.c.x, width) - width;
+            self.cursor.x = @max(self.cursor.x, width) - width;
         }
     }
 
     // 限制光标位置
-    if (self.c.x >= self.col) {
-        self.c.x = self.col - 1;
-        self.c.state.wrap_next = true;
+    if (self.cursor.x >= self.col) {
+        self.cursor.x = self.col - 1;
+        self.cursor.state.wrap_next = true;
     }
 
     // 写入字符
     if (self.screen) |lines| {
-        if (self.c.y < lines.len and self.c.x < lines[self.c.y].len) {
+        if (self.cursor.y < lines.len and self.cursor.x < lines[self.cursor.y].len) {
             // 清理被覆盖的宽字符 (st 对齐: tsetchar)
-            self.clearWide(self.c.x, self.c.y);
+            self.clearWide(self.cursor.x, self.cursor.y);
 
             // 设置字符属性（如果宽字符则设置 wide 标志）
 
-            var glyph_attr = self.c.attr.attr;
+            var glyph_attr = self.cursor.attr.attr;
             if (width == 2) {
                 glyph_attr.wide = true;
             }
@@ -631,36 +631,36 @@ fn putchar(self: *Terminal, u: u21) !void {
             if (config.draw.boxdraw and boxdraw.BoxDraw.isBoxDraw(u)) {
                 glyph_attr.boxdraw = true;
             }
-            lines[self.c.y][self.c.x] = Glyph{
+            lines[self.cursor.y][self.cursor.x] = Glyph{
                 .codepoint = u,
                 .attr = glyph_attr,
-                .fg = self.c.attr.fg,
-                .bg = self.c.attr.bg,
-                .url_id = self.c.attr.url_id,
+                .fg = self.cursor.attr.fg,
+                .bg = self.cursor.attr.bg,
+                .url_id = self.cursor.attr.url_id,
             };
         }
 
         // 移动光标 - 处理宽字符
-        if (width == 2 and self.c.x + 1 < self.col) {
+        if (width == 2 and self.cursor.x + 1 < self.col) {
             // 宽字符
-            self.c.x += 2;
-            if (self.c.y < lines.len and self.c.x < lines[self.c.y].len) {
-                lines[self.c.y][self.c.x - 1] = Glyph{
+            self.cursor.x += 2;
+            if (self.cursor.y < lines.len and self.cursor.x < lines[self.cursor.y].len) {
+                lines[self.cursor.y][self.cursor.x - 1] = Glyph{
                     .codepoint = 0,
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                     .attr = .{ .wide_dummy = true },
                 };
             }
         } else if (width > 0) {
-            self.c.x += width;
+            self.cursor.x += width;
         }
     }
 
     // 设置脏标记
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) {
-            dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) {
+            dirty[self.cursor.y] = true;
         }
     }
 }
@@ -669,23 +669,23 @@ fn putchar(self: *Terminal, u: u21) !void {
 pub fn moveCursor(self: *Terminal, dx: i32, dy: i32) !void {
     // Mark old cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 
-    var new_x = @as(isize, @intCast(self.c.x)) + dx;
-    var new_y = @as(isize, @intCast(self.c.y)) + dy;
+    var new_x = @as(isize, @intCast(self.cursor.x)) + dx;
+    var new_y = @as(isize, @intCast(self.cursor.y)) + dy;
 
     // 限制在范围内
     new_x = @max(0, @min(new_x, @as(isize, @intCast(self.col - 1))));
     new_y = @max(0, @min(new_y, @as(isize, @intCast(self.row - 1))));
 
-    self.c.x = @intCast(new_x);
-    self.c.y = @intCast(new_y);
-    self.c.state.wrap_next = false;
+    self.cursor.x = @intCast(new_x);
+    self.cursor.y = @intCast(new_y);
+    self.cursor.state.wrap_next = false;
 
     // Mark new cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 }
 
@@ -693,7 +693,7 @@ pub fn moveCursor(self: *Terminal, dx: i32, dy: i32) !void {
 pub fn moveTo(self: *Terminal, x: usize, y: usize) !void {
     // Mark old cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 
     var new_x = x;
@@ -703,7 +703,7 @@ pub fn moveTo(self: *Terminal, x: usize, y: usize) !void {
     var min_y: usize = 0;
     var max_y: usize = self.row - 1;
 
-    if (self.c.state.origin) {
+    if (self.cursor.state.origin) {
         min_y = self.top;
         max_y = self.bot;
     }
@@ -712,13 +712,13 @@ pub fn moveTo(self: *Terminal, x: usize, y: usize) !void {
     new_x = @min(new_x, self.col - 1);
     new_y = @max(min_y, @min(new_y, max_y));
 
-    self.c.x = new_x;
-    self.c.y = new_y;
-    self.c.state.wrap_next = false;
+    self.cursor.x = new_x;
+    self.cursor.y = new_y;
+    self.cursor.state.wrap_next = false;
 
     // Mark new cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 }
 
@@ -726,25 +726,25 @@ pub fn moveTo(self: *Terminal, x: usize, y: usize) !void {
 pub fn newLine(self: *Terminal, first_col: bool) !void {
     // Mark old cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 
-    if (self.c.y == self.bot) {
+    if (self.cursor.y == self.bot) {
         try self.scrollUp(self.top, 1);
     } else {
         // Move down with clamping respecting origin mode
-        var next_y = self.c.y + 1;
-        const max_y = if (self.c.state.origin) self.bot else self.row - 1;
+        var next_y = self.cursor.y + 1;
+        const max_y = if (self.cursor.state.origin) self.bot else self.row - 1;
         if (next_y > max_y) next_y = max_y;
-        self.c.y = next_y;
+        self.cursor.y = next_y;
     }
 
-    self.c.x = if (first_col) 0 else self.c.x;
-    self.c.state.wrap_next = false;
+    self.cursor.x = if (first_col) 0 else self.cursor.x;
+    self.cursor.state.wrap_next = false;
 
     // Mark new cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 }
 
@@ -752,10 +752,10 @@ pub fn newLine(self: *Terminal, first_col: bool) !void {
 pub fn putTab(self: *Terminal) !void {
     // Mark old cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 
-    var x = self.c.x + 1;
+    var x = self.cursor.x + 1;
 
     // 查找下一个制表位
     while (x < self.col) {
@@ -767,12 +767,12 @@ pub fn putTab(self: *Terminal) !void {
         x += 1;
     }
 
-    self.c.x = @min(x, self.col - 1);
-    self.c.state.wrap_next = false;
+    self.cursor.x = @min(x, self.col - 1);
+    self.cursor.state.wrap_next = false;
 
     // Mark new cursor line as dirty
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 }
 
@@ -784,19 +784,19 @@ pub fn clearScreen(self: *Terminal, mode: u32) !void {
             // clearRegion(x, y, x, y) clears one cell.
 
             // Clear from cursor to end of line
-            try self.clearRegion(self.c.x, self.c.y, self.col - 1, self.c.y);
+            try self.clearRegion(self.cursor.x, self.cursor.y, self.col - 1, self.cursor.y);
 
             // Clear remaining lines below
-            if (self.c.y < self.row - 1) {
-                try self.clearRegion(0, self.c.y + 1, self.col - 1, self.row - 1);
+            if (self.cursor.y < self.row - 1) {
+                try self.clearRegion(0, self.cursor.y + 1, self.col - 1, self.row - 1);
             }
         },
         1 => { // From beginning of screen to cursor
-            if (self.c.y > 0) {
-                try self.clearRegion(0, 0, self.col - 1, self.c.y - 1);
+            if (self.cursor.y > 0) {
+                try self.clearRegion(0, 0, self.col - 1, self.cursor.y - 1);
             }
             // Clear from start of line to cursor
-            try self.clearRegion(0, self.c.y, self.c.x, self.c.y);
+            try self.clearRegion(0, self.cursor.y, self.cursor.x, self.cursor.y);
         },
         2 => { // Clear entire screen
             try self.clearRegion(0, 0, self.col - 1, self.row - 1);
@@ -814,13 +814,13 @@ pub fn clearScreen(self: *Terminal, mode: u32) !void {
 pub fn clearLine(self: *Terminal, mode: u32) !void {
     switch (mode) {
         0 => { // 从光标到行末
-            try self.clearRegion(self.c.x, self.c.y, self.col - 1, self.c.y);
+            try self.clearRegion(self.cursor.x, self.cursor.y, self.col - 1, self.cursor.y);
         },
         1 => { // 从行首到光标
-            try self.clearRegion(0, self.c.y, self.c.x, self.c.y);
+            try self.clearRegion(0, self.cursor.y, self.cursor.x, self.cursor.y);
         },
         2 => { // 清除整行
-            try self.clearRegion(0, self.c.y, self.col - 1, self.c.y);
+            try self.clearRegion(0, self.cursor.y, self.col - 1, self.cursor.y);
         },
         else => {
             std.log.debug("未知的清除行模式: {d}", .{mode});
@@ -830,20 +830,20 @@ pub fn clearLine(self: *Terminal, mode: u32) !void {
 
 /// 删除字符
 pub fn deleteChars(self: *Terminal, n: usize) !void {
-    const count = @min(n, self.col - self.c.x);
+    const count = @min(n, self.col - self.cursor.x);
     const screen_buf = self.screen;
 
     if (screen_buf) |scr| {
-        if (self.c.y < scr.len) {
-            const row = scr[self.c.y];
+        if (self.cursor.y < scr.len) {
+            const row = scr[self.cursor.y];
 
             // 宽字符清理：检查删除起始位置
-            if (self.c.x > 0 and row[self.c.x].attr.wide_dummy) {
-                row[self.c.x - 1].codepoint = ' ';
-                row[self.c.x - 1].attr.wide = false;
+            if (self.cursor.x > 0 and row[self.cursor.x].attr.wide_dummy) {
+                row[self.cursor.x - 1].codepoint = ' ';
+                row[self.cursor.x - 1].attr.wide = false;
             }
             // 检查删除范围的末尾
-            const last_deleted_idx = self.c.x + count - 1;
+            const last_deleted_idx = self.cursor.x + count - 1;
             if (row[last_deleted_idx].attr.wide) {
                 if (last_deleted_idx + 1 < self.col) {
                     row[last_deleted_idx + 1].codepoint = ' ';
@@ -852,7 +852,7 @@ pub fn deleteChars(self: *Terminal, n: usize) !void {
             }
 
             // 移动字符
-            for (self.c.x..self.col - count) |i| {
+            for (self.cursor.x..self.col - count) |i| {
                 row[i] = row[i + count];
             }
 
@@ -860,15 +860,15 @@ pub fn deleteChars(self: *Terminal, n: usize) !void {
             for (self.col - count..self.col) |i| {
                 row[i] = Glyph{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                     .attr = .{},
                 };
             }
 
             if (self.dirty) |dirty| {
-                if (self.c.y < dirty.len) {
-                    dirty[self.c.y] = true;
+                if (self.cursor.y < dirty.len) {
+                    dirty[self.cursor.y] = true;
                 }
             }
         }
@@ -877,31 +877,31 @@ pub fn deleteChars(self: *Terminal, n: usize) !void {
 
 /// 插入空字符
 pub fn insertBlanks(self: *Terminal, n: usize) !void {
-    const count = @min(n, self.col - self.c.x);
+    const count = @min(n, self.col - self.cursor.x);
     const screen_buf = self.screen;
 
     if (screen_buf) |scr| {
-        if (self.c.y < scr.len) {
-            const row = scr[self.c.y];
+        if (self.cursor.y < scr.len) {
+            const row = scr[self.cursor.y];
 
             // 宽字符清理：如果插入点是 wide_dummy，清理其前面的 wide 头
-            if (self.c.x > 0 and row[self.c.x].attr.wide_dummy) {
-                row[self.c.x - 1].codepoint = ' ';
-                row[self.c.x - 1].attr.wide = false;
+            if (self.cursor.x > 0 and row[self.cursor.x].attr.wide_dummy) {
+                row[self.cursor.x - 1].codepoint = ' ';
+                row[self.cursor.x - 1].attr.wide = false;
             }
 
             // 移动字符
             var i: usize = self.col - 1;
-            while (i >= self.c.x + count) : (i -= 1) {
+            while (i >= self.cursor.x + count) : (i -= 1) {
                 row[i] = row[i - count];
             }
 
             // 插入空格
-            for (self.c.x..self.c.x + count) |j| {
+            for (self.cursor.x..self.cursor.x + count) |j| {
                 row[j] = Glyph{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                     .attr = .{},
                 };
             }
@@ -914,8 +914,8 @@ pub fn insertBlanks(self: *Terminal, n: usize) !void {
             }
 
             if (self.dirty) |dirty| {
-                if (self.c.y < dirty.len) {
-                    dirty[self.c.y] = true;
+                if (self.cursor.y < dirty.len) {
+                    dirty[self.cursor.y] = true;
                 }
             }
         }
@@ -940,10 +940,10 @@ pub fn setScrollRegion(self: *Terminal, top: usize, bot: usize) !void {
 pub fn saveCursorState(self: *Terminal) void {
     const alt = if (self.mode.alt_screen) @as(usize, 1) else 0;
     self.saved_cursor[alt] = .{
-        .attr = self.c.attr,
-        .x = self.c.x,
-        .y = self.c.y,
-        .state = self.c.state,
+        .attr = self.cursor.attr,
+        .x = self.cursor.x,
+        .y = self.cursor.y,
+        .state = self.cursor.state,
         .style = self.cursor_style,
         .trantbl = self.trantbl,
         .charset = self.charset,
@@ -954,8 +954,8 @@ pub fn saveCursorState(self: *Terminal) void {
 pub fn restoreCursorState(self: *Terminal) !void {
     const alt = if (self.mode.alt_screen) @as(usize, 1) else 0;
     const saved = self.saved_cursor[alt];
-    self.c.attr = saved.attr;
-    self.c.state = saved.state;
+    self.cursor.attr = saved.attr;
+    self.cursor.state = saved.state;
     self.cursor_style = saved.style;
     self.trantbl = saved.trantbl;
     self.charset = saved.charset;
@@ -1005,7 +1005,7 @@ pub fn kscrollDown(self: *Terminal, n: usize) void {
 /// 设置光标位置（考虑原点模式）
 pub fn setCursor(self: *Terminal, x: usize, y: usize) !void {
     var new_y = y;
-    if (self.c.state.origin) {
+    if (self.cursor.state.origin) {
         new_y += self.top;
     }
     try self.moveTo(x, new_y);
@@ -1014,7 +1014,7 @@ pub fn setCursor(self: *Terminal, x: usize, y: usize) !void {
 /// DECALN - 屏幕对齐测试（填充 E 字符）
 pub fn decaln(self: *Terminal) !void {
     if (self.screen) |lines| {
-        const glyph = self.c.attr;
+        const glyph = self.cursor.attr;
         var glyph_var = glyph;
         glyph_var.codepoint = 'E';
         for (0..self.row) |y| {
@@ -1035,38 +1035,38 @@ pub fn decaln(self: *Terminal) !void {
 
 /// 擦除从光标开始的 n 个字符（不移动后续字符）
 pub fn eraseChars(self: *Terminal, n: usize) !void {
-    const max_chars = self.col - self.c.x;
+    const max_chars = self.col - self.cursor.x;
     const erase_count = @min(n, max_chars);
     if (erase_count == 0) return;
 
     if (self.screen) |lines| {
-        if (self.c.y < lines.len) {
-            const line = lines[self.c.y];
-            const clear_glyph = Glyph{ .codepoint = ' ', .fg = self.c.attr.fg, .bg = self.c.attr.bg };
+        if (self.cursor.y < lines.len) {
+            const line = lines[self.cursor.y];
+            const clear_glyph = Glyph{ .codepoint = ' ', .fg = self.cursor.attr.fg, .bg = self.cursor.attr.bg };
 
             // 检查起始位置和结束位置是否切断了宽字符
-            self.clearWide(self.c.x, self.c.y);
-            const end_idx = self.c.x + erase_count;
+            self.clearWide(self.cursor.x, self.cursor.y);
+            const end_idx = self.cursor.x + erase_count;
             if (end_idx < line.len) {
-                self.clearWide(end_idx, self.c.y);
+                self.clearWide(end_idx, self.cursor.y);
             }
 
             var i: usize = 0;
-            while (i < erase_count and self.c.x + i < line.len) : (i += 1) {
-                line[self.c.x + i] = clear_glyph;
+            while (i < erase_count and self.cursor.x + i < line.len) : (i += 1) {
+                line[self.cursor.x + i] = clear_glyph;
             }
         }
     }
 
     if (self.dirty) |dirty| {
-        if (self.c.y < dirty.len) dirty[self.c.y] = true;
+        if (self.cursor.y < dirty.len) dirty[self.cursor.y] = true;
     }
 }
 
 /// 擦除显示 (ED)
 pub fn eraseDisplay(self: *Terminal, mode: i32) !void {
-    const x = self.c.x;
-    const y = self.c.y;
+    const x = self.cursor.x;
+    const y = self.cursor.y;
 
     switch (mode) {
         0 => { // 从光标到屏幕末尾
@@ -1090,8 +1090,8 @@ pub fn eraseDisplay(self: *Terminal, mode: i32) !void {
                     for (line) |*glyph| {
                         glyph.* = .{
                             .codepoint = ' ',
-                            .fg = self.c.attr.fg,
-                            .bg = self.c.attr.bg,
+                            .fg = self.cursor.attr.fg,
+                            .bg = self.cursor.attr.bg,
                             .attr = .{},
                         };
                     }
@@ -1112,8 +1112,8 @@ pub fn eraseDisplay(self: *Terminal, mode: i32) !void {
 
 /// 擦除行 (EL)
 pub fn eraseLine(self: *Terminal, mode: i32) !void {
-    const x = self.c.x;
-    const y = self.c.y;
+    const x = self.cursor.x;
+    const y = self.cursor.y;
 
     switch (mode) {
         0 => try self.clearRegion(x, y, self.col - 1, y),
@@ -1127,14 +1127,14 @@ pub fn eraseLine(self: *Terminal, mode: i32) !void {
 
 /// 插入空白行（在滚动区域内）
 pub fn insertBlankLines(self: *Terminal, n: usize) !void {
-    if (self.c.y < self.top or self.c.y > self.bot) return;
-    try self.scrollDown(self.c.y, n);
+    if (self.cursor.y < self.top or self.cursor.y > self.bot) return;
+    try self.scrollDown(self.cursor.y, n);
 }
 
 /// 删除行（在滚动区域内）
 pub fn deleteLines(self: *Terminal, n: usize) !void {
-    if (self.c.y < self.top or self.c.y > self.bot) return;
-    try self.scrollUp(self.c.y, n);
+    if (self.cursor.y < self.top or self.cursor.y > self.bot) return;
+    try self.scrollUp(self.cursor.y, n);
 }
 
 /// 获取当前可见的行数据（考虑滚动偏移）
@@ -1182,8 +1182,8 @@ pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
     // 滑动屏幕内容以保持光标位置
     // 如果光标在新屏幕外面，向上滚动屏幕
     var valid_rows: usize = 0;
-    if (self.c.y >= new_row) {
-        const shift = self.c.y - new_row + 1;
+    if (self.cursor.y >= new_row) {
+        const shift = self.cursor.y - new_row + 1;
         // 释放顶部的行
         for (0..shift) |y| {
             if (self.screen) |lines| allocator.free(lines[y]);
@@ -1211,7 +1211,7 @@ pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
                 alt[y] = alt[y + shift];
             }
         }
-        self.c.y -= shift;
+        self.cursor.y -= shift;
     } else {
         valid_rows = old_row;
         // 如果新屏幕比旧屏幕矮，释放超出的行
@@ -1238,13 +1238,13 @@ pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
             for (old_col..new_col) |x| {
                 self.screen.?[y][x] = Glyph{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                 };
                 self.alt_screen.?[y][x] = Glyph{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                 };
             }
         }
@@ -1257,13 +1257,13 @@ pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
         for (0..new_col) |x| {
             self.screen.?[y][x] = Glyph{
                 .codepoint = ' ',
-                .fg = self.c.attr.fg,
-                .bg = self.c.attr.bg,
+                .fg = self.cursor.attr.fg,
+                .bg = self.cursor.attr.bg,
             };
             self.alt_screen.?[y][x] = Glyph{
                 .codepoint = ' ',
-                .fg = self.c.attr.fg,
-                .bg = self.c.attr.bg,
+                .fg = self.cursor.attr.fg,
+                .bg = self.cursor.attr.bg,
             };
         }
     }
@@ -1322,11 +1322,11 @@ pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
     self.bot = new_row - 1;
 
     // 限制光标位置
-    if (self.c.x >= new_col) {
-        self.c.x = new_col - 1;
+    if (self.cursor.x >= new_col) {
+        self.cursor.x = new_col - 1;
     }
-    if (self.c.y >= new_row) {
-        self.c.y = new_row - 1;
+    if (self.cursor.y >= new_row) {
+        self.cursor.y = new_row - 1;
     }
 
     // 限制保存的光标位置 (st 对齐)
@@ -1339,7 +1339,7 @@ pub fn resize(self: *Terminal, new_row: usize, new_col: usize) !void {
         }
     }
 
-    self.c.state.wrap_next = false;
+    self.cursor.state.wrap_next = false;
 }
 
 /// 清除区域
@@ -1376,8 +1376,8 @@ pub fn clearRegion(self: *Terminal, x1: usize, y1: usize, x2: usize, y2: usize) 
             if (screen) |scr| {
                 scr[y][x] = .{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                     .attr = .{},
                 };
             }
@@ -1392,7 +1392,7 @@ pub fn scrollUp(self: *Terminal, orig: usize, n: usize) !void {
     if (limit_n == 0) return;
 
     // Log scroll event
-    // std.log.debug("SCROLL_UP: orig={d}, n={d}, bot={d}, cursor=({d},{d})", .{ orig, n, term.bot, term.c.x, term.c.y });
+    // std.log.debug("SCROLL_UP: orig={d}, n={d}, bot={d}, cursor=({d},{d})", .{ orig, n, term.bot, term.cursor.x, term.cursor.y });
 
     const screen = self.screen;
 
@@ -1433,8 +1433,8 @@ pub fn scrollUp(self: *Terminal, orig: usize, n: usize) !void {
             for (scr[idx]) |*glyph| {
                 glyph.* = .{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                     .attr = .{},
                 };
             }
@@ -1470,8 +1470,8 @@ pub fn scrollDown(self: *Terminal, orig: usize, n: usize) !void {
             for (scr[idx]) |*glyph| {
                 glyph.* = .{
                     .codepoint = ' ',
-                    .fg = self.c.attr.fg,
-                    .bg = self.c.attr.bg,
+                    .fg = self.cursor.attr.fg,
+                    .bg = self.cursor.attr.bg,
                     .attr = .{},
                 };
             }

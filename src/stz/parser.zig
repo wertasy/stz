@@ -117,12 +117,13 @@ const types = stz.types;
 const unicode = stz.unicode;
 const config = stz.Config;
 const Terminal = stz.Terminal;
+const Recorder = stz.Recorder;
 
 const Glyph = types.Glyph;
 const CSIEscape = types.CSIEscape;
 const STREscape = types.STREscape;
 const EscapeState = types.EscapeState;
-const Charset = types.Charset;
+const Charset = types.CharSet;
 const PTY = stz.PTY;
 
 pub const ParserError = error{
@@ -141,6 +142,7 @@ pty: ?*PTY = null, // PTY 引用，用于发送响应
 utf8_buf: [4]u8 = .{0} ** 4, // UTF-8 解码缓冲区
 utf8_len: u8 = 0, // 缓冲区中当前字节数
 allow_altscreen: bool = true,
+recorder: Recorder = undefined, // 序列录制器
 
 pub fn init(term: *Terminal, pty: ?*PTY, allocator: std.mem.Allocator) !Parser {
     var p = Parser{
@@ -149,6 +151,7 @@ pub fn init(term: *Terminal, pty: ?*PTY, allocator: std.mem.Allocator) !Parser {
         .pty = pty,
         .utf8_buf = .{0} ** 4,
         .utf8_len = 0,
+        .recorder = Recorder.init(allocator),
     };
     try p.strReset();
     p.resetPalette();
@@ -161,11 +164,19 @@ fn ptyWrite(self: *Parser, data: []const u8) void {
 }
 
 pub fn deinit(self: *Parser) void {
+    self.recorder.deinit();
     self.allocator.free(self.str.buf);
 }
 
 /// 处理输入字节
 pub fn parseBytes(self: *Parser, bytes: []const u8) !void {
+    // 如果录制开启,记录原始字节
+    if (self.recorder.enabled) {
+        self.recorder.record(bytes) catch |err| {
+            std.log.err("录制失败: {}", .{err});
+        };
+    }
+
     // std.log.debug("Input bytes: {X}", .{bytes});
 
     var i: usize = 0;
@@ -422,50 +433,50 @@ fn setGraphicsMode(self: *Parser) !void {
         const arg = self.csi.arg[i];
         switch (arg) {
             0 => {
-                self.term.c.attr.attr.bold = false;
-                self.term.c.attr.attr.faint = false;
-                self.term.c.attr.attr.italic = false;
-                self.term.c.attr.attr.underline = false;
-                self.term.c.attr.attr.blink = false;
-                self.term.c.attr.attr.reverse = false;
-                self.term.c.attr.attr.hidden = false;
-                self.term.c.attr.attr.struck = false;
-                self.term.c.attr.fg = config.colors.default_foreground_idx;
-                self.term.c.attr.bg = config.colors.default_background_idx;
-                self.term.c.attr.ustyle = -1;
-                for (0..3) |j| self.term.c.attr.ucolor[j] = -1;
+                self.term.cursor.attr.attr.bold = false;
+                self.term.cursor.attr.attr.faint = false;
+                self.term.cursor.attr.attr.italic = false;
+                self.term.cursor.attr.attr.underline = false;
+                self.term.cursor.attr.attr.blink = false;
+                self.term.cursor.attr.attr.reverse = false;
+                self.term.cursor.attr.attr.hidden = false;
+                self.term.cursor.attr.attr.struck = false;
+                self.term.cursor.attr.fg = config.colors.default_foreground_idx;
+                self.term.cursor.attr.bg = config.colors.default_background_idx;
+                self.term.cursor.attr.ustyle = -1;
+                for (0..3) |j| self.term.cursor.attr.ucolor[j] = -1;
             },
-            1 => self.term.c.attr.attr.bold = true,
-            2 => self.term.c.attr.attr.faint = true,
-            3 => self.term.c.attr.attr.italic = true,
+            1 => self.term.cursor.attr.attr.bold = true,
+            2 => self.term.cursor.attr.attr.faint = true,
+            3 => self.term.cursor.attr.attr.italic = true,
             4 => {
-                self.term.c.attr.attr.underline = true;
+                self.term.cursor.attr.attr.underline = true;
                 // Check for colon argument (4:x)
                 const sub = self.csi.carg[i][0];
                 if (sub != -1) {
-                    self.term.c.attr.ustyle = @intCast(sub);
+                    self.term.cursor.attr.ustyle = @intCast(sub);
                 } else {
-                    self.term.c.attr.ustyle = 1; // Default to single underline
+                    self.term.cursor.attr.ustyle = 1; // Default to single underline
                 }
             },
-            5, 6 => self.term.c.attr.attr.blink = true,
-            7 => self.term.c.attr.attr.reverse = true,
-            8 => self.term.c.attr.attr.hidden = true,
-            9 => self.term.c.attr.attr.struck = true,
+            5, 6 => self.term.cursor.attr.attr.blink = true,
+            7 => self.term.cursor.attr.attr.reverse = true,
+            8 => self.term.cursor.attr.attr.hidden = true,
+            9 => self.term.cursor.attr.attr.struck = true,
             22 => {
-                self.term.c.attr.attr.bold = false;
-                self.term.c.attr.attr.faint = false;
+                self.term.cursor.attr.attr.bold = false;
+                self.term.cursor.attr.attr.faint = false;
             },
-            23 => self.term.c.attr.attr.italic = false,
+            23 => self.term.cursor.attr.attr.italic = false,
             24 => {
-                self.term.c.attr.attr.underline = false;
-                self.term.c.attr.ustyle = -1;
+                self.term.cursor.attr.attr.underline = false;
+                self.term.cursor.attr.ustyle = -1;
             },
-            25 => self.term.c.attr.attr.blink = false,
-            27 => self.term.c.attr.attr.reverse = false,
-            28 => self.term.c.attr.attr.hidden = false,
-            29 => self.term.c.attr.attr.struck = false,
-            30...37 => self.term.c.attr.fg = @as(u32, @intCast(arg - 30)),
+            25 => self.term.cursor.attr.attr.blink = false,
+            27 => self.term.cursor.attr.attr.reverse = false,
+            28 => self.term.cursor.attr.attr.hidden = false,
+            29 => self.term.cursor.attr.attr.struck = false,
+            30...37 => self.term.cursor.attr.fg = @as(u32, @intCast(arg - 30)),
             38 => {
                 var color_submode: i64 = -1;
                 var r: i64 = -1;
@@ -496,10 +507,10 @@ fn setGraphicsMode(self: *Parser) !void {
                         }
                     }
                 }
-                if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.fg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.fg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
+                if (color_submode == 5 and index >= 0 and index <= 255) self.term.cursor.attr.fg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.cursor.attr.fg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
             },
-            39 => self.term.c.attr.fg = config.colors.default_foreground_idx,
-            40...47 => self.term.c.attr.bg = @as(u32, @intCast(arg - 40)),
+            39 => self.term.cursor.attr.fg = config.colors.default_foreground_idx,
+            40...47 => self.term.cursor.attr.bg = @as(u32, @intCast(arg - 40)),
             48 => {
                 var color_submode: i64 = -1;
                 var r: i64 = -1;
@@ -530,9 +541,9 @@ fn setGraphicsMode(self: *Parser) !void {
                         }
                     }
                 }
-                if (color_submode == 5 and index >= 0 and index <= 255) self.term.c.attr.bg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.c.attr.bg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
+                if (color_submode == 5 and index >= 0 and index <= 255) self.term.cursor.attr.bg = @intCast(index) else if (color_submode == 2 and r != -1) self.term.cursor.attr.bg = (0xFF << 24) | (@as(u32, @intCast(r)) << 16) | (@as(u32, @intCast(g)) << 8) | @as(u32, @intCast(b));
             },
-            49 => self.term.c.attr.bg = config.colors.default_background_idx,
+            49 => self.term.cursor.attr.bg = config.colors.default_background_idx,
             58 => {
                 var color_submode: i64 = -1;
                 var r: i64 = -1;
@@ -565,22 +576,22 @@ fn setGraphicsMode(self: *Parser) !void {
                 }
                 if (color_submode == 5 and index >= 0 and index <= 255) {
                     const pal = self.term.palette[@intCast(index)];
-                    self.term.c.attr.ucolor[0] = @intCast((pal >> 16) & 0xFF);
-                    self.term.c.attr.ucolor[1] = @intCast((pal >> 8) & 0xFF);
-                    self.term.c.attr.ucolor[2] = @intCast(pal & 0xFF);
+                    self.term.cursor.attr.ucolor[0] = @intCast((pal >> 16) & 0xFF);
+                    self.term.cursor.attr.ucolor[1] = @intCast((pal >> 8) & 0xFF);
+                    self.term.cursor.attr.ucolor[2] = @intCast(pal & 0xFF);
                 } else if (color_submode == 2 and r != -1) {
-                    self.term.c.attr.ucolor[0] = @intCast(r);
-                    self.term.c.attr.ucolor[1] = @intCast(g);
-                    self.term.c.attr.ucolor[2] = @intCast(b);
+                    self.term.cursor.attr.ucolor[0] = @intCast(r);
+                    self.term.cursor.attr.ucolor[1] = @intCast(g);
+                    self.term.cursor.attr.ucolor[2] = @intCast(b);
                 }
             },
             59 => {
-                self.term.c.attr.ucolor[0] = -1;
-                self.term.c.attr.ucolor[1] = -1;
-                self.term.c.attr.ucolor[2] = -1;
+                self.term.cursor.attr.ucolor[0] = -1;
+                self.term.cursor.attr.ucolor[1] = -1;
+                self.term.cursor.attr.ucolor[2] = -1;
             },
-            90...97 => self.term.c.attr.fg = @as(u32, @intCast(arg - 90 + 8)),
-            100...107 => self.term.c.attr.bg = @as(u32, @intCast(arg - 100 + 8)),
+            90...97 => self.term.cursor.attr.fg = @as(u32, @intCast(arg - 90 + 8)),
+            100...107 => self.term.cursor.attr.bg = @as(u32, @intCast(arg - 100 + 8)),
             else => {
                 std.log.debug("未处理的 SGR 参数: {d}", .{arg});
             },
@@ -590,7 +601,7 @@ fn setGraphicsMode(self: *Parser) !void {
 
 fn setCursor(self: *Parser, x: usize, y: usize) !void {
     var new_y = y;
-    if (self.term.c.state.origin) {
+    if (self.term.cursor.state.origin) {
         new_y += self.term.top;
     }
     try self.term.moveTo(x, new_y);
@@ -600,20 +611,20 @@ fn setCursor(self: *Parser, x: usize, y: usize) !void {
 // {
 //     int miny, maxy;
 //
-//     if (term.c.state & CURSOR_ORIGIN) {
+//     if (term.cursor.state & CURSOR_ORIGIN) {
 //         miny = term.top;
 //         maxy = term.bot;
 //     } else {
 //         miny = 0;
 //         maxy = term.row - 1;
 //     }
-//     term.c.state &= ~CURSOR_WRAPNEXT;
-//     term.c.x = LIMIT(x, 0, term.col-1);
-//     term.c.y = LIMIT(y, miny, maxy);
+//     term.cursor.state &= ~CURSOR_WRAPNEXT;
+//     term.cursor.x = LIMIT(x, 0, term.col-1);
+//     term.cursor.y = LIMIT(y, miny, maxy);
 // }
 fn decaln(self: *Parser) !void {
     if (self.term.screen) |lines| {
-        const glyph = self.term.c.attr;
+        const glyph = self.term.cursor.attr;
         var glyph_var = glyph;
         glyph_var.codepoint = 'E';
         for (0..self.term.row) |y| {
@@ -635,10 +646,10 @@ fn decaln(self: *Parser) !void {
 pub fn resetTerminal(self: *Parser) !void {
     try self.term.eraseDisplay(2);
     try self.term.moveTo(0, 0);
-    self.term.c.state = .{};
-    self.term.c.attr = .{};
-    self.term.c.attr.fg = config.colors.default_foreground_idx;
-    self.term.c.attr.bg = config.colors.default_background_idx;
+    self.term.cursor.state = .{};
+    self.term.cursor.attr = .{};
+    self.term.cursor.attr.fg = config.colors.default_foreground_idx;
+    self.term.cursor.attr.bg = config.colors.default_background_idx;
     self.term.top = 0;
     self.term.bot = self.term.row - 1;
     self.term.mode = .{ .utf8 = true, .wrap = true };
@@ -647,10 +658,10 @@ pub fn resetTerminal(self: *Parser) !void {
 fn cursorSave(self: *Parser) void {
     const alt = if (self.term.mode.alt_screen) @as(usize, 1) else 0;
     self.term.saved_cursor[alt] = .{
-        .attr = self.term.c.attr,
-        .x = self.term.c.x,
-        .y = self.term.c.y,
-        .state = self.term.c.state,
+        .attr = self.term.cursor.attr,
+        .x = self.term.cursor.x,
+        .y = self.term.cursor.y,
+        .state = self.term.cursor.state,
         .trantbl = self.term.trantbl,
         .charset = self.term.charset,
     };
@@ -659,8 +670,8 @@ fn cursorSave(self: *Parser) void {
 fn cursorRestore(self: *Parser) !void {
     const alt = if (self.term.mode.alt_screen) @as(usize, 1) else 0;
     const saved = self.term.saved_cursor[alt];
-    self.term.c.attr = saved.attr;
-    self.term.c.state = saved.state;
+    self.term.cursor.attr = saved.attr;
+    self.term.cursor.state = saved.state;
     try self.term.moveTo(saved.x, saved.y);
     self.term.trantbl = saved.trantbl;
     self.term.charset = saved.charset;
@@ -674,7 +685,7 @@ fn controlCode(self: *Parser, c: u8) !void {
         '\x08' => try self.term.moveCursor(-1, 0), // HT
         '\x09' => try self.term.putTab(),
         '\x0A', '\x0B', '\x0C' => try self.term.newLine(self.term.mode.crlf), // LF LF VT
-        '\x0D' => try self.term.moveTo(0, self.term.c.y), // CR
+        '\x0D' => try self.term.moveTo(0, self.term.cursor.y), // CR
         0x07 => { // BEL
             // TODO: 实现响铃 (XBell)
             // 目前仅忽略以避免日志刷屏
@@ -690,16 +701,16 @@ fn controlCode(self: *Parser, c: u8) !void {
         },
         0x84 => try self.term.newLine(false), // IND
         0x85 => try self.term.newLine(true), // NEL
-        0x88 => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
-            tabs[self.term.c.x] = true;
+        0x88 => if (self.term.cursor.x < self.term.col) if (self.term.tabs) |tabs| {
+            tabs[self.term.cursor.x] = true;
         },
         0x8D => { // RI
-            if (self.term.c.y == self.term.top) {
+            if (self.term.cursor.y == self.term.top) {
                 try self.term.scrollDown(self.term.top, 1);
             } else {
                 try self.term.moveCursor(0, -1);
             }
-            self.term.c.state.wrap_next = false;
+            self.term.cursor.state.wrap_next = false;
         },
         0x8E => {
             self.term.esc.alt_charset = true;
@@ -789,16 +800,16 @@ fn escapeHandle(self: *Parser, c: u21) !void {
         'o' => self.term.charset = 3,
         'D' => try self.term.newLine(false), // IND
         'E' => try self.term.newLine(true), // NEL
-        'H' => if (self.term.c.x < self.term.col) if (self.term.tabs) |tabs| {
-            tabs[self.term.c.x] = true;
+        'H' => if (self.term.cursor.x < self.term.col) if (self.term.tabs) |tabs| {
+            tabs[self.term.cursor.x] = true;
         },
         'M' => { // RI
-            if (self.term.c.y == self.term.top) {
+            if (self.term.cursor.y == self.term.top) {
                 try self.term.scrollDown(self.term.top, 1);
             } else {
                 try self.term.moveCursor(0, -1);
             }
-            self.term.c.state.wrap_next = false;
+            self.term.cursor.state.wrap_next = false;
         },
         'Z' => self.ptyWrite("\x1B[?6c"),
         'c' => try self.resetTerminal(),
@@ -960,9 +971,9 @@ fn csiHandle(self: *Parser) !void {
         'B', 'e' => try self.term.moveCursor(0, @as(i32, @intCast(@max(1, self.csi.arg[0])))),
         'C', 'a' => try self.term.moveCursor(@as(i32, @intCast(@max(1, self.csi.arg[0]))), 0),
         'D' => try self.term.moveCursor(-@as(i32, @intCast(@max(1, self.csi.arg[0]))), 0),
-        'E' => try self.term.moveTo(0, @as(usize, @intCast(@as(i32, @intCast(self.term.c.y)) + @as(i32, @intCast(@max(1, self.csi.arg[0])))))),
-        'F' => try self.term.moveTo(0, @as(usize, @intCast(@max(0, @as(i32, @intCast(self.term.c.y)) - @as(i32, @intCast(@max(1, self.csi.arg[0]))))))),
-        'G', '`' => try self.term.moveTo(@as(usize, @intCast(@max(1, self.csi.arg[0]) - 1)), self.term.c.y),
+        'E' => try self.term.moveTo(0, @as(usize, @intCast(@as(i32, @intCast(self.term.cursor.y)) + @as(i32, @intCast(@max(1, self.csi.arg[0])))))),
+        'F' => try self.term.moveTo(0, @as(usize, @intCast(@max(0, @as(i32, @intCast(self.term.cursor.y)) - @as(i32, @intCast(@max(1, self.csi.arg[0]))))))),
+        'G', '`' => try self.term.moveTo(@as(usize, @intCast(@max(1, self.csi.arg[0]) - 1)), self.term.cursor.y),
         'H', 'f' => try self.term.setCursor(@as(usize, @intCast(@max(1, self.csi.arg[1]) - 1)), @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
         'I' => for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| try self.term.putTab(),
         'J' => try self.term.clearScreen(@as(u32, @intCast(self.csi.arg[0]))),
@@ -973,14 +984,14 @@ fn csiHandle(self: *Parser) !void {
         'X' => try self.term.eraseChars(@as(usize, @intCast(@max(1, self.csi.arg[0])))),
         'Z' => { // CBT
             for (0..@as(usize, @intCast(@max(1, self.csi.arg[0])))) |_| {
-                var x = self.term.c.x;
+                var x = self.term.cursor.x;
                 if (x > 0) x -= 1;
                 while (x > 0) : (x -= 1) if (self.term.tabs) |tabs| if (x < tabs.len and tabs[x]) break;
-                self.term.c.x = x;
+                self.term.cursor.x = x;
             }
-            self.term.c.state.wrap_next = false;
+            self.term.cursor.state.wrap_next = false;
         },
-        'd' => try self.term.setCursor(self.term.c.x, @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
+        'd' => try self.term.setCursor(self.term.cursor.x, @as(usize, @intCast(@max(1, self.csi.arg[0]) - 1))),
         'S' => if (self.csi.priv == 0) try self.term.scrollUp(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
         'T' => try self.term.scrollDown(self.term.top, @as(usize, @intCast(@max(1, self.csi.arg[0])))),
         'h' => try self.setMode(true),
@@ -994,8 +1005,8 @@ fn csiHandle(self: *Parser) !void {
             5 => self.ptyWrite("\x1B[0n"),
             6 => {
                 var buf: [64]u8 = undefined;
-                const y = self.term.c.y + 1;
-                const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ y, self.term.c.x + 1 });
+                const y = self.term.cursor.y + 1;
+                const s = try std.fmt.bufPrint(&buf, "\x1B[{d};{d}R", .{ y, self.term.cursor.x + 1 });
                 self.ptyWrite(s);
             },
             else => {
@@ -1056,7 +1067,7 @@ fn setMode(self: *Parser, set: bool) !void {
             };
         },
         6 => {
-            self.term.c.state.origin = set;
+            self.term.cursor.state.origin = set;
             try self.term.moveTo(0, 0);
         },
         7 => self.term.mode.wrap = set,
@@ -1095,7 +1106,7 @@ fn setMode(self: *Parser, set: bool) !void {
                         // 进入备用屏幕时，虽然 st 是在退出时清除，但为了稳健性，
                         // 我们在进入时也确保清除（防止上次异常退出残留）
                         if (self.term.alt_screen) |alt| {
-                            var g = self.term.c.attr;
+                            var g = self.term.cursor.attr;
                             g.codepoint = ' ';
                             g.fg = config.colors.default_foreground_idx;
                             g.bg = config.colors.default_background_idx;
@@ -1177,14 +1188,14 @@ fn oscHandle(self: *Parser, par: i32) !void {
                         std.log.err("Failed to add URL: {}", .{err});
                         return;
                     };
-                    self.term.c.attr.url_id = id;
+                    self.term.cursor.attr.url_id = id;
                 } else {
                     // Empty URL means end of hyperlink
-                    self.term.c.attr.url_id = 0;
+                    self.term.cursor.attr.url_id = 0;
                 }
             } else if (self.str.narg == 2) {
                 // OSC 8 ; ; ST (Close link)
-                self.term.c.attr.url_id = 0;
+                self.term.cursor.attr.url_id = 0;
             }
         },
         10 => if (self.str.narg >= 2) {

@@ -575,6 +575,9 @@ pub fn main() !u8 {
                             // Print: print selection
                             try printer.printSelection(&terminal, &selector);
                         }
+                    } else if (ctrl and shift and (keysym == x11.XK_R or keysym == x11.XK_r)) {
+                        // Ctrl+Shift+R: 切换录制器
+                        try parser.recorder.toggle();
                     } else {
                         // 开始输入时清除选择高亮
                         if (term.selection.mode != .idle) {
@@ -1086,8 +1089,8 @@ pub fn main() !u8 {
                 // 2. 如果光标需要闪烁，标记光标行为脏
                 if (term.cursor_style.shouldBlink()) {
                     if (term.dirty) |dirty| {
-                        if (term.c.y < dirty.len) {
-                            dirty[term.c.y] = true;
+                        if (term.cursor.y < dirty.len) {
+                            dirty[term.cursor.y] = true;
                         }
                     }
                 }
@@ -1178,7 +1181,7 @@ pub fn main() !u8 {
                 }
             }
         }
-        window.updateImeSpot(term.c.x, term.c.y); // 更新输入法光标位置
+        window.updateImeSpot(term.cursor.x, term.cursor.y); // 更新输入法光标位置
     }
 
     return 0;

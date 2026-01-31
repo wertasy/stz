@@ -719,8 +719,8 @@ pub fn render(self: *Renderer, term: *Terminal, selector: *Selector) !?x11.XRect
 pub fn renderCursor(self: *Renderer, term: *Terminal) !void {
     if (term.mode.hide_cursor) return;
 
-    const cx = term.c.x;
-    const cy = term.c.y;
+    const cx = term.cursor.x;
+    const cy = term.cursor.y;
 
     if (cx >= term.col or cy >= term.row) return;
 

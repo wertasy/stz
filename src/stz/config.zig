@@ -176,6 +176,7 @@ pub const KeyAction = enum {
     PrintScreen,
     PrintSelection,
     PrintToggle,
+    ToggleRecord, // <-- New action for recording parser sequence
     None,
 };
 
@@ -204,4 +205,7 @@ pub const shortcuts = [_]KeyBinding{
     .{ .mod = x11.ControlMask, .key = x11.XK_Print, .action = .PrintToggle },
     .{ .mod = x11.ShiftMask, .key = x11.XK_Print, .action = .PrintScreen },
     .{ .mod = 0, .key = x11.XK_Print, .action = .PrintSelection },
+    // Record shortcut (Ctrl+Shift+R)
+    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_R, .action = .ToggleRecord },
+    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_r, .action = .ToggleRecord },
 };

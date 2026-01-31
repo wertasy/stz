@@ -745,6 +745,7 @@ pub fn renderCursor(self: *Renderer, term: *Terminal) !void {
     const is_blinking_style = style.shouldBlink();
 
     // 如果是闪烁样式且当前在不可见阶段，则不绘制
+    // 但是：如果窗口失去焦点，光标应该始终可见（使用 steady 样式）
     if (is_blinking_style and !self.cursor_blink_state) {
         return;
     }
@@ -1122,6 +1123,12 @@ pub fn resize(self: *Renderer) void {
 }
 
 pub fn resetCursorBlink(self: *Renderer) void {
+    self.cursor_blink_state = true;
+    self.last_blink_time = std.time.milliTimestamp();
+}
+
+/// 立即重置光标闪烁为可见状态，用于用户输入时确保光标始终可见
+pub fn forceCursorVisible(self: *Renderer) void {
     self.cursor_blink_state = true;
     self.last_blink_time = std.time.milliTimestamp();
 }

@@ -468,6 +468,7 @@ pub fn main() !u8 {
     const min_frame_time_ms: i64 = 1000 / 60; // 60 FPS = 16.67ms
     var last_render_time: i64 = std.time.milliTimestamp(); // 上次渲染时间
     var pending_render: bool = false; // 待渲染标志
+    var urgent_render: bool = false; // 紧急渲染标志（用户输入时立即渲染）
 
     // URL 检测节流
     var last_url_check_time: i64 = 0;
@@ -523,7 +524,10 @@ pub fn main() !u8 {
                 // - 功能键（F1-F12）
                 // - 组合键（Ctrl+C、Ctrl+Shift+V 等）
                 x11.KeyPress => {
-                    renderer.resetCursorBlink(); // Reset blink on input
+                    renderer.forceCursorVisible(); // 确保光标在输入时始终可见
+                    // 立即标记需要渲染，确保光标移动及时显示
+                    pending_render = true;
+                    urgent_render = true; // 标记为紧急渲染，跳过帧率限制
 
                     // Check for scroll shortcuts (Shift + PageUp/PageDown)
                     const state = ev.xkey.state;
@@ -1046,7 +1050,13 @@ pub fn main() !u8 {
         var timeout_ms: i32 = -1;
 
         // 渲染检查: 如果有待处理的渲染请求且时间间隔已到，则渲染
-        if (pending_render and (now - last_render_time >= min_frame_time_ms)) {
+        // 紧急渲染（用户输入）立即处理，不受帧率限制
+        const should_render = if (urgent_render)
+            pending_render
+        else
+            pending_render and (now - last_render_time >= min_frame_time_ms);
+
+        if (should_render) {
             if (!terminal.mode.sync_update) {
                 // 如果有待处理的 URL 检测且时间已到，先执行检测
                 if (url_check_pending and (now - last_url_check_time >= url_check_interval_ms)) {
@@ -1071,6 +1081,7 @@ pub fn main() !u8 {
 
                 last_render_time = std.time.milliTimestamp();
                 pending_render = false;
+                urgent_render = false; // 重置紧急渲染标志
             }
         }
 

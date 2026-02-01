@@ -519,7 +519,7 @@ fn drawTextGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, codepoint: u21, 
     // 计算垂直位置：Powerline 字符使用居中对齐，其他字符使用基线对齐
     const y_offset = if (is_powerline)
         // 垂直居中：(单元格高度 - 字形高度) / 2
-        y + @divFloor(@as(i32, @intCast(self.char_height - @as(u32, glyph_info.render_h))), 2) - 1
+        y + @divFloor(@as(i32, @intCast(self.char_height)) - @as(i32, @intCast(glyph_info.render_h)), 2) - 1
     else
         // 基线对齐
         y - @as(i32, @intCast(glyph_info.render_top)) + self.ascent;
@@ -593,7 +593,7 @@ fn renderLigatureGlyphInternal(self: *Renderer, renderer: *sdl2.SDL_Renderer, at
     // 计算垂直位置：Powerline 字符使用居中对齐，其他字符使用基线对齐
     const y_offset = if (is_powerline)
         // 垂直居中：(单元格高度 - 字形高度) / 2
-        y + @divFloor(@as(i32, @intCast(self.char_height - @as(u32, glyph_info.render_h))), 2)
+        y + @divFloor(@as(i32, @intCast(self.char_height)) - @as(i32, @intCast(glyph_info.render_h)), 2)
     else
         // 基线对齐
         y - @as(i32, @intCast(glyph_info.render_top)) + self.ascent;

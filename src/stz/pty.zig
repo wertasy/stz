@@ -166,6 +166,9 @@ fn runChild(self: *PTY, shell: ?[:0]const u8, shell_args: []const []const u8) !v
     defer argv_list.deinit(std.heap.page_allocator);
 
     try argv_list.append(std.heap.page_allocator, shell_path.ptr);
+
+    // 如果提供了 shell_args，假设第一个参数是 -c，后跟命令字符串
+    // 或者直接将 shell_args 作为参数传递
     for (shell_args) |arg| {
         try argv_list.append(std.heap.page_allocator, @ptrCast(arg.ptr));
     }

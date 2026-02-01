@@ -142,7 +142,7 @@ pub fn main() !u8 {
     const cols = args.getCols(config.window.cols);
     const rows = args.getRows(config.window.rows);
 
-    var shell_path: ?[:0]const u8 = config.shell;
+    const shell_path: ?[:0]const u8 = config.shell;
 
     var shell_cmd_args_list = std.ArrayList([:0]const u8).initCapacity(allocator, 0) catch unreachable;
     defer {
@@ -153,7 +153,13 @@ pub fn main() !u8 {
     }
 
     if (args.shell_cmd) |cmd| {
-        shell_path = cmd;
+        // -e 参数指定要执行的 shell 命令
+        // 使用 shell -c 的格式执行命令字符串
+        // 参数格式: [shell_path, "-c", "command", args...]
+        const c_arg = try allocator.dupeZ(u8, "-c");
+        try shell_cmd_args_list.append(allocator, c_arg);
+        const cmd_dup = try allocator.dupeZ(u8, cmd);
+        try shell_cmd_args_list.append(allocator, cmd_dup);
         for (args.shell_args.items) |arg| {
             const arg_dup = try allocator.dupeZ(u8, arg);
             try shell_cmd_args_list.append(allocator, arg_dup);

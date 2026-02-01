@@ -37,13 +37,7 @@ pub const font = struct {
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等
     pub const fallback_fonts = [_][:0]const u8{
-        // "Twemoji", // Twitter emoji 字体
-        // "Noto Color Emoji", // 彩色 emoji 字体（优先）
-        // "Segoe UI Emoji", // Windows emoji 字体
         "Apple Color Emoji", // macOS emoji 字体
-        // "DejaVu Sans", // 通用符号和西文字符
-        // "Noto Sans", // Google Noto 字体系列
-        // "Liberation Sans", // Linux 通用字体
         "Symbola", // 符号字体（数学、Unicode 符号）
     };
 };
@@ -125,7 +119,14 @@ pub const draw = struct {
     pub const boxdraw_bold: bool = true;
     pub const boxdraw_braille: bool = true;
     pub const disable_bold_font: bool = false; // 禁用粗体字体，使用亮色模拟粗体（st 的传统行为）
-    pub const atlas_cell_size: u32 = 128; // 纹理图集单元格大小（正方形，必须能容纳最大字形，彩色 emoji 可能很大，设为 128）
+
+    // 双图集配置（推荐）：分离文本和 emoji 的图集以优化性能
+    pub const use_dual_atlas: bool = true;
+    pub const text_atlas_cell_size: u32 = 64; // 文本图集单元格大小（64x64 = 4096槽位，用于CJK字符）
+    pub const emoji_atlas_cell_size: u32 = 256; // Emoji图集单元格大小（256x256 = 256槽位，用于彩色emoji）
+
+    // 单图集配置（已弃用）：仅当 use_dual_atlas = false 时使用
+    pub const atlas_cell_size: u32 = 128; // 纹理图集单元格大小（已弃用，请使用 use_dual_atlas 配置）
 };
 
 // 滚动配置

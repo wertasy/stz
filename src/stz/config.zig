@@ -27,7 +27,7 @@ pub const font = struct {
     // SDL2_ttf 使用字体文件路径或简短字体名称
     // 常见选项：DejaVuSansMono, FreeMono, LiberationMono, NotoSansMono
     pub const name = "Maple Mono NF CN";
-    pub const size: u32 = 20; // 像素大小
+    pub const size: u32 = 18; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;
     pub const cwscale: f32 = 1.0; // 字符宽度缩放
@@ -37,7 +37,7 @@ pub const font = struct {
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等
     pub const fallback_fonts = [_][:0]const u8{
-        "Twemoji", // Twitter emoji 字体
+        // "Twemoji", // Twitter emoji 字体
         // "Noto Color Emoji", // 彩色 emoji 字体（优先）
         // "Segoe UI Emoji", // Windows emoji 字体
         "Apple Color Emoji", // macOS emoji 字体
@@ -125,7 +125,7 @@ pub const draw = struct {
     pub const boxdraw_bold: bool = true;
     pub const boxdraw_braille: bool = true;
     pub const disable_bold_font: bool = false; // 禁用粗体字体，使用亮色模拟粗体（st 的传统行为）
-    pub const atlas_cell_size: u32 = 256; // 纹理图集单元格大小（正方形，必须能容纳最大字形，彩色 emoji 可能很大，设为 256）
+    pub const atlas_cell_size: u32 = 128; // 纹理图集单元格大小（正方形，必须能容纳最大字形，彩色 emoji 可能很大，设为 128）
 };
 
 // 滚动配置

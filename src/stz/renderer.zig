@@ -1043,59 +1043,147 @@ fn drawBoxChar(self: *Renderer, renderer: *sdl2.SDL_Renderer, codepoint: u21, x:
     const category = data & 0xFF00;
 
     // 根据类别绘制
-    if (category == boxdraw_data.LINE) {
+    if (category == boxdraw_data.LINE or (category & boxdraw_data.ARC) != 0) {
         // 获取线条标志
         const bd = data & 0x00FF;
 
-        // 计算线条粗细
-        const is_bold = (data & boxdraw_data.BOLD) != 0;
-        const lw: i32 = if (is_bold) 3 else 1;
+        // st 的算法：计算线条粗细和中心位置
+        const mwh = @min(cw, ch);
+        const base_s_i32: i32 = @divTrunc(mwh + 4, 8); // DIV(mwh, 8) = (mwh + d/2) / d
+        const base_s = if (base_s_i32 < 1) @as(i32, 1) else base_s_i32;
+        const bold = ((data & boxdraw_data.BOLD) != 0) and (mwh >= 6);
+        const s: i32 = if (bold)
+            @max(base_s + 1, @divTrunc(3 * base_s, 2))
+        else
+            base_s;
+        const w2 = @divTrunc(cw - s, 2); // 距离左边中心的距离
+        const h2 = @divTrunc(ch - s, 2); // 距离上边中心的距离
 
-        // 计算 double line 的偏移量
-        const double_offset: i32 = if ((data & boxdraw_data.DOUBLE_LEFT) != 0 or (data & boxdraw_data.DOUBLE_RIGHT) != 0) 3 else 1;
+        const light = bd & (boxdraw_data.LIGHT_LEFT | boxdraw_data.LIGHT_UP | boxdraw_data.LIGHT_RIGHT | boxdraw_data.LIGHT_DOWN);
+        const double_ = bd & (boxdraw_data.DOUBLE_LEFT | boxdraw_data.DOUBLE_UP | boxdraw_data.DOUBLE_RIGHT | boxdraw_data.DOUBLE_DOWN);
 
-        // 绘制水平线
-        if ((bd & (boxdraw_data.LIGHT_LEFT | boxdraw_data.LIGHT_RIGHT)) != 0) {
-            const y_line = y + @divTrunc(ch, 2) - @divTrunc(lw, 2);
+        // 处理 light lines（包括弧形）
+        if (light != 0) {
+            // d:附加长度（负数表示从中心向内缩短）
+            // arc: 避免绘制到中心像素，形成圆角效果
+            const arc = (data & boxdraw_data.ARC) != 0;
+            // 检查是否有多个 light 位设置（st 的逻辑：x & (x-1) 检测是否只有一个位）
+            const light_i32 = @as(i32, @intCast(light));
+            const has_multi_light: bool = (light != 0) and ((light & @as(u8, @intCast(light_i32 -% 1))) != 0);
+            const double_i32 = @as(i32, @intCast(double_));
+            const has_multi_double: bool = (double_ != 0) and ((double_ & @as(u8, @intCast(double_i32 -% 1))) != 0);
+            // light crosses double only at DH+LV, DV+LH
+            const d: i32 = if (arc or (has_multi_double and !has_multi_light)) -s else 0;
+
             if ((bd & boxdraw_data.LIGHT_LEFT) != 0) {
-                _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line, x + cw, y_line);
-                if (lw > 1) {
-                    _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line + 1, x + cw, y_line + 1);
-                }
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x,
+                    .y = y + h2,
+                    .w = w2 + s + d,
+                    .h = s,
+                });
             }
-            if ((bd & boxdraw_data.DOUBLE_LEFT) != 0) {
-                _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line - double_offset, x + cw, y_line - double_offset);
-                _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line + double_offset, x + cw, y_line + double_offset);
-            }
-        }
-
-        // 绘制垂直线
-        if ((bd & (boxdraw_data.LIGHT_UP | boxdraw_data.LIGHT_DOWN)) != 0) {
-            const x_line = x + @divTrunc(cw, 2) - @divTrunc(lw, 2);
             if ((bd & boxdraw_data.LIGHT_UP) != 0) {
-                _ = sdl2.SDL_RenderDrawLine(renderer, x_line, y, x_line, y + ch);
-                if (lw > 1) {
-                    _ = sdl2.SDL_RenderDrawLine(renderer, x_line + 1, y, x_line + 1, y + ch);
-                }
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2,
+                    .y = y,
+                    .w = s,
+                    .h = h2 + s + d,
+                });
             }
-            if ((bd & boxdraw_data.DOUBLE_UP) != 0) {
-                _ = sdl2.SDL_RenderDrawLine(renderer, x_line - double_offset, y, x_line - double_offset, y + ch);
-                _ = sdl2.SDL_RenderDrawLine(renderer, x_line + double_offset, y, x_line + double_offset, y + ch);
+            if ((bd & boxdraw_data.LIGHT_RIGHT) != 0) {
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 - d,
+                    .y = y + h2,
+                    .w = cw - w2 + d,
+                    .h = s,
+                });
+            }
+            if ((bd & boxdraw_data.LIGHT_DOWN) != 0) {
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2,
+                    .y = y + h2 - d,
+                    .w = s,
+                    .h = ch - h2 + d,
+                });
             }
         }
 
-        // 绘制 HEAVY 线条（绘制两条线实现）
-        if ((bd & boxdraw_data.HEAVY_LEFT) != 0 and (bd & boxdraw_data.LIGHT_LEFT) == 0) {
-            const y_line = y + @divTrunc(ch, 2) - 1;
-            _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line, x + cw, y_line);
-            _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line + 1, x + cw, y_line + 1);
-            _ = sdl2.SDL_RenderDrawLine(renderer, x, y_line + 2, x + cw, y_line + 2);
-        }
-        if ((bd & boxdraw_data.HEAVY_UP) != 0 and (bd & boxdraw_data.LIGHT_UP) == 0) {
-            const x_line = x + @divTrunc(cw, 2) - 1;
-            _ = sdl2.SDL_RenderDrawLine(renderer, x_line, y, x_line, y + ch);
-            _ = sdl2.SDL_RenderDrawLine(renderer, x_line + 1, y, x_line + 1, y + ch);
-            _ = sdl2.SDL_RenderDrawLine(renderer, x_line + 2, y, x_line + 2, y + ch);
+        // 处理 double lines
+        if (double_ != 0) {
+            const dl = (bd & boxdraw_data.DOUBLE_LEFT) != 0;
+            const du = (bd & boxdraw_data.DOUBLE_UP) != 0;
+            const dr = (bd & boxdraw_data.DOUBLE_RIGHT) != 0;
+            const dd = (bd & boxdraw_data.DOUBLE_DOWN) != 0;
+
+            // Double left
+            if (dl) {
+                const p: i32 = if (dd) -s else 0;
+                const n: i32 = if (du) -s else if (dd) s else 0;
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x,
+                    .y = y + h2 + s,
+                    .w = w2 + s + p,
+                    .h = s,
+                });
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x,
+                    .y = y + h2 - s,
+                    .w = w2 + s + n,
+                    .h = s,
+                });
+            }
+            // Double up
+            if (du) {
+                const p: i32 = if (dl) -s else 0;
+                const n: i32 = if (dr) -s else if (dl) s else 0;
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 - s,
+                    .y = y,
+                    .w = s,
+                    .h = h2 + s + p,
+                });
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 + s,
+                    .y = y,
+                    .w = s,
+                    .h = h2 + s + n,
+                });
+            }
+            // Double right
+            if (dr) {
+                const p: i32 = if (du) -s else 0;
+                const n: i32 = if (dd) -s else if (du) s else 0;
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 - p,
+                    .y = y + h2 - s,
+                    .w = cw - w2 + p,
+                    .h = s,
+                });
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 - n,
+                    .y = y + h2 + s,
+                    .w = cw - w2 + n,
+                    .h = s,
+                });
+            }
+            // Double down
+            if (dd) {
+                const p: i32 = if (dr) -s else 0;
+                const n: i32 = if (dl) -s else if (dr) s else 0;
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 + s,
+                    .y = y + h2 - p,
+                    .w = s,
+                    .h = ch - h2 + p,
+                });
+                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                    .x = x + w2 - s,
+                    .y = y + h2 - n,
+                    .w = s,
+                    .h = ch - h2 + n,
+                });
+            }
         }
     } else if (category == boxdraw_data.BLOCK_QUADRANT) {
         // 绘制四分之一块
@@ -1115,26 +1203,139 @@ fn drawBoxChar(self: *Renderer, renderer: *sdl2.SDL_Renderer, codepoint: u21, x:
         if ((bd & boxdraw_data.BOTTOM_RIGHT) != 0) {
             _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{ .x = x + half_w, .y = y + half_h, .w = half_w, .h = half_h });
         }
+    } else if (category == boxdraw_data.BLOCK_DOWN) {
+        // Lower (Down) X/8 block (data is 8 - X)
+        // data[0x81] = 7, data[0x82] = 6, ..., data[0x88] = 0
+        const d = data & 0x00FF; // 7, 6, 5, 4, 3, 2, 1, 0
+        const h_fill = @divFloor(d * ch, 8);
+        _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+            .x = x,
+            .y = y + h_fill,
+            .w = cw,
+            .h = ch - h_fill,
+        });
+    } else if (category == boxdraw_data.BLOCK_LEFT) {
+        // Left X/8 block (data is X)
+        // data[0x89] = 7, data[0x8a] = 6, ..., data[0x8f] = 1
+        const d = data & 0x00FF; // 7, 6, 5, 4, 3, 2, 1
+        const w_fill = @divFloor(d * cw, 8);
+        _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+            .x = x,
+            .y = y,
+            .w = w_fill,
+            .h = ch,
+        });
+    } else if (category == boxdraw_data.BLOCK_UPPER) {
+        // Upper X/8 block
+        // data[0x80] = 4 (half), data[0x94] = 1
+        const d = data & 0x00FF;
+        const h_fill = @divFloor(d * ch, 8);
+        _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+            .x = x,
+            .y = y,
+            .w = cw,
+            .h = h_fill,
+        });
+    } else if (category == boxdraw_data.BLOCK_RIGHT) {
+        // Right X/8 block (data is 8-X)
+        // data[0x90] = 4 (half), data[0x95] = 7
+        const d = data & 0x00FF; // 4, 7
+        const w_fill = @divFloor(d * cw, 8);
+        _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+            .x = x + cw - w_fill,
+            .y = y,
+            .w = w_fill,
+            .h = ch,
+        });
     } else if (category == boxdraw_data.BRAILLE) {
         // Braille 模式 (U+2800-U+28FF)
-        const pattern = @as(u8, @truncate(codepoint));
-        const cell_w = @divFloor(cw, 2);
-        const cell_h = @divFloor(ch, 4);
-        const dot_w = @divTrunc(cell_w, 2);
-        const dot_h = @divTrunc(cell_h, 2);
+        // Braille 是 2x4 网格 + 1x2 底部行，共 8 个点
+        // st 的实现：直接固定位置计算，不用循环
 
-        // Braille 点的位置
-        // 左列: dots 1,2,3 (y=0,1,2)
-        // 右列: dots 4,5,6 (y=0,1,2)
-        // 第 4 行: dots 7,8 (y=3)
-        for (0..8) |dot_idx| {
-            if ((pattern & (@as(u8, 1) << @intCast(dot_idx))) != 0) {
-                const col = if (dot_idx < 6) (dot_idx % 3) else 0;
-                const row = if (dot_idx < 6) @divFloor(dot_idx, 3) else 3;
-                const dot_x = x + @as(i32, @intCast(col)) * cell_w + @divTrunc(cell_w - dot_w, 2);
-                const dot_y = y + @as(i32, @intCast(row)) * cell_h + @divTrunc(cell_h - dot_h, 2);
-                _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{ .x = dot_x, .y = dot_y, .w = dot_w, .h = dot_h });
-            }
+        const pattern = @as(u8, @truncate(codepoint));
+        const w1 = @divTrunc(cw, 2); // 左半列宽度
+        const h1 = @divTrunc(ch, 4); // 1/4 高度
+        const h2 = @divTrunc(ch, 2); // 1/2 高度
+        const h3 = @divTrunc(3 * ch, 4); // 3/4 高度
+
+        // Dot 1 (bit 0): 左上
+        if ((pattern & 1) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x,
+                .y = y,
+                .w = w1,
+                .h = h1,
+            });
+        }
+
+        // Dot 2 (bit 1): 左中
+        if ((pattern & 2) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x,
+                .y = y + h1,
+                .w = w1,
+                .h = h2 - h1,
+            });
+        }
+
+        // Dot 3 (bit 2): 左下
+        if ((pattern & 4) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x,
+                .y = y + h2,
+                .w = w1,
+                .h = h3 - h2,
+            });
+        }
+
+        // Dot 4 (bit 3): 右上
+        if ((pattern & 8) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x + w1,
+                .y = y,
+                .w = cw - w1,
+                .h = h1,
+            });
+        }
+
+        // Dot 5 (bit 4): 右中
+        if ((pattern & 16) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x + w1,
+                .y = y + h1,
+                .w = cw - w1,
+                .h = h2 - h1,
+            });
+        }
+
+        // Dot 6 (bit 5): 右下
+        if ((pattern & 32) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x + w1,
+                .y = y + h2,
+                .w = cw - w1,
+                .h = h3 - h2,
+            });
+        }
+
+        // Dot 7 (bit 6): 底左
+        if ((pattern & 64) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x,
+                .y = y + h3,
+                .w = w1,
+                .h = ch - h3,
+            });
+        }
+
+        // Dot 8 (bit 7): 底右
+        if ((pattern & 128) != 0) {
+            _ = sdl2.SDL_RenderFillRect(renderer, &sdl2.SDL_Rect{
+                .x = x + w1,
+                .y = y + h3,
+                .w = cw - w1,
+                .h = ch - h3,
+            });
         }
     } else if (category == boxdraw_data.BLOCK_SHADE) {
         // 阴影块

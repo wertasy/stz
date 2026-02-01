@@ -75,7 +75,7 @@ emoji_atlas: ?TextureAtlas = null, // Emoji图集（用于彩色emoji，256x256�
 atlas_selection_cache: std.AutoHashMap(u64, bool),
 
 // 图集尺寸配置（可调整）
-atlas_size: u32 = 4096, // 两个图集都使用这个尺寸
+atlas_size: u32 = 2048, // 两个图集都使用这个尺寸（优化：减少75%纹理内存）
 atlas_cell_size: u32, // 已弃用，保留用于向后兼容
 
 // 性能统计
@@ -237,7 +237,7 @@ pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
         .atlas = null, // 已弃用，保留用于向后兼容
         .text_atlas = null, // 新：文本图集（用于CJK字符）
         .emoji_atlas = null, // 新：Emoji图集（用于彩色emoji）
-        .atlas_size = 4096,
+        .atlas_size = 2048, // 优化：减少75%纹理内存（2048x2048x4=16MB per atlas）
         .atlas_cell_size = config.draw.atlas_cell_size, // 已弃用，保留用于向后兼容
         .hb_engine = hb_engine,
         .hb_transform_data = harfbuzz.TransformData.init(allocator),
@@ -1584,8 +1584,11 @@ fn reloadFonts(self: *Renderer, new_size: u32) !void {
     self.window.cell_height = char_height;
 
     // 清除字体缓存和纹理图集
-    self.font_cache.clearRetainingCapacity();
-    self.atlas_selection_cache.clearRetainingCapacity();
+    // 重新初始化 HashMap 以释放未使用的容量，减少内存占用
+    self.font_cache.deinit();
+    self.font_cache = std.AutoHashMap(u64, ft.FT_Face).init(self.allocator);
+    self.atlas_selection_cache.deinit();
+    self.atlas_selection_cache = std.AutoHashMap(u64, bool).init(self.allocator);
     if (self.atlas) |*atlas| {
         atlas.clear(self.window.sdl_renderer);
     }

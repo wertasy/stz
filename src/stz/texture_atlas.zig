@@ -322,7 +322,9 @@ pub const TextureAtlas = struct {
 
     pub fn clear(self: *Self, renderer: *sdl2.SDL_Renderer) void {
         self.next_cell_idx = 0;
-        self.glyph_cache.clearRetainingCapacity();
+        // 重新初始化 HashMap 以释放未使用的容量，减少内存占用
+        self.glyph_cache.deinit();
+        self.glyph_cache = std.AutoHashMap(u64, GlyphInfo).init(self.allocator);
         self.glyphs_stored = 0;
         _ = sdl2.SDL_SetRenderTarget(renderer, self.texture);
         _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);

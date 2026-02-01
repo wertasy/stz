@@ -27,7 +27,7 @@ pub const font = struct {
     // SDL2_ttf 使用字体文件路径或简短字体名称
     // 常见选项：DejaVuSansMono, FreeMono, LiberationMono, NotoSansMono
     pub const name = "Maple Mono NF CN";
-    pub const size: u32 = 18; // 像素大小
+    pub const size: u32 = 20; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;
     pub const cwscale: f32 = 1.0; // 字符宽度缩放

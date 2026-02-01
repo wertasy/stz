@@ -1,104 +1,22 @@
-//! stz - 简单终端模拟器 (Zig 重写版)
-//! 主程序入口和事件循环
+//! stz - Zig 终端模拟器
+//! 基于 st (simple terminal) 的设计哲学，使用 Zig 语言和 SDL2 重写。
 //!
-//! ## 文件概述
+//! 核心模块说明：
+//! - main.zig: 程序入口，处理命令行参数，初始化各组件，运行主事件循环。
+//! - Terminal: 终端状态机，管理屏幕缓冲区（行、属性、光标）。
+//! - Parser: 转义序列解析器，处理 ANSI/VT 序列并更新 Terminal 状态。
+//! - Window: SDL2 窗口管理，处理底层窗口事件。
+//! - Renderer: 字符渲染引擎，使用 SDL2 和 FreeType 进行硬件加速绘图。
+//! - PTY: 伪终端管理，负责与 shell 子进程通信。
+//! - Input: 输入处理器，将键盘/鼠标事件转换为字符或序列发送给 PTY。
+//! - Selector: 文本选择与剪贴板管理器。
 //!
-//! 本文件是终端模拟器的入口点，负责：
-//! 1. 初始化所有子系统（窗口、渲染器、PTY、终端等）
-//! 2. 运行主事件循环（处理 X11 事件和 PTY 数据）
-//! 3. 管理键盘输入、鼠标事件、窗口大小调整
-//! 4. 协调渲染和屏幕更新
-//!
-//! ## 核心概念
-//!
-//! ### 1. 主事件循环
-//! 终端模拟器是一个事件驱动程序，主循环不断等待和处理事件：
-//! - **X11 事件**：键盘输入、鼠标点击、窗口调整、焦点变化
-//! - **PTY 数据**：shell 程序输出的字节流
-//!
-//! ### 2. 初始化顺序
-//! 1. Window（窗口）：创建 X11 窗口
-//! 2. Renderer（渲染器）：加载字体，初始化 Xft
-//! 3. PTY（伪终端）：创建 fork/exec 子进程
-//! 4. Terminal（终端）：初始化屏幕缓冲区、光标、解析器
-//!
-//! ### 3. 事件处理流程
-//!
-//! ```
-//! while (!quit) {
-//!     // 1. 处理所有挂起的 X11 事件
-//!     while (window.pollEvent()) |event| {
-//!         switch (event.type) {
-//!             KeyPress: 处理键盘输入，发送给 PTY
-//!             ButtonPress/Release: 处理鼠标选择
-//!             ConfigureNotify: 处理窗口大小调整
-//!             Expose: 处理窗口重绘
-//!             FocusIn/Out: 处理焦点变化
-//!             SelectionRequest/Notify: 处理剪贴板
-//!         }
-//!     }
-//!
-//!     // 2. 检查 PTY 数据
-//!     if (pty.read(read_buffer)) |n| {
-//!         terminal.processBytes(buffer[0..n]);  // 解析并更新屏幕
-//!         pending_render = true;                 // 标记需要渲染
-//!     }
-//!
-//!     // 3. 如果需要渲染，更新屏幕
-//!     if (pending_render) {
-//!         renderer.render(&terminal);  // 渲染屏幕到 Pixmap
-//!         window.present();                  // 显示 Pixmap 到窗口
-//!         pending_render = false;
-//!     }
-//! }
-//! ```
-//!
-//! ## 新手入门：理解终端模拟器的工作原理
-//!
-//! ### 终端模拟器 = 窗口 + 渲染器 + PTY + 解析器
-//!
-//! 1. **Window (窗口)**: X11 窗口，接收用户输入（键盘、鼠标）
-//! 2. **Renderer (渲染器)**: 使用 Xft 将字符绘制到窗口
-//! 3. **PTY (伪终端)**: 与 shell 程序通信的双向通道
-//! 4. **Terminal (终端)**: 解析 PTY 输出的转义序列，更新屏幕缓冲区
-//!
-//! ### 数据流向
-//!
-//! #### 输入（用户 → Shell）
-//! ```
-//! 键盘输入 → KeyPress 事件 → 处理特殊键 → 发送给 PTY → Shell 程序
-//! ```
-//!
-//! #### 输出（Shell → 屏幕）
-//! ```
-//! Shell 程序 → PTY 输出 → 转义序列 → 解析器 → 屏幕缓冲区 → 渲染器 → 窗口
-//! //!
-//!
-//! ## 新手入门：理解终端模拟器的工作原理
-//!
-//! ### 终端模拟器 = 窗口 + 渲染器 + PTY + 解析器
-//!
-//! 1. **Window (窗口)**: X11 窗口，接收用户输入（键盘、鼠标）
-//! 2. **Renderer (渲染器)**: 使用 Xft 将字符绘制到窗口
-//! 3. **PTY (伪终端)**: 与 shell 程序通信的双向通道
-//! 4. **Terminal (终端)**: 解析 PTY 输出的转义序列，更新屏幕缓冲区
-//!
-//! ### 数据流向
-//!
-//! #### 输入（用户 → Shell）
-//! ```
-//! 键盘输入 → KeyPress 事件 → 处理特殊键 → 发送给 PTY → Shell 程序
-//! ```
-//!
-//! #### 输出（Shell → 屏幕）
-//! ```
-//! Shell 程序 → PTY 输出 → 转义序列 → 解析器 → 屏幕缓冲区 → 渲染器 → 窗口
-//! //!
-//!
-//! ## 与原版 st 的对应关系
-//! - main() 函数对应 st 的 main() 函数
-//! - 主事件循环对应 st 的 run() 函数
-//! - 所有 X11 事件处理与 st 的事件处理逻辑对齐
+//! 主循环逻辑：
+//! 1. 处理 SDL2 事件（键盘、鼠标、窗口调整等）
+//! 2. 从 PTY 读取 shell 输出数据
+//! 3. 调用 Parser 解析数据并更新终端缓冲区
+//! 4. 调用 Renderer 将缓冲区内容绘制到窗口
+//! - 所有 SDL2 事件处理与 st 的事件处理逻辑对齐
 
 const std = @import("std");
 const c = @cImport({
@@ -109,8 +27,7 @@ const c = @cImport({
 });
 
 const stz = @import("stz");
-const x11 = stz.c.x11;
-const x11_utils = stz.x11_utils;
+const sdl2 = stz.c.sdl2;
 
 const Terminal = stz.Terminal;
 const Parser = stz.Parser;
@@ -125,16 +42,36 @@ const Args = stz.Args;
 const config = stz.Config;
 const SelectionSnap = stz.types.SelectionSnap;
 
+/// 将鼠标坐标转换为单元格坐标
+/// 参数：
+///   - mx, my: 鼠标在窗口中的原始像素坐标
+///   - window: 窗口对象（获取边框和单元格尺寸）
+///   - terminal: 终端对象（获取行列数）
+/// 返回：
+///   - cx, cy: 对应的单元格坐标
+fn mouseToCell(mx: i32, my: i32, window: *Window, terminal: *Terminal) struct { cx: usize, cy: usize } {
+    const border_x = @as(i32, @intCast(window.hborder_px));
+    const border_y = @as(i32, @intCast(window.vborder_px));
+    const cell_w = @as(i32, @intCast(window.cell_width));
+    const cell_h = @as(i32, @intCast(window.cell_height));
+
+    var adj_mx = mx - border_x;
+    var adj_my = my - border_y;
+
+    const term_w = @as(i32, @intCast(terminal.col)) * cell_w;
+    const term_h = @as(i32, @intCast(terminal.row)) * cell_h;
+
+    adj_mx = @max(0, @min(adj_mx, @max(0, term_w - 1)));
+    adj_my = @max(0, @min(adj_my, @max(0, term_h - 1)));
+
+    return .{
+        .cx = @as(usize, @intCast(@divTrunc(adj_mx, cell_w))),
+        .cy = @as(usize, @intCast(@divTrunc(adj_my, cell_h))),
+    };
+}
+
 pub fn main() !u8 {
     // ========== 获取内存分配器 ==========
-    //
-    // 使用 Zig 的 GeneralPurposeAllocator（GPA），这是一个通用的内存分配器。
-    // GPA 会检测内存泄漏，在程序结束时报告泄漏情况。
-    //
-    // 为什么需要分配器？
-    // - 动态分配屏幕缓冲区（line、alt、hist）
-    // - 动态分配转义序列字符串缓冲区（str.buf）
-    // - 动态分配选择文本缓冲区（selector.selected_text）
     var gpa = std.heap.GeneralPurposeAllocator(.{
         .thread_safe = true,
     }){};
@@ -147,27 +84,17 @@ pub fn main() !u8 {
     const allocator = gpa.allocator();
 
     // ========== 设置本地化（Locale）==========
-    //
-    // 设置 LC_CTYPE 为空字符串，使用系统默认本地化。
-    // 这对于输入法（IME）是必需的。
-    //
-    // 什么是本地化？
-    // - 本地化决定了字符编码、字符分类（如大写字母、小写字母、数字等）
-    // - 对中文输入法非常重要
     _ = c.setlocale(c.LC_CTYPE, "");
 
     // ========== 解析命令行参数 ==========
     var args = Args.init(allocator);
     defer args.deinit();
 
-    // 获取命令行参数
     var args_iter = try std.process.argsWithAllocator(allocator);
     defer args_iter.deinit();
 
-    // 跳过程序名
     _ = args_iter.next();
 
-    // 将参数复制到数组中
     var args_list = std.ArrayList([:0]const u8).initCapacity(allocator, 0) catch unreachable;
     defer {
         for (args_list.items) |arg| {
@@ -183,7 +110,6 @@ pub fn main() !u8 {
 
     const argv = args_list.items;
 
-    // 解析参数
     args.parse(argv) catch |err| {
         switch (err) {
             error.MissingArgument => {
@@ -203,7 +129,6 @@ pub fn main() !u8 {
         return 1;
     };
 
-    // 处理帮助和版本请求
     if (args.show_help) {
         try args.printHelp(std.fs.File.stderr());
         return 0;
@@ -214,14 +139,11 @@ pub fn main() !u8 {
         return 0;
     }
 
-    // 获取配置值（命令行参数优先）
     const cols = args.getCols(config.window.cols);
     const rows = args.getRows(config.window.rows);
 
-    // 构建命令行
     var shell_path: ?[:0]const u8 = config.shell;
 
-    // 创建命令行参数列表（以 null 结尾的字符串）
     var shell_cmd_args_list = std.ArrayList([:0]const u8).initCapacity(allocator, 0) catch unreachable;
     defer {
         for (shell_cmd_args_list.items) |arg| {
@@ -244,480 +166,224 @@ pub fn main() !u8 {
     std.log.info("配置尺寸: {d}x{d}", .{ cols, rows });
 
     // ========== 初始化窗口 ==========
-    //
-    // 创建 X11 窗口，但此时窗口还不可见。
-    // 窗口初始化步骤：
-    // 1. 连接到 X11 服务器
-    // 2. 创建窗口（使用默认大小）
-    // 3. 设置输入法上下文（IC，用于中文输入）
     const window_title = if (args.title) |t| t else "stz";
     var window = try Window.init(window_title, cols, rows, allocator);
     defer window.deinit();
 
     // ========== 初始化渲染器 ==========
-    //
-    // 渲染器负责：
-    // 1. 加载字体（使用 FontConfig）
-    // 2. 初始化 Xft 渲染器
-    // 3. 计算字符的宽度和高度
-    //
-    // 注意：此时字体还未加载，需要调用 resize() 来加载字体并计算尺寸。
     var renderer = try Renderer.init(&window, allocator);
     defer renderer.deinit();
 
-    // ========== 调整窗口大小以匹配实际字体尺寸 ==========
-    //
-    // 步骤：
-    // 1. resizeToGrid(): 根据配置的行列数和字体尺寸，调整窗口像素大小
-    // 2. resizeBuffer(): 调整 Pixmap（双缓冲）的大小
-    // 3. renderer.resize(): 加载字体并计算字符宽高
-    //
-    // 为什么需要这一步？
-    // - 配置文件指定的行列数是逻辑值（如 120x35）
-    // - 窗口需要的是像素值（如 2400x700）
-    // - 需要根据字体尺寸进行转换（假设 20x20 像素，则 120x35 = 2400x700）
     window.resizeToGrid(cols, rows);
     window.resizeBuffer(window.width, window.height);
     renderer.resize();
 
-    // ========== 显示窗口 ==========
-    //
-    // 窗口现在对用户可见。
-    // 但此时窗口内容为空（PTY 还未初始化，还没有输出）。
-    window.show();
-
-    // ========== 等待窗口映射完成（与原版 st 对齐）==========
-    //
-    // 原版 st 在 run() 函数中等待 MapNotify 事件，确保窗口完全映射后再继续。
-    // 同时处理可能的 ConfigureNotify 事件，以获取准确的窗口尺寸。
-    var mapped = false;
-    while (!mapped) {
-        var event: x11.XEvent = undefined;
-        _ = x11.XNextEvent(window.dpy, &event);
-        if (x11.XFilterEvent(&event, x11.None) != 0) continue;
-
-        switch (event.type) {
-            x11.MapNotify => {
-                mapped = true;
-            },
-            x11.ConfigureNotify => {
-                // 窗口管理器可能已经调整了窗口尺寸
-                const width = @as(u32, @intCast(event.xconfigure.width));
-                const height = @as(u32, @intCast(event.xconfigure.height));
-                if (width != window.width or height != window.height) {
-                    window.width = width;
-                    window.height = height;
-                    const b = config.window.border_pixels;
-                    const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
-                    const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
-                    const new_cols = @max(1, avail_w / window.cell_width);
-                    const new_rows = @max(1, avail_h / window.cell_height);
-                    window.hborder_px = (window.width - @as(u32, @intCast(new_cols)) * window.cell_width) / 2;
-                    window.vborder_px = (window.height - @as(u32, @intCast(new_rows)) * window.cell_height) / 2;
-                    // 此时终端和 PTY 尚未初始化，暂不调整它们
-                    // 后续的 ConfigureNotify 事件会处理调整
-                }
-            },
-            else => {},
-        }
-    }
+    sdl2.SDL_StartTextInput();
 
     // ========== 设置 TERM 环境变量 ==========
-    //
-    // TERM 环境变量告诉 shell 程序终端的类型。
-    // - xterm-256color: 告诉程序终端支持 256 色和真彩色
-    // - st: 原版 st 终端的 TERM 值
-    //
-    // 为什么需要？
-    // - 程序根据 TERM 值决定发送哪些转义序列
-    // - 例如：vim 会根据 TERM 值决定是否使用 256 色
     _ = c.setenv("TERM", config.term_type, 1);
 
-    // ========== 初始化 PTY（伪终端）==========
-    //
-    // PTY = Pseudo-TTY（伪终端），是内核提供的一种虚拟终端设备。
-    // PTY 的作用：在终端模拟器和 shell 程序之间建立双向通信通道。
-    //
-    // 初始化步骤：
-    // 1. 打开 /dev/ptmx（伪终端主设备）
-    // 2. 设置终端属性（波特率、字符大小等）
-    // 3. Fork 子进程
-    // 4. 子进程中：打开从设备，exec shell
-    // 5. 父进程中：返回 PTY 句柄，用于读写
-    //
-    // 注意：此时使用配置的行列数初始化。
-    // 如果窗口管理器不遵守我们请求的大小，
-    // 后续的 ConfigureNotify 事件会修正 PTY 大小。
+    // ========== 初始化 PTY ==========
     var pty = try PTY.initWithArgs(shell_path, cols, rows, shell_cmd_args);
     defer pty.close();
 
     // ========== 初始化终端 ==========
-    //
-    // 终端（Terminal）是终端模拟器的核心逻辑层。
-    // 它负责：
-    // 1. 管理屏幕缓冲区（line、alt、hist）
-    // 2. 管理光标位置和状态
-    // 3. 解析转义序列（由 Parser 负责）
-    //
-    // 初始化后，屏幕缓冲区被填充为空格字符。
     var terminal = try Terminal.init(rows, cols, allocator);
     defer terminal.deinit();
 
     // ========== 设置 Parser ==========
-    //
-    // Parser 需要 Term 和 PTY 的引用：
-    // - Term: 解析转义序列后，需要更新 Term 的屏幕缓冲区
-    // - PTY: 某些转义序列需要向 PTY 发送响应（如终端标识查询）
     var parser = try Parser.init(&terminal, &pty, allocator);
     defer parser.deinit();
 
-    // 应用命令行配置
     parser.allow_altscreen = args.allow_altscreen;
 
-    // ========== 设置 PTY 为非阻塞模式 ==========
-    //
-    // 非阻塞模式：read() 立即返回，不等待数据。
-    // - 如果有数据：返回读取的字节数
-    // - 如果没有数据：返回 EAGAIN（错误：会再次尝试）
-    //
-    // 为什么需要？
-    // - 主事件循环需要同时等待 X11 事件和 PTY 数据
-    // - 使用 poll() 等待多个文件描述符
-    // - PTY 非阻塞模式确保循环不会被阻塞
     try pty.setNonBlocking();
 
-    // ========== 初始化输入处理器 ==========
-    //
-    // 输入处理器负责：
-    // 1. 处理键盘输入（KeyPress 事件）
-    // 2. 将特殊键转换为转义序列（如方向键 → ESC [ A）
-    // 3. 发送给 PTY
+    // ========== 初始化输入/选择/工具 ==========
     var input = Input.init(&pty, &terminal);
 
-    // ========== 初始化选择器 ==========
-    //
-    // 选择器负责：
-    // 1. 处理鼠标拖拽选择（ButtonPress、MotionNotify、ButtonRelease）
-    // 2. 智能选择边界（单词吸附、行吸附）
-    // 3. 复制/粘贴到 X11 剪贴板（PRIMARY、CLIPBOARD）
     var selector = Selector.init(allocator);
-    selector.setX11Context(window.dpy, window.win);
     defer selector.deinit();
 
-    // ========== 初始化 URL 检测器 ==========
-    //
-    // URL 检测器负责：
-    // 1. 识别屏幕上的 URL（http://、https://、ftp://）
-    // 2. Ctrl+点击打开 URL（使用 xdg-open）
     var url_detector = UrlDetector.init(&terminal, allocator);
 
-    // ========== 初始化打印器 ==========
-    //
-    // 打印器负责：
-    // 1. 打印屏幕内容（Print 键）
-    // 2. 打印选择内容（Shift+Print 键）
-    // 3. 打印模式切换（Ctrl+Print 键）
     var printer = Printer.init(allocator);
     defer printer.deinit();
 
     // ========== 主事件循环 ==========
-    //
-    // 这是终端模拟器的核心循环，不断处理 X11 事件和 PTY 数据。
-    //
-    // 变量说明：
-    // - read_buffer: PTY 数据缓冲区（8KB）
-    // - quit: 退出标志（设置为 true 时退出循环）
-    // - mouse_pressed: 鼠标按下状态
-    // - last_click_time: 上次点击时间（用于检测双击/三击）
-    // - paste_buffer: X11 剪贴板缓冲区
-    // - pending_render: 待渲染标志（屏幕内容改变时设置为 true）
-    //
-    // 限制帧率：
-    // - min_frame_time_ms: 最小帧间隔（1000 / 60 = 16.67ms）
-    // - last_render_time: 上次渲染时间
-    // - pending_render: 标记需要渲染
     const read_buffer = try allocator.alloc(u8, 8192);
     defer allocator.free(read_buffer);
 
     var quit: bool = false;
     var mouse_pressed: bool = false;
     var pressed_button: u32 = 0;
-    var mouse_x: usize = 0;
-    var mouse_y: usize = 0;
 
-    // 点击检测变量（用于双击/三击检测）
-    var last_click_time: i64 = 0; // 上次点击时间（毫秒）
-    var last_button: u32 = 0; // 上次点击的按钮
-    var click_count: u32 = 0; // 点击计数（1=单击，2=双击，3=三击）
+    var last_click_time: i64 = 0;
+    var last_button: u32 = 0;
+    var click_count: u32 = 0;
 
-    // X11 剪贴板缓冲区（用于接收粘贴内容）
-    var paste_buffer = try std.ArrayList(u8).initCapacity(allocator, 4096);
-    defer paste_buffer.deinit(allocator);
+    // 跟踪当前鼠标位置（用于滚轮事件）
+    var current_mouse_x: i32 = 0;
+    var current_mouse_y: i32 = 0;
 
-    // ========== 渲染限制 (60 FPS) ==========
-    //
-    // 为什么要限制帧率？
-    // - 避免不必要的渲染（节省 CPU）
-    // - 避免闪烁（双缓冲）
-    // - 减少电源消耗（笔记本电脑）
-    //
-    // 如何实现？
-    // - 记录上次渲染时间
-    // - 如果距离上次渲染时间 < 16.67ms，延迟渲染
-    // - 使用 poll() 的超时参数控制延迟
-    const min_frame_time_ms: i64 = 1000 / 60; // 60 FPS = 16.67ms
-    var last_render_time: i64 = std.time.milliTimestamp(); // 上次渲染时间
-    var pending_render: bool = false; // 待渲染标志
+    const min_frame_time_ms: i64 = 1000 / 60;
+    var last_render_time: i64 = std.time.milliTimestamp();
+    var pending_render: bool = true;
+    var window_shown: bool = false; // 跟踪窗口是否已显示
 
-    // URL 检测节流
     var last_url_check_time: i64 = 0;
     var url_check_pending: bool = false;
-    const url_check_interval_ms: i64 = 500; // 500ms 节流
+    const url_check_interval_ms: i64 = 500;
 
-    // ========== 初始渲染 ==========
-    //
-    // 渲染初始屏幕（全空格），然后显示窗口。
-    // 此时 PTY 还未输出任何内容，所以屏幕是空的。
-    if (try renderer.render(&terminal, &selector)) |_| {
-        window.present();
-    }
+    var keydown_handled: bool = false;
 
-    // ========== 主循环 ==========
     while (!quit) {
-        // Alias term for easy access
         const term = &terminal;
 
-        // ========== 步骤 1：处理所有挂起的 X11 事件 ==========
-        //
-        // X11 事件包括：
-        // - ClientMessage: 窗口关闭请求
-        // - KeyPress: 键盘输入
-        // - ConfigureNotify: 窗口大小调整
-        // - Expose: 窗口重绘
-        // - ButtonPress/Release: 鼠标点击/释放
-        // - MotionNotify: 鼠标移动
-        // - FocusIn/Out: 焦点变化
-        // - SelectionRequest/Notify: 剪贴板请求/通知
-        //
-        // XFilterEvent():
-        // - 处理输入法（IME）事件
-        // - 如果事件被输入法处理，返回非零，跳过该事件
+        // 步骤 1：处理 SDL2 事件
         while (window.pollEvent()) |event| {
-            var ev = event;
-            if (x11.XFilterEvent(&ev, x11.None) != 0) continue;
+            switch (event.type) {
+                sdl2.SDL_QUIT => {
+                    quit = true;
+                    break;
+                },
+                sdl2.SDL_WINDOWEVENT => {
+                    switch (event.window.event) {
+                        sdl2.SDL_WINDOWEVENT_RESIZED, sdl2.SDL_WINDOWEVENT_SIZE_CHANGED => {
+                            const width: u32 = @intCast(event.window.data1);
+                            const height: u32 = @intCast(event.window.data2);
 
-            switch (ev.type) {
-                // ========== ClientMessage: 窗口关闭请求 ==========
-                // 窗口管理器（如 i3、GNOME Shell）发送关闭请求
-                x11.ClientMessage => {
-                    if (@as(x11.Atom, @intCast(ev.xclient.data.l[0])) == window.wm_delete_window) {
-                        quit = true;
-                        break;
+                            if (width != window.width or height != window.height) {
+                                window.width = width;
+                                window.height = height;
+
+                                const b = config.window.border_pixels;
+                                const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
+                                const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
+
+                                const new_cols = @max(1, avail_w / window.cell_width);
+                                const new_rows = @max(1, avail_h / window.cell_height);
+
+                                window.hborder_px = (window.width - @as(u32, @intCast(new_cols)) * window.cell_width) / 2;
+                                window.vborder_px = (window.height - @as(u32, @intCast(new_rows)) * window.cell_height) / 2;
+
+                                if (new_cols > 0 and new_rows > 0) {
+                                    if (new_cols != terminal.col or new_rows != terminal.row) {
+                                        try terminal.resize(new_rows, new_cols);
+                                        try pty.resize(new_cols, new_rows);
+                                        window.resizeBuffer(window.width, window.height);
+                                        renderer.resize();
+                                        pending_render = true;
+                                    }
+                                }
+                            }
+                        },
+                        sdl2.SDL_WINDOWEVENT_EXPOSED => {
+                            pending_render = true;
+                        },
+                        sdl2.SDL_WINDOWEVENT_FOCUS_GAINED => {
+                            term.mode.focused = true;
+                            if (term.mode.mouse_focus) {
+                                _ = pty.write("\x1B[I") catch {};
+                            }
+                            pending_render = true;
+                        },
+                        sdl2.SDL_WINDOWEVENT_FOCUS_LOST => {
+                            term.mode.focused = false;
+                            if (term.mode.mouse_focus) {
+                                _ = pty.write("\x1B[O") catch {};
+                            }
+                            pending_render = true;
+                        },
+                        else => {},
                     }
                 },
+                sdl2.SDL_KEYDOWN => {
+                    renderer.resetCursorBlink();
+                    keydown_handled = false;
+                    const key = event.key.keysym.sym;
+                    const mod = event.key.keysym.mod;
+                    const shift = (mod & sdl2.KMOD_SHIFT) != 0;
+                    const ctrl = (mod & sdl2.KMOD_CTRL) != 0;
 
-                // ========== KeyPress: 键盘输入 ==========
-                // 处理键盘输入，包括：
-                // - 普通字符（a-z、0-9、符号）
-                // - 特殊键（方向键、Backspace、Delete 等）
-                // - 功能键（F1-F12）
-                // - 组合键（Ctrl+C、Ctrl+Shift+V 等）
-                x11.KeyPress => {
-                    renderer.resetCursorBlink(); // Reset blink on input
-
-                    // Check for scroll shortcuts (Shift + PageUp/PageDown)
-                    const state = ev.xkey.state;
-                    const shift = (state & x11.ShiftMask) != 0;
-                    const keycode = ev.xkey.keycode;
-                    const keysym = x11.XkbKeycodeToKeysym(window.dpy, @intCast(keycode), 0, if (shift) 1 else 0);
-
-                    const ctrl = (state & x11.ControlMask) != 0;
-
-                    if (shift and (keysym == x11.XK_Prior or keysym == x11.XK_KP_Prior)) {
+                    if (shift and (key == sdl2.SDLK_PAGEUP)) {
                         selector.clear(term);
-                        terminal.kscrollUp(term.row); // Scroll one screen up
-                        if (try renderer.render(term, &selector)) |rect| {
-                            try renderer.renderCursor(term);
-                            window.presentPartial(rect);
-                        }
-                    } else if (shift and (keysym == x11.XK_Next or keysym == x11.XK_KP_Next)) {
+                        terminal.kscrollUp(term.row);
+                        pending_render = true;
+                        keydown_handled = true;
+                    } else if (shift and (key == sdl2.SDLK_PAGEDOWN)) {
                         selector.clear(term);
-                        terminal.kscrollDown(term.row); // Scroll one screen down
-                        if (try renderer.render(term, &selector)) |rect| {
-                            try renderer.renderCursor(term);
-                            window.presentPartial(rect);
-                        }
-                    } else if (ctrl and shift and (keysym == x11.XK_C or keysym == x11.XK_c)) {
-                        // Ctrl+Shift+C: 复制到 CLIPBOARD
+                        terminal.kscrollDown(term.row);
+                        pending_render = true;
+                        keydown_handled = true;
+                    } else if (ctrl and shift and (key == sdl2.SDLK_c)) {
                         selector.copyToClipboard() catch |err| {
                             std.log.err("Clipboard copy failed: {}", .{err});
                         };
-                    } else if (ctrl and shift and (keysym == x11.XK_V or keysym == x11.XK_v)) {
-                        // Ctrl+Shift+V: 从 CLIPBOARD 粘贴
-                        const clipboard = x11_utils.getClipboardAtom(window.dpy);
-                        selector.requestSelection(clipboard) catch |err| {
-                            std.log.err("Clipboard paste request failed: {}", .{err});
-                        };
-                    } else if (shift and (keysym == x11.XK_Insert or keysym == x11.XK_KP_Insert)) {
-                        // Shift+Insert: 从 PRIMARY 粘贴 (经典 X11 行为)
-                        selector.requestPaste() catch |err| {
-                            std.log.err("Primary paste request failed: {}", .{err});
-                        };
-                    } else if (keysym == x11.XK_Print) {
-                        // Print key handling
+                        keydown_handled = true;
+                    } else if (ctrl and shift and (key == sdl2.SDLK_v)) {
+                        if (selector.requestPaste()) |paste_text| {
+                            try input.sendPaste(paste_text);
+                            selector.clear(term);
+                            term.setFullDirty();
+                            pending_render = true;
+                        } else |err| {
+                            std.log.err("Clipboard paste failed: {}", .{err});
+                        }
+                        keydown_handled = true;
+                    } else if (key == sdl2.SDLK_PRINTSCREEN) {
                         if (ctrl) {
-                            // Ctrl+Print: toggle printer mode
                             try printer.toggle(&terminal);
                         } else if (shift) {
-                            // Shift+Print: print screen
                             try printer.printScreen(&terminal);
                         } else {
-                            // Print: print selection
                             try printer.printSelection(&terminal, &selector);
                         }
-                    } else if (ctrl and shift and (keysym == x11.XK_R or keysym == x11.XK_r)) {
-                        // Ctrl+Shift+R: 切换录制器
-                        try parser.recorder.toggle();
+                        keydown_handled = true;
                     } else {
-                        // 开始输入时清除选择高亮
                         if (term.selection.mode != .idle) {
                             selector.clear(term);
                             term.setFullDirty();
                         }
-
-                        // 优先处理特殊按键（Backspace, Delete, 方向键等）
-                        // 这样可以避免 XIM (Xutf8LookupString) 将 Backspace 转换为 \x08 (Ctrl-H)
-                        if (try input.handleKey(&ev.xkey)) {
-                            // 如果 handleKey 处理了该按键，直接跳过
-                        } else if (window.ic) |ic| {
-                            var status: x11.Status = undefined;
-                            var kbuf: [32]u8 = undefined;
-                            const n = x11.Xutf8LookupString(ic, &ev.xkey, &kbuf, kbuf.len, null, &status);
-
-                            // Debug logging for input troubleshooting
-                            // std.log.debug("XIM Input: n={d}, status={d}", .{n, status});
-
-                            // 宽松的输入检查：只要有返回数据且未溢出缓冲区，就写入 PTY
-                            // 移除对 status 的严格检查，因为某些环境下 status 可能不符合预期 (如 XLookupKeySym)
-                            // 这与原版 st 的行为一致 (st 忽略 status，仅检查 len)
-                            if (n > 0 and n <= kbuf.len) {
-                                // 处理 Alt+单字节字符：在字符前添加 ESC (\x1B)
-                                if (n == 1 and (ev.xkey.state & x11.Mod1Mask) != 0) {
-                                    var alt_buf: [2]u8 = undefined;
-                                    alt_buf[0] = 0x1B;
-                                    alt_buf[1] = kbuf[0];
-                                    _ = try pty.write(&alt_buf);
-                                } else {
-                                    _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
-                                }
-                            } else if (n == 0) {
-                                // Fallback: If XIM returns nothing (e.g. broken locale), try raw XLookupString
-                                // This ensures basic ASCII input works even if IME is misconfigured
-                                var buf: [32]u8 = undefined;
-                                const len = x11.XLookupString(&ev.xkey, &buf, buf.len, null, null);
-                                if (len > 0) {
-                                    std.log.info("XIM fallback used for keycode {d}: '{s}'", .{ ev.xkey.keycode, buf[0..@as(usize, @intCast(len))] });
-                                    _ = try pty.write(buf[0..@as(usize, @intCast(len))]);
-                                }
-                            }
+                        keydown_handled = try input.handleKey(key, mod);
+                    }
+                },
+                sdl2.SDL_TEXTINPUT => {
+                    if (!keydown_handled) {
+                        const text = std.mem.sliceTo(&event.text.text, 0);
+                        // Alt+单字节字符需要发送 ESC 前缀（标准终端行为）
+                        if (text.len == 1 and (sdl2.SDL_GetModState() & sdl2.KMOD_ALT) != 0) {
+                            var alt_buf: [2]u8 = .{ 0x1B, text[0] };
+                            _ = try pty.write(&alt_buf);
                         } else {
-                            var kbuf: [32]u8 = undefined;
-                            const n = x11.XLookupString(&ev.xkey, &kbuf, kbuf.len, null, null);
-                            if (n > 0) {
-                                // 处理 Alt+单字节字符：在字符前添加 ESC (\x1B)
-                                if (n == 1 and (ev.xkey.state & x11.Mod1Mask) != 0) {
-                                    var alt_buf: [2]u8 = undefined;
-                                    alt_buf[0] = 0x1B;
-                                    alt_buf[1] = kbuf[0];
-                                    _ = try pty.write(&alt_buf);
-                                } else {
-                                    _ = try pty.write(kbuf[0..@as(usize, @intCast(n))]);
-                                }
-                            }
+                            _ = try pty.write(text);
                         }
                     }
                 },
-                x11.ConfigureNotify => {
-                    const width = @as(u32, @intCast(ev.xconfigure.width));
-                    const height = @as(u32, @intCast(ev.xconfigure.height));
+                sdl2.SDL_MOUSEBUTTONDOWN => {
+                    const e = event.button;
+                    const shift = (sdl2.SDL_GetModState() & sdl2.KMOD_SHIFT) != 0;
+                    const ctrl = (sdl2.SDL_GetModState() & sdl2.KMOD_CTRL) != 0;
 
-                    if (width != window.width or height != window.height) {
-                        window.width = width;
-                        window.height = height;
+                    // 更新鼠标位置
+                    current_mouse_x = e.x;
+                    current_mouse_y = e.y;
 
-                        const b = config.window.border_pixels;
-                        // remove fudge factor to match st behavior (strict truncation)
-                        const avail_w = if (window.width > 2 * b) window.width - 2 * b else 0;
-                        const avail_h = if (window.height > 2 * b) window.height - 2 * b else 0;
+                    const cell = mouseToCell(e.x, e.y, &window, &terminal);
+                    const cx = cell.cx;
+                    const cy = cell.cy;
 
-                        const new_cols = @max(1, avail_w / window.cell_width);
-                        const new_rows = @max(1, avail_h / window.cell_height);
-
-                        window.hborder_px = (window.width - @as(u32, @intCast(new_cols)) * window.cell_width) / 2;
-                        window.vborder_px = (window.height - @as(u32, @intCast(new_rows)) * window.cell_height) / 2;
-
-                        if (new_cols > 0 and new_rows > 0) {
-                            if (new_cols != terminal.col or new_rows != terminal.row) {
-                                try terminal.resize(new_rows, new_cols);
-                                try pty.resize(new_cols, new_rows);
-                                window.resizeBuffer(window.width, window.height);
-                                renderer.resize();
-                                if (try renderer.render(&terminal, &selector)) |_| {
-                                    window.present(); // Resize always needs full present
-                                }
-                            }
-                        }
-                    }
-                },
-                x11.Expose => {
-                    if (!terminal.mode.sync_update) {
-                        if (try renderer.render(&terminal, &selector)) |_| {
-                            try renderer.renderCursor(&terminal);
-                            window.present();
-                        } else {
-                            // Expose should always refresh window from pixmap at least
-                            window.present();
-                        }
-                    }
-                },
-                x11.ButtonPress => {
-                    const e = ev.xbutton;
-                    const shift = (e.state & x11.ShiftMask) != 0;
-
-                    const border_x = @as(c_int, @intCast(window.hborder_px));
-                    const border_y = @as(c_int, @intCast(window.vborder_px));
-                    const cell_w = @as(c_int, @intCast(window.cell_width));
-                    const cell_h = @as(c_int, @intCast(window.cell_height));
-
-                    var mx = e.x - border_x;
-                    var my = e.y - border_y;
-
-                    const term_w = @as(c_int, @intCast(terminal.col)) * cell_w;
-                    const term_h = @as(c_int, @intCast(terminal.row)) * cell_h;
-
-                    mx = @max(0, @min(mx, term_w - 1));
-                    my = @max(0, @min(my, term_h - 1));
-
-                    const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
-                    const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
-
-                    // Ctrl + Left Click: 打开 URL
-                    if (e.button == x11.Button1 and
-                        (e.state & x11.ControlMask) != 0)
-                    {
+                    if (e.button == sdl2.SDL_BUTTON_LEFT and ctrl) {
                         if (url_detector.isUrlAt(cx, cy)) {
                             url_detector.openUrlAt(cx, cy) catch |err| {
                                 std.log.err("打开 URL 失败: {}", .{err});
                             };
                         }
-                        continue; // 跳到下一个事件，不处理选择
+                        continue;
                     }
 
-                    // 鼠标报告优先，除非按下 Shift 键强制进行终端选择
-                    // 当启用鼠标模式时，发送鼠标报告到 PTY，但同时也显示选择高亮
-                    // 这样用户能看到高亮效果，同时应用程序也能处理选择
                     if (term.mode.isMouseEnabled() and !shift) {
-                        try input.sendMouseReport(cx, cy, e.button, e.state, 0);
+                        try input.sendMouseReport(cx, cy, e.button, @intCast(sdl2.SDL_GetModState()), 0);
                         if (e.button >= 1 and e.button <= 3) {
                             mouse_pressed = true;
                             pressed_button = e.button;
@@ -725,8 +391,7 @@ pub fn main() !u8 {
                         continue;
                     }
 
-                    if (e.button == x11.Button1) {
-                        // 检测双击/三击
+                    if (e.button == sdl2.SDL_BUTTON_LEFT) {
                         const now = std.time.milliTimestamp();
                         if (e.button == last_button and now - last_click_time < config.selection.double_click_timeout_ms) {
                             click_count = (click_count % 3) + 1;
@@ -742,92 +407,45 @@ pub fn main() !u8 {
                             else => .none,
                         };
 
-                        // Left click: start selection
                         mouse_pressed = true;
                         pressed_button = e.button;
-                        mouse_x = cx;
-                        mouse_y = cy;
 
-                        // Clear previous selection
                         selector.clear(term);
                         selector.start(term, cx, cy, snap_mode);
                         if (snap_mode != .none) {
                             selector.extend(term, cx, cy, .regular, false);
                         }
                         term.setFullDirty();
-                        if (try renderer.render(term, &selector)) |rect| {
-                            window.presentPartial(rect);
-                        }
-                    } else if (e.button == x11.Button2) {
-                        // Middle click: paste from PRIMARY selection
-                        selector.requestPaste() catch |err| {
-                            std.log.err("Paste request failed: {}", .{err});
-                        };
-                    } else if (e.button == x11.Button3) {
-                        // Right click: extend selection or copy
+                        pending_render = true;
+                    } else if (e.button == sdl2.SDL_BUTTON_MIDDLE) {
+                        if (selector.requestPaste()) |paste_text| {
+                            try input.sendPaste(paste_text);
+                            selector.clear(term);
+                            term.setFullDirty();
+                            pending_render = true;
+                        } else |_| {}
+                    } else if (e.button == sdl2.SDL_BUTTON_RIGHT) {
                         mouse_pressed = true;
                         pressed_button = e.button;
                         selector.start(term, cx, cy, .none);
-                    } else if (e.button == x11.Button4) { // Scroll Up
-                        if (term.mode.isMouseEnabled() and !shift) {
-                            try input.sendMouseReport(cx, cy, e.button, e.state, 0);
-                        } else {
-                            if (term.mode.alt_screen) {
-                                // In alt screen (vi/less), send arrow keys
-                                _ = try pty.write("\x1B[A");
-                            } else {
-                                selector.clear(term);
-                                terminal.kscrollUp(3);
-                                if (try renderer.render(term, &selector)) |rect| {
-                                    try renderer.renderCursor(term);
-                                    window.presentPartial(rect);
-                                }
-                            }
-                        }
-                    } else if (e.button == x11.Button5) { // Scroll Down
-                        if (term.mode.isMouseEnabled() and !shift) {
-                            try input.sendMouseReport(cx, cy, e.button, e.state, 0);
-                        } else {
-                            if (term.mode.alt_screen) {
-                                // In alt screen (vi/less), send arrow keys
-                                _ = try pty.write("\x1B[B");
-                            } else {
-                                selector.clear(term);
-                                terminal.kscrollDown(3);
-                                if (try renderer.render(term, &selector)) |rect| {
-                                    try renderer.renderCursor(term);
-                                    window.presentPartial(rect);
-                                }
-                            }
-                        }
                     }
                 },
-                x11.ButtonRelease => {
-                    const e = ev.xbutton;
-                    const shift = (e.state & x11.ShiftMask) != 0;
+                sdl2.SDL_MOUSEBUTTONUP => {
+                    const e = event.button;
+                    const shift = (sdl2.SDL_GetModState() & sdl2.KMOD_SHIFT) != 0;
 
-                    const border_x = @as(c_int, @intCast(window.hborder_px));
-                    const border_y = @as(c_int, @intCast(window.vborder_px));
-                    const cell_w = @as(c_int, @intCast(window.cell_width));
-                    const cell_h = @as(c_int, @intCast(window.cell_height));
+                    // 更新鼠标位置
+                    current_mouse_x = e.x;
+                    current_mouse_y = e.y;
 
-                    var mx = e.x - border_x;
-                    var my = e.y - border_y;
+                    const cell = mouseToCell(e.x, e.y, &window, &terminal);
+                    const cx = cell.cx;
+                    const cy = cell.cy;
 
-                    const term_w = @as(c_int, @intCast(terminal.col)) * cell_w;
-                    const term_h = @as(c_int, @intCast(terminal.row)) * cell_h;
-
-                    mx = @max(0, @min(mx, term_w - 1));
-                    my = @max(0, @min(my, term_h - 1));
-
-                    const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
-                    const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
-
-                    if (terminal.mode.isMouseEnabled() and !shift) {
-                        try input.sendMouseReport(cx, cy, e.button, e.state, 1);
+                    if (term.mode.isMouseEnabled() and !shift) {
+                        try input.sendMouseReport(cx, cy, e.button, @intCast(sdl2.SDL_GetModState()), 1);
                         mouse_pressed = false;
                         pressed_button = 0;
-                        // 跳过本地复制逻辑，让应用程序完全接管剪贴板
                         continue;
                     }
 
@@ -835,220 +453,93 @@ pub fn main() !u8 {
                         mouse_pressed = false;
                         pressed_button = 0;
 
-                        if (e.button == x11.Button1) {
-                            // 仅在非鼠标模式或按住 Shift 时复制到剪贴板
-                            // st 对齐：在鼠标模式下不设置 X11 选区，让应用程序自己管理
+                        if (e.button == sdl2.SDL_BUTTON_LEFT) {
                             if (!term.mode.isMouseEnabled() or shift) {
-                                // 完成选择扩展逻辑 (决定是进入 ready 还是 idle)
                                 selector.extend(term, cx, cy, .regular, true);
-
                                 if (term.selection.mode == .ready) {
                                     selector.copy(term) catch |err| {
                                         std.log.err("Copy failed: {}", .{err});
                                     };
                                 }
                             } else {
-                                // 鼠标模式下清除本地高亮，让应用程序的选择显示
                                 selector.clear(term);
                                 term.setFullDirty();
-                                if (try renderer.render(term, &selector)) |rect| {
-                                    window.presentPartial(rect);
+                                pending_render = true;
+                            }
+                        }
+                    }
+                },
+                sdl2.SDL_MOUSEMOTION => {
+                    const e = event.motion;
+                    const shift = (sdl2.SDL_GetModState() & sdl2.KMOD_SHIFT) != 0;
+
+                    // 更新鼠标位置
+                    current_mouse_x = e.x;
+                    current_mouse_y = e.y;
+
+                    const cell = mouseToCell(e.x, e.y, &window, &terminal);
+                    const cx = cell.cx;
+                    const cy = cell.cy;
+
+                    if (term.mode.isMouseEnabled() and !shift) {
+                        const send_motion = term.mode.mouse_many or
+                            (term.mode.mouse_btn and mouse_pressed);
+                        if (send_motion) {
+                            try input.sendMouseReport(cx, cy, pressed_button, @intCast(sdl2.SDL_GetModState()), 2);
+                        }
+                    }
+
+                    if (mouse_pressed and pressed_button == sdl2.SDL_BUTTON_LEFT) {
+                        selector.extend(term, cx, cy, .regular, false);
+                        term.setFullDirty();
+                        pending_render = true;
+                    }
+                },
+                sdl2.SDL_MOUSEWHEEL => {
+                    const shift = (sdl2.SDL_GetModState() & sdl2.KMOD_SHIFT) != 0;
+                    if (event.wheel.y != 0) {
+                        if (term.mode.isMouseEnabled() and !shift) {
+                            const cell = mouseToCell(current_mouse_x, current_mouse_y, &window, &terminal);
+                            const btn: u32 = if (event.wheel.y > 0) 4 else 5;
+                            try input.sendMouseReport(cell.cx, cell.cy, btn, @intCast(sdl2.SDL_GetModState()), 0);
+                        } else {
+                            if (event.wheel.y > 0) {
+                                if (term.mode.alt_screen) {
+                                    _ = try pty.write("\x1B[A");
+                                } else {
+                                    selector.clear(term);
+                                    terminal.kscrollUp(3);
+                                    pending_render = true;
+                                }
+                            } else {
+                                if (term.mode.alt_screen) {
+                                    _ = try pty.write("\x1B[B");
+                                } else {
+                                    selector.clear(term);
+                                    terminal.kscrollDown(3);
+                                    pending_render = true;
                                 }
                             }
                         }
                     }
                 },
-                x11.MotionNotify => {
-                    const e = ev.xmotion;
-                    const shift = (e.state & x11.ShiftMask) != 0;
-
-                    const border_x = @as(c_int, @intCast(window.hborder_px));
-                    const border_y = @as(c_int, @intCast(window.vborder_px));
-                    const cell_w = @as(c_int, @intCast(window.cell_width));
-                    const cell_h = @as(c_int, @intCast(window.cell_height));
-
-                    var mx = e.x - border_x;
-                    var my = e.y - border_y;
-
-                    const term_w = @as(c_int, @intCast(terminal.col)) * cell_w;
-                    const term_h = @as(c_int, @intCast(terminal.row)) * cell_h;
-
-                    mx = @max(0, @min(mx, term_w - 1));
-                    my = @max(0, @min(my, term_h - 1));
-
-                    const cx = @as(usize, @intCast(@divTrunc(mx, cell_w)));
-                    const cy = @as(usize, @intCast(@divTrunc(my, cell_h)));
-
-                    if (terminal.mode.isMouseEnabled() and !shift) {
-                        // Only send motion if button is pressed or mouse_many/mouse_btn is set
-                        const send_motion = terminal.mode.mouse_many or
-                            (terminal.mode.mouse_btn and mouse_pressed);
-                        if (send_motion) {
-                            try input.sendMouseReport(cx, cy, pressed_button, e.state, 2);
-                        }
-                        // 不 continue，继续执行下面的选择高亮逻辑
-                    }
-
-                    if (mouse_pressed and pressed_button == x11.Button1) {
-                        // Update selection
-                        selector.extend(term, cx, cy, .regular, false);
-                        term.setFullDirty();
-                        if (try renderer.render(term, &selector)) |rect| {
-                            window.presentPartial(rect);
-                        }
-                    }
-                },
-                x11.SelectionRequest => {
-                    const e = ev.xselectionrequest;
-                    // std.log.info("SelectionRequest received (target={d})", .{e.target});
-
-                    var notify: x11.XEvent = undefined;
-                    notify.type = x11.SelectionNotify;
-                    notify.xselection.display = e.display;
-                    notify.xselection.requestor = e.requestor;
-                    notify.xselection.selection = e.selection;
-                    notify.xselection.target = e.target;
-                    notify.xselection.time = e.time;
-                    notify.xselection.property = e.property;
-
-                    if (notify.xselection.property == 0) notify.xselection.property = e.target;
-
-                    const utf8 = x11_utils.getUtf8Atom(window.dpy);
-                    const targets = x11_utils.getTargetsAtom(window.dpy);
-                    const xa_string = x11_utils.getStringAtom(window.dpy);
-
-                    var success = false;
-                    if (e.target == targets) {
-                        const supported = [_]x11.Atom{ targets, utf8, xa_string, x11.XA_STRING };
-                        _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, x11.XA_ATOM, 32, x11.PropModeReplace, @ptrCast(&supported), supported.len);
-                        success = true;
-                    } else if (e.target == utf8 or e.target == xa_string or e.target == x11.XA_STRING) {
-                        if (selector.selected_text) |text| {
-                            _ = x11.XChangeProperty(window.dpy, e.requestor, notify.xselection.property, e.target, 8, x11.PropModeReplace, text.ptr, @intCast(text.len));
-                            success = true;
-                        }
-                    }
-
-                    if (!success) notify.xselection.property = 0;
-
-                    _ = x11.XSendEvent(window.dpy, e.requestor, 1, 0, &notify);
-                },
-                x11.SelectionNotify => {
-                    const e = ev.xselection;
-
-                    if (e.property != 0) {
-                        var ofs: c_ulong = 0;
-                        var rem: c_ulong = 1;
-
-                        while (rem > 0) {
-                            var actual_type: x11.Atom = undefined;
-                            var actual_format: c_int = undefined;
-                            var nitems: c_ulong = undefined;
-                            var data: ?[*]u8 = null;
-
-                            // Use XGetWindowProperty to read selection data (matching st's approach)
-                            // We read in chunks (1024 words at a time) to handle large selections
-                            if (x11.XGetWindowProperty(window.dpy, window.win, e.property, @intCast(ofs), 1024, x11.False, x11.AnyPropertyType, &actual_type, &actual_format, &nitems, &rem, @ptrCast(&data)) == 0) {
-                                if (data) |value| {
-                                    defer _ = x11.XFree(value);
-
-                                    if (nitems > 0) {
-                                        const len = @as(usize, @intCast(nitems)) * @as(usize, @intCast(actual_format)) / 8;
-                                        const paste_text = try allocator.dupe(u8, value[0..len]);
-                                        defer allocator.free(paste_text);
-
-                                        // 发送粘贴内容
-                                        try input.sendPaste(paste_text);
-                                        // std.log.info("SelectionNotify: Received {d} bytes from property {d}", .{ paste_text.len, e.property });
-
-                                        // Also add to paste buffer
-                                        try paste_buffer.appendSlice(allocator, paste_text);
-
-                                        // Update offset for next chunk
-                                        ofs += nitems * @as(c_ulong, @intCast(actual_format)) / 32;
-                                    } else break;
-                                } else break;
-                            } else {
-                                std.log.err("SelectionNotify: XGetWindowProperty failed", .{});
-                                break;
-                            }
-                        }
-                        // 读取后立即删除属性，避免残留旧数据影响下一次粘贴 (ICCCM 推荐)
-                        _ = x11.XDeleteProperty(window.dpy, window.win, e.property);
-                    } else {
-                        // std.log.info("SelectionNotify: Conversion failed (property=None)", .{});
-                    }
-
-                    // 粘贴完成后清除选择高亮
-                    selector.clear(term);
-                    term.setFullDirty();
-                    if (try renderer.render(term, &selector)) |rect| {
-                        try renderer.renderCursor(term);
-                        window.presentPartial(rect);
-                    }
-                },
-                x11.SelectionClear => {
-                    const e = ev.xselectionclear;
-                    std.log.info("SelectionClear received", .{});
-                    selector.handleSelectionClear(term, &e);
-                    // Redraw to clear highlight
-                    if (try renderer.render(term, &selector)) |rect| {
-                        window.presentPartial(rect);
-                    }
-                },
-                x11.FocusIn => {
-                    // std.log.info("FocusIn", .{});
-                    term.mode.focused = true;
-                    if (window.ic) |ic| x11.XSetICFocus(ic);
-                    if (term.mode.mouse_focus) {
-                        _ = pty.write("\x1B[I") catch {};
-                    }
-                    if (try renderer.render(term, &selector)) |rect| {
-                        try renderer.renderCursor(term);
-                        window.presentPartial(rect);
-                    } else {
-                        try renderer.renderCursor(term);
-                    }
-                },
-                x11.FocusOut => {
-                    // std.log.info("FocusOut", .{});
-                    term.mode.focused = false;
-                    if (window.ic) |ic| x11.XUnsetICFocus(ic);
-                    if (term.mode.mouse_focus) {
-                        _ = pty.write("\x1B[O") catch {};
-                    }
-                    if (try renderer.render(term, &selector)) |rect| {
-                        try renderer.renderCursor(term);
-                        window.presentPartial(rect);
-                    } else {
-                        try renderer.renderCursor(term);
-                    }
-                },
-                x11.EnterNotify,
-                x11.LeaveNotify,
-                x11.ReparentNotify,
-                x11.MapNotify,
-                x11.NoExpose,
-                x11.KeyRelease,
-                => {
-                    // 忽略这些常见但当前无需处理的事件，避免日志刷屏
-                },
-                else => {
-                    std.log.debug("未处理的 X11 事件: {d}", .{ev.type});
-                },
+                else => {},
             }
         }
 
         if (quit) break;
 
-        // Check for cursor blink update
+        // 步骤 2：处理 PTY 数据和渲染
         const now = std.time.milliTimestamp();
-        var timeout_ms: i32 = -1;
+        var timeout_ms: i32 = 100; // 默认 100ms，降低 CPU 占用
 
-        // 渲染检查: 如果有待处理的渲染请求且时间间隔已到，则渲染
+        if (pending_render) {
+            // 如果有待渲染内容，使用较短的超时
+            timeout_ms = @min(timeout_ms, 10);
+        }
+
         if (pending_render and (now - last_render_time >= min_frame_time_ms)) {
             if (!terminal.mode.sync_update) {
-                // 如果有待处理的 URL 检测且时间已到，先执行检测
                 if (url_check_pending and (now - last_url_check_time >= url_check_interval_ms)) {
                     url_detector.clearHighlights();
                     url_detector.highlightUrls() catch |err| {
@@ -1058,15 +549,13 @@ pub fn main() !u8 {
                     url_check_pending = false;
                 }
 
-                const rect = try renderer.render(&terminal, &selector);
-                try renderer.renderCursor(&terminal);
+                _ = try renderer.render(&terminal, &selector, true);
+                window.present();
 
-                if (rect) |r| {
-                    window.presentPartial(r);
-                } else {
-                    // 如果没有脏行，但 pending_render 为 true（可能是光标闪烁或移动），则刷新全屏或光标区域
-                    // 为了稳健性，这里刷新全屏。在双缓冲下，开销很小。
-                    window.present();
+                // 首次渲染完成后显示窗口，避免启动闪烁
+                if (!window_shown) {
+                    window.show();
+                    window_shown = true;
                 }
 
                 last_render_time = std.time.milliTimestamp();
@@ -1077,16 +566,11 @@ pub fn main() !u8 {
         if (config.cursor.blink_interval_ms > 0) {
             const next_blink = renderer.last_blink_time + config.cursor.blink_interval_ms;
             if (now >= next_blink) {
-                // Time to toggle blink state
                 term.mode.blink = !term.mode.blink;
                 renderer.cursor_blink_state = !renderer.cursor_blink_state;
-
-                // 1. 如果有文本闪烁属性，标记相关行为脏
                 if (term.isAttrSet(.{ .blink = true })) {
                     term.setDirtyAttr(.{ .blink = true });
                 }
-
-                // 2. 如果光标需要闪烁，标记光标行为脏
                 if (term.cursor_style.shouldBlink()) {
                     if (term.dirty) |dirty| {
                         if (term.cursor.y < dirty.len) {
@@ -1094,62 +578,35 @@ pub fn main() !u8 {
                         }
                     }
                 }
-
                 renderer.last_blink_time = now;
                 pending_render = true;
                 timeout_ms = 0;
             } else {
-                timeout_ms = @intCast(next_blink - now);
+                const wait = @as(i32, @intCast(next_blink - now));
+                timeout_ms = @min(timeout_ms, wait);
             }
         }
 
-        // 如果有待处理的渲染，缩短 poll 超时时间以保证帧率
-        if (pending_render) {
-            const time_since = std.time.milliTimestamp() - last_render_time;
-            const remaining = min_frame_time_ms - time_since;
-            const wait_ms: i32 = if (remaining > 0) @intCast(remaining) else 0;
-            if (timeout_ms == -1 or wait_ms < timeout_ms) {
-                timeout_ms = wait_ms;
-            }
-        }
-
-        // 如果有待处理的 URL 检测，确保我们在超时后唤醒
-        if (url_check_pending) {
-            const time_since = std.time.milliTimestamp() - last_url_check_time;
-            const remaining = url_check_interval_ms - time_since;
-            const wait_ms: i32 = if (remaining > 0) @intCast(remaining) else 0;
-            if (timeout_ms == -1 or wait_ms < timeout_ms) {
-                timeout_ms = wait_ms;
-            }
-        }
-
-        // 2. Poll 等待新数据
         var fds = [_]std.posix.pollfd{
             .{ .fd = pty.master, .events = std.posix.POLL.IN, .revents = 0 },
-            .{ .fd = x11.XConnectionNumber(window.dpy), .events = std.posix.POLL.IN, .revents = 0 },
         };
 
         _ = std.posix.poll(&fds, timeout_ms) catch |err| {
-            std.log.err("Poll failed: {}", .{err});
-            continue;
+            if (err != error.Interrupted) {
+                std.log.err("Poll failed: {}", .{err});
+            }
         };
 
-        // 3. 检查子进程是否还活着
         if (!pty.isChildAlive()) {
             std.log.info("子进程已退出", .{});
             quit = true;
             break;
         }
 
-        // 4. 处理 PTY 数据
-
         if ((fds[0].revents & std.posix.POLL.IN) != 0) {
             const n = pty.read(read_buffer) catch |err| {
-                if (err == error.WouldBlock) {
-                    continue;
-                }
+                if (err == error.WouldBlock) continue;
                 if (err == error.InputOutput) {
-                    // PTY 关闭 (EIO)
                     quit = true;
                     break;
                 }
@@ -1161,16 +618,12 @@ pub fn main() !u8 {
                 pending_render = true;
                 url_check_pending = true;
 
-                // 更新窗口标题
                 if (term.window_title_dirty) {
                     window.setTitle(term.window_title);
                     term.window_title_dirty = false;
                 }
 
-                // 同步 OSC 52 剪贴板数据
                 if (term.clipboard_data) |data| {
-                    // 仅在终端获得焦点时同步，避免在后台运行时干扰其他终端的剪切板
-                    // 如果未获得焦点，保留数据直到下一次获得焦点或被新序列覆盖
                     if (term.mode.focused) {
                         selector.copyTextToClipboard(data, term.clipboard_mask) catch |err| {
                             std.log.err("OSC 52 剪贴板同步失败: {}", .{err});
@@ -1181,7 +634,7 @@ pub fn main() !u8 {
                 }
             }
         }
-        window.updateImeSpot(term.cursor.x, term.cursor.y); // 更新输入法光标位置
+        window.updateImeSpot(term.cursor.x, term.cursor.y);
     }
 
     return 0;

@@ -147,8 +147,19 @@ pub fn runeWidth(codepoint: u21) u8 {
 
     // 使用 libc wcwidth
     const width = libc.wcwidth(@intCast(codepoint));
-    if (width < 0) return 0;
-    return @intCast(width);
+    if (width > 0) return @intCast(width);
+
+    // wcwidth 对某些字符（如 emoji）返回 -1（未定义宽度）
+    // 对于这些字符，使用启发式规则：
+    // - Emoji (U+1F000 - U+1FAFF): 宽度为 2
+    // - 其他未定义宽度的字符: 宽度为 1
+    if (codepoint >= 0x1F000 and codepoint <= 0x1FAFF) {
+        // Emoji 区域（包括大多数彩绘 emoji）
+        return 2;
+    }
+
+    // 其他未定义宽度的字符默认为 1
+    return 1;
 }
 
 /// 获取 UTF-8 字符的字节长度

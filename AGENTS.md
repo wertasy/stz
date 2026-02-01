@@ -40,7 +40,7 @@ rm -rf .zig-cache zig-out
 const std = @import("std");
 
 const stz = @import("stz");
-const x11 = stz.x11;
+const sdl2 = stz.c.sdl2;
 
 const Terminal = stz.Terminal;
 ```

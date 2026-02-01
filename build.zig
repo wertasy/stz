@@ -12,12 +12,13 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
 
-    // 链接 X11 和相关库
+    // 链接 SDL2 和相关库
     mod.addImport("stz", mod);
-    mod.linkSystemLibrary("X11", .{});
-    mod.linkSystemLibrary("Xft", .{});
-    mod.linkSystemLibrary("fontconfig", .{});
+    mod.linkSystemLibrary("SDL2", .{});
+    // 移除 SDL2_ttf，改用 FreeType
+    mod.linkSystemLibrary("freetype", .{});
     mod.linkSystemLibrary("harfbuzz", .{});
+    mod.linkSystemLibrary("fontconfig", .{});
 
     // 创建 root module
     const root_module = b.createModule(.{
@@ -87,11 +88,10 @@ pub fn build(b: *std.Build) void {
 
             // 链接依赖
             t.linkLibC();
-            t.linkSystemLibrary("X11");
-            t.linkSystemLibrary("Xft");
-            t.linkSystemLibrary("fontconfig");
+            t.linkSystemLibrary("SDL2");
             t.linkSystemLibrary("freetype");
             t.linkSystemLibrary("harfbuzz");
+            t.linkSystemLibrary("fontconfig");
 
             const run_t = b.addRunArtifact(t);
             test_step.dependOn(&run_t.step);

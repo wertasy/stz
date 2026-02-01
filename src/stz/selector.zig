@@ -5,8 +5,8 @@
 //! - 鼠标拖拽选择：开始选择（ButtonPress）、扩展选择（MotionNotify）、结束选择（ButtonRelease）
 //! - 智能选择边界：单词吸附（双击）、行吸附（三击）
 //! - 选择标准化：始终将选择区域规范化为左上角到右下角
-//! - 复制到剪贴板：X11 PRIMARY 和 CLIPBOARD 选择
-//! - 从剪贴板粘贴：接收 SelectionNotify 事件，粘贴到 PTY
+//! - 复制到剪贴板：使用 SDL2 CLIPBOARD
+//! - 从剪贴板粘贴：使用 SDL2 剪贴板 API
 //!
 //! 选择模式：
 //! - idle: 空闲，没有选择
@@ -30,23 +30,20 @@
 //! 选择流程：
 //! 1. ButtonPress: 调用 start()，设置起点（ob, oe）
 //! 2. MotionNotify: 调用 extend()，更新终点（oe），规范化区域（nb, ne）
-//! 3. ButtonRelease: 调用 copy()，复制到 X11 剪贴板
+//! 3. ButtonRelease: 调用 copy()，复制到剪贴板
 //!
 //! 选择区域规范化：
 //! - 无论用户从哪个方向拖拽，nb 总是左上角，ne 总是右下角
 //! - 方便处理选择文本和渲染高亮
 //!
-//! X11 选择机制：
-//! - PRIMARY: 鼠标选择（中键粘贴）
-//! - CLIPBOARD: Ctrl+C/Ctrl+V 选择（现代应用）
-//! - SelectionRequest: 其他应用请求选择内容
-//! - SelectionNotify: 其他应用发送选择内容（粘贴）
+//! SDL2 剪贴板机制：
+//! - SDL2 只支持 CLIPBOARD 选择（现代剪贴板）
+//! - 不支持 PRIMARY 选择（鼠标选择中键粘贴）
+//! - 所有选择都使用 CLIPBOARD
 //!
 //! 与剪贴板的交互：
-//! - copy(): 将选择的文本编码为 UTF-8，设置到 X11 剪贴板
-//! - requestPaste(): 请求 X11 剪贴板内容（中键粘贴）
-//! - handleSelectionRequest(): 处理其他应用的请求
-//! - handleSelectionNotify(): 处理其他应用发送的内容（粘贴）
+//! - copy(): 将选择的文本编码为 UTF-8，设置到剪贴板
+//! - requestPaste(): 从剪贴板获取文本
 
 const std = @import("std");
 const stz = @import("stz");
@@ -54,8 +51,7 @@ const stz = @import("stz");
 const types = stz.types;
 const Terminal = stz.Terminal;
 const config = stz.Config;
-const x11 = stz.c.x11;
-const x11_utils = stz.x11_utils;
+const sdl2_utils = stz.sdl2_utils;
 
 const Selection = types.Selection;
 const SelectionMode = types.SelectionMode;
@@ -65,27 +61,19 @@ const Point = types.Point;
 
 pub const SelectionError = error{
     OutOfBounds,
+    NoClipboardText,
 };
 
 /// 选择器
 const Selector = @This();
 allocator: std.mem.Allocator,
-selected_text: ?[]u8 = null,
-// X11 context (set externally)
-dpy: ?*x11.Display = null,
-win: x11.Window = 0,
+selected_text: ?[:0]const u8 = null,
 
 /// 初始化选择器
 pub fn init(allocator: std.mem.Allocator) Selector {
     return Selector{
         .allocator = allocator,
     };
-}
-
-/// 设置 X11 上下文
-pub fn setX11Context(self: *Selector, dpy: *x11.Display, win: x11.Window) void {
-    self.dpy = dpy;
-    self.win = win;
 }
 
 /// 清理选择器
@@ -224,14 +212,14 @@ pub fn isSelected(self: *Selector, term: *const Terminal, x: usize, y: usize) bo
 }
 
 /// 获取选中的文本
-pub fn getText(self: *Selector, term: *const Terminal) ![]u8 {
+pub fn getText(self: *Selector, term: *const Terminal) ![:0]const u8 {
     const sel = &term.selection;
     // nb.x 为 maxInt 表示没有有效选择范围
     if (sel.nb.x == std.math.maxInt(usize)) {
-        return &[_]u8{};
+        return &[_:0]u8{};
     }
 
-    var buffer = std.ArrayList(u8).initCapacity(self.allocator, 4096) catch return &[_]u8{};
+    var buffer = std.ArrayList(u8).initCapacity(self.allocator, 4096) catch return &[_:0]u8{};
     defer buffer.deinit(self.allocator);
 
     const y_start = sel.nb.y;
@@ -290,7 +278,7 @@ pub fn getText(self: *Selector, term: *const Terminal) ![]u8 {
     if (self.selected_text) |text| {
         self.allocator.free(text);
     }
-    self.selected_text = try self.allocator.dupe(u8, trimmed);
+    self.selected_text = try self.allocator.dupeZ(u8, trimmed);
     return self.selected_text.?;
 }
 
@@ -306,92 +294,47 @@ pub fn clear(self: *Selector, term: *Terminal) void {
     term.selClear();
 }
 
-/// 清除高亮标记
-pub fn clearHighlights(self: *Selector, term: *Terminal) void {
-    _ = self;
-    _ = term;
-    // TODO: 清除脏标记或重绘选择区域
-}
-
 /// 复制指定文本到系统剪贴板
 pub fn copyTextToClipboard(self: *Selector, text: []const u8, mask: u8) !void {
+    _ = mask; // SDL2 只支持 CLIPBOARD，忽略 mask
     if (text.len == 0) return;
 
-    if (self.dpy) |dpy| {
-        if ((mask & 2) != 0) {
-            // PRIMARY
-            const primary_atom = x11_utils.getPrimaryAtom(dpy);
-            _ = x11.XSetSelectionOwner(dpy, primary_atom, self.win, x11.CurrentTime);
-        }
-        if ((mask & 1) != 0) {
-            // CLIPBOARD
-            const clipboard_atom = x11_utils.getClipboardAtom(dpy);
-            _ = x11.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.CurrentTime);
-        }
+    // 使用 SDL2 设置剪贴板文本
+    try sdl2_utils.setClipboardText(text, .clipboard);
 
-        // 更新 selected_text 以便 SelectionRequest 处理
-        if (self.selected_text) |old| {
-            self.allocator.free(old);
-        }
-        self.selected_text = try self.allocator.dupe(u8, text);
-
-        // XStoreBytes for legacy
-        _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
-
-        std.log.info("已通过 OSC 52 复制 {d} 字符到剪贴板", .{text.len});
+    // 更新 selected_text（存储为空终止字符串）
+    if (self.selected_text) |old| {
+        self.allocator.free(old);
     }
+    self.selected_text = try self.allocator.dupeZ(u8, text);
+
+    std.log.info("已复制 {d} 字符到剪贴板", .{text.len});
 }
 
-/// 复制到系统剪贴板 (PRIMARY)
+/// 复制到系统剪贴板 (CLIPBOARD)
 pub fn copyToClipboard(self: *Selector) !void {
     if (self.selected_text) |text| {
         // 不要复制空文本
         if (text.len == 0) return;
 
-        if (self.dpy) |dpy| {
-            // Use XSetSelectionOwner to claim PRIMARY selection
-            const primary_atom = x11_utils.getPrimaryAtom(dpy);
-            _ = x11.XSetSelectionOwner(dpy, primary_atom, self.win, x11.CurrentTime);
+        // 使用 SDL2 设置剪贴板文本
+        try sdl2_utils.setClipboardText(text, .clipboard);
+    }
+}
 
-            if (x11.XGetSelectionOwner(dpy, primary_atom) != self.win) {
-                std.log.err("Failed to acquire selection ownership", .{});
-                return;
-            }
-
-            // 也顺便更新 CLIPBOARD，方便 Ctrl+V
-            const clipboard_atom = x11_utils.getClipboardAtom(dpy);
-            _ = x11.XSetSelectionOwner(dpy, clipboard_atom, self.win, x11.CurrentTime);
-
-            // Use XStoreBytes for legacy CUT_BUFFER0 support (optional but good for compat)
-            _ = x11.XStoreBytes(dpy, text.ptr, @intCast(text.len));
-
-            // std.log.info("已复制 {d} 字符到剪贴板 (PRIMARY & CLIPBOARD)", .{text.len});
-        } else {
-            std.log.info("已复制 {d} 字符到剪贴板 (X11 未初始化)", .{text.len});
+/// 请求粘贴 (从剪贴板)
+/// 返回的字符串由 selector 拥有，在 deinit() 时释放
+pub fn requestPaste(self: *Selector) ![]const u8 {
+    // SDL2 的剪贴板操作是同步的，直接获取文本
+    // 传递 allocator 以分配字符串内存
+    const result = try sdl2_utils.getClipboardText(self.allocator, .clipboard);
+    if (result) |text| {
+        // 存储到 selected_text，在 deinit() 时释放
+        if (self.selected_text) |old| {
+            self.allocator.free(old);
         }
+        self.selected_text = text;
+        return self.selected_text.?;
     }
-}
-
-/// 请求粘贴 (从 PRIMARY 选区)
-pub fn requestPaste(self: *Selector) !void {
-    if (self.dpy) |dpy| {
-        try self.requestSelection(x11_utils.getPrimaryAtom(dpy));
-    }
-}
-
-/// 从指定的 Selection (PRIMARY, CLIPBOARD 等) 请求数据
-pub fn requestSelection(self: *Selector, selection: x11.Atom) !void {
-    if (self.dpy) |dpy| {
-        const utf8_atom = x11_utils.getUtf8Atom(dpy);
-        // XConvertSelection: requestor (win), selection, target (UTF8), property (selection), time
-        // 对齐 st：使用 selection atom 作为 property 名
-        _ = x11.XConvertSelection(dpy, selection, utf8_atom, selection, self.win, x11.CurrentTime);
-    }
-}
-
-/// 处理 SelectionClear 事件
-pub fn handleSelectionClear(self: *Selector, term: *Terminal, event: *const x11.XSelectionClearEvent) void {
-    _ = event;
-    // 如果我们丢失了选区的所有权，清除当前高亮
-    self.clear(term);
+    return error.NoClipboardText;
 }

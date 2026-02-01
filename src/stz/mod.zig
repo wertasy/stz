@@ -12,21 +12,31 @@ pub const Args = @import("args.zig");
 pub const Config = @import("config.zig");
 pub const types = @import("types.zig");
 pub const unicode = @import("unicode.zig");
-pub const x11_utils = @import("x11_utils.zig");
+pub const sdl2_utils = @import("sdl2_utils.zig");
 pub const harfbuzz = @import("harfbuzz.zig");
+pub const TextureAtlas = @import("texture_atlas.zig");
 
 pub const c = struct {
-    pub const x11 = @cImport({
-        @cInclude("X11/Xlib.h");
-        @cInclude("X11/Xatom.h");
-        @cInclude("X11/Xutil.h");
-        @cInclude("X11/Xft/Xft.h");
-        @cInclude("X11/cursorfont.h");
-        @cInclude("X11/keysym.h");
-        @cInclude("X11/XKBlib.h");
+    pub const sdl2 = @cImport({
+        @cInclude("SDL2/SDL.h");
+        // 移除 SDL2_ttf，改用 FreeType
+    });
+
+    pub const ft = @cImport({
+        @cInclude("ft2build.h");
+        @cInclude("freetype/freetype.h");
+        @cInclude("freetype/ftglyph.h");
+        @cInclude("freetype/ftbitmap.h");
+        @cInclude("freetype/ftrender.h");
+    });
+
+    pub const fc = @cImport({
+        @cInclude("fontconfig/fontconfig.h");
     });
 
     pub const hb = @cImport({
+        @cInclude("ft2build.h");
+        @cInclude("freetype/freetype.h");
         @cInclude("hb.h");
         @cInclude("hb-ft.h");
     });

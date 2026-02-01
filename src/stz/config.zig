@@ -18,13 +18,15 @@ const std = @import("std");
 const stz = @import("stz");
 
 const types = stz.types;
-const x11 = stz.c.x11;
+const sdl2 = stz.c.sdl2;
 
 const CursorStyle = types.CursorStyle;
 
 // 字体配置
 pub const font = struct {
-    pub const name = "Maple Mono NF CN:pixelsize=18:antialias=true:autohint=false";
+    // SDL2_ttf 使用字体文件路径或简短字体名称
+    // 常见选项：DejaVuSansMono, FreeMono, LiberationMono, NotoSansMono
+    pub const name = "Maple Mono NF CN";
     pub const size: u32 = 18; // 像素大小
     pub const bold: bool = true;
     pub const italic: bool = false;
@@ -35,12 +37,14 @@ pub const font = struct {
     // 回退字体列表 (spare fonts)，用于主字体不支持某些字符时
     // 包含支持各种 Unicode 字符的字体：CJK、Emoji、Symbol、数学符号等
     pub const fallback_fonts = [_][:0]const u8{
-        "FreeMono:pixelsize=18:antialias=true",
-        "FreeSans:pixelsize=18:antialias=true",
-        "FreeSerif:pixelsize=18:antialias=true",
-        "Noto Sans Mono:pixelsize=18:antialias=true",
-        "Noto Sans CJK SC:pixelsize=18:antialias=true",
-        "Noto Color Emoji:pixelsize=18:antialias=true",
+        "Noto Color Emoji", // 彩色 emoji 字体（优先）
+        "Segoe UI Emoji", // Windows emoji 字体
+        "Apple Color Emoji", // macOS emoji 字体
+        "Twemoji", // Twitter emoji 字体
+        "DejaVu Sans", // 通用符号和西文字符
+        "Noto Sans", // Google Noto 字体系列
+        "Liberation Sans", // Linux 通用字体
+        "Symbola", // 符号字体（数学、Unicode 符号）
     };
 };
 
@@ -121,6 +125,7 @@ pub const draw = struct {
     pub const boxdraw_bold: bool = true;
     pub const boxdraw_braille: bool = true;
     pub const disable_bold_font: bool = false; // 禁用粗体字体，使用亮色模拟粗体（st 的传统行为）
+    pub const atlas_cell_size: u32 = 128; // 纹理图集单元格大小（正方形，必须能容纳最大字形，彩色 emoji 需要 128x128）
 };
 
 // 滚动配置
@@ -181,31 +186,24 @@ pub const KeyAction = enum {
 };
 
 pub const KeyBinding = struct {
-    mod: u32,
-    key: x11.KeySym,
+    mod: u16,
+    key: u32,
     action: KeyAction,
     arg: i32 = 0,
 };
 
 // 键盘快捷键配置
 pub const shortcuts = [_]KeyBinding{
-    .{ .mod = x11.ShiftMask, .key = x11.XK_Prior, .action = .ScrollUp, .arg = 0 }, // PageUp
-    .{ .mod = x11.ShiftMask, .key = x11.XK_Next, .action = .ScrollDown, .arg = 0 }, // PageDown
-    .{ .mod = x11.ShiftMask, .key = x11.XK_KP_Prior, .action = .ScrollUp, .arg = 0 },
-    .{ .mod = x11.ShiftMask, .key = x11.XK_KP_Next, .action = .ScrollDown, .arg = 0 },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Prior, .action = .ZoomIn },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Next, .action = .ZoomOut },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Prior, .action = .ZoomIn },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Next, .action = .ZoomOut },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_Home, .action = .ZoomReset },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_KP_Home, .action = .ZoomReset },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_V, .action = .Paste },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_v, .action = .Paste },
-    // Print shortcuts
-    .{ .mod = x11.ControlMask, .key = x11.XK_Print, .action = .PrintToggle },
-    .{ .mod = x11.ShiftMask, .key = x11.XK_Print, .action = .PrintScreen },
-    .{ .mod = 0, .key = x11.XK_Print, .action = .PrintSelection },
-    // Record shortcut (Ctrl+Shift+R)
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_R, .action = .ToggleRecord },
-    .{ .mod = x11.ControlMask | x11.ShiftMask, .key = x11.XK_r, .action = .ToggleRecord },
+    .{ .mod = sdl2.KMOD_SHIFT, .key = sdl2.SDLK_PAGEUP, .action = .ScrollUp, .arg = 0 },
+    .{ .mod = sdl2.KMOD_SHIFT, .key = sdl2.SDLK_PAGEDOWN, .action = .ScrollDown, .arg = 0 },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_PAGEUP, .action = .ZoomIn },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_PAGEDOWN, .action = .ZoomOut },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_HOME, .action = .ZoomReset },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_v, .action = .Paste },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_V, .action = .Paste },
+    .{ .mod = sdl2.KMOD_CTRL, .key = sdl2.SDLK_PRINTSCREEN, .action = .PrintToggle },
+    .{ .mod = sdl2.KMOD_SHIFT, .key = sdl2.SDLK_PRINTSCREEN, .action = .PrintScreen },
+    .{ .mod = 0, .key = sdl2.SDLK_PRINTSCREEN, .action = .PrintSelection },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_r, .action = .ToggleRecord },
+    .{ .mod = sdl2.KMOD_CTRL | sdl2.KMOD_SHIFT, .key = sdl2.SDLK_R, .action = .ToggleRecord },
 };

@@ -14,12 +14,12 @@
 //! 1. 检测特殊键（Backspace、Delete、方向键、PageUp/PageDown 等）
 //! 2. 根据当前模式（普通模式/应用程序模式）选择对应的转义序列
 //! 3. 将转义序列写入 PTY
-//! 4. 返回 true（表示已处理，不需要输入法处理）
+//! 4. 返回 true（表示已处理）
 //!
 //! 普通字符的处理流程：
-//! 1. Xutf8LookupString 或 XLookupString 将 KeyPress 事件转换为 UTF-8 字符
-//! 2. 将 UTF-8 字符写入 PTY
-//! 3. 返回 false（表示已处理，不需要输入法处理）
+//! 1. 从 SDL2 键盘事件获取按键码和修饰键状态
+//! 2. 将按键码转换为字符并写入 PTY
+//! 3. 返回 true（表示已处理）
 //!
 //! 应用程序模式 (Application Keypad/Cursor Mode)：
 //! - 普通：方向键发送 ESC [ A/B/C/D
@@ -39,7 +39,7 @@
 const std = @import("std");
 const stz = @import("stz");
 
-const x11 = stz.c.x11;
+const sdl2 = stz.c.sdl2;
 const PTY = stz.PTY;
 const Terminal = stz.Terminal;
 
@@ -94,104 +94,81 @@ pub fn sendPaste(self: *Input, text: []const u8) !void {
 }
 
 /// 处理键盘事件
-/// 返回: true 表示按键已被特殊处理，false 表示应由输入法继续处理
-pub fn handleKey(self: *Input, event: *const x11.XKeyEvent) !bool {
-    var keysym: x11.KeySym = 0;
-    keysym = x11.XkbKeycodeToKeysym(event.display, @intCast(event.keycode), 0, if ((event.state & x11.ShiftMask) != 0) 1 else 0);
-
-    const state = event.state;
-    const ctrl = (state & x11.ControlMask) != 0;
-    const alt = (state & x11.Mod1Mask) != 0;
-    const shift = (state & x11.ShiftMask) != 0;
+/// 参数:
+///   keycode: SDL2 按键码 (SDL_Keycode)
+///   mod: 修饰键状态 (KMOD_SHIFT, KMOD_CTRL, KMOD_ALT 等)
+/// 返回: true 表示按键已被处理
+pub fn handleKey(self: *Input, keycode: i32, mod: u16) !bool {
+    const ctrl = (mod & sdl2.KMOD_CTRL) != 0;
+    const alt = (mod & sdl2.KMOD_ALT) != 0;
+    const shift = (mod & sdl2.KMOD_SHIFT) != 0;
 
     // 如果是特殊功能键，拦截并处理
-    if (try self.handleSpecialKey(keysym, ctrl, alt, shift)) {
+    if (try self.handleSpecialKey(keycode, ctrl, alt, shift)) {
         return true;
     }
 
-    // 处理 Ctrl+字母 等组合键
-    if (ctrl and keysym >= 32 and keysym <= 126) {
-        try self.writePrintable(@intCast(keysym), alt, ctrl, shift);
+    // 处理 Ctrl+字母 或 Alt+字母 等组合键
+    if ((ctrl or alt) and keycode >= 32 and keycode <= 126) {
+        try self.writePrintable(@intCast(keycode), alt, ctrl, shift);
         return true;
     }
 
-    // 其他普通字符交给 XIM 处理
     return false;
 }
 
-fn handleSpecialKey(self: *Input, keysym: x11.KeySym, ctrl: bool, alt: bool, shift: bool) !bool {
-    switch (keysym) {
-        x11.XK_Return => try self.writeReturn(alt),
-        x11.XK_KP_Enter => try self.writeReturn(alt),
-        x11.XK_Escape => try self.writeEsc(),
-        x11.XK_BackSpace => try self.writeBackspace(alt, ctrl, shift),
-        x11.XK_Tab => try self.writeTab(alt),
-        x11.XK_ISO_Left_Tab => try self.writeTab(alt),
-        x11.XK_Delete => try self.writeDelete(alt, ctrl),
-        x11.XK_KP_Delete => try self.writeDelete(alt, ctrl),
-        x11.XK_Up => try self.writeArrow(alt, 'A', ctrl, shift),
-        x11.XK_Down => try self.writeArrow(alt, 'B', ctrl, shift),
-        x11.XK_Left => try self.writeArrow(alt, 'D', ctrl, shift),
-        x11.XK_Right => try self.writeArrow(alt, 'C', ctrl, shift),
-        x11.XK_KP_Up => try self.writeArrow(alt, 'A', ctrl, shift),
-        x11.XK_KP_Down => try self.writeArrow(alt, 'B', ctrl, shift),
-        x11.XK_KP_Left => try self.writeArrow(alt, 'D', ctrl, shift),
-        x11.XK_KP_Right => try self.writeArrow(alt, 'C', ctrl, shift),
-        x11.XK_Home => try self.writeHome(alt, ctrl, shift),
-        x11.XK_KP_Home => try self.writeHome(alt, ctrl, shift),
-        x11.XK_End => try self.writeEnd(alt, ctrl, shift),
-        x11.XK_KP_End => try self.writeEnd(alt, ctrl, shift),
-        x11.XK_Prior => try self.writePageUp(alt, ctrl, shift),
-        x11.XK_KP_Prior => try self.writePageUp(alt, ctrl, shift),
-        x11.XK_Next => try self.writePageDown(alt, ctrl, shift),
-        x11.XK_KP_Next => try self.writePageDown(alt, ctrl, shift),
-        x11.XK_Insert => {},
-        x11.XK_KP_Insert => {},
+fn handleSpecialKey(self: *Input, keycode: i32, ctrl: bool, alt: bool, shift: bool) !bool {
+    switch (keycode) {
+        sdl2.SDLK_RETURN, sdl2.SDLK_KP_ENTER => try self.writeReturn(alt),
+        sdl2.SDLK_ESCAPE => try self.writeEsc(),
+        sdl2.SDLK_BACKSPACE => try self.writeBackspace(alt, ctrl, shift),
+        sdl2.SDLK_TAB => try self.writeTab(alt),
+        sdl2.SDLK_DELETE => try self.writeDelete(alt, ctrl),
+        sdl2.SDLK_UP => try self.writeArrow(alt, 'A', ctrl, shift),
+        sdl2.SDLK_DOWN => try self.writeArrow(alt, 'B', ctrl, shift),
+        sdl2.SDLK_LEFT => try self.writeArrow(alt, 'D', ctrl, shift),
+        sdl2.SDLK_RIGHT => try self.writeArrow(alt, 'C', ctrl, shift),
+        sdl2.SDLK_HOME => try self.writeHome(alt, ctrl, shift),
+        sdl2.SDLK_END => try self.writeEnd(alt, ctrl, shift),
+        sdl2.SDLK_PAGEUP => try self.writePageUp(alt, ctrl, shift),
+        sdl2.SDLK_PAGEDOWN => try self.writePageDown(alt, ctrl, shift),
+        sdl2.SDLK_INSERT => {},
+        sdl2.SDLK_F1, sdl2.SDLK_F2, sdl2.SDLK_F3, sdl2.SDLK_F4, sdl2.SDLK_F5, sdl2.SDLK_F6, sdl2.SDLK_F7, sdl2.SDLK_F8, sdl2.SDLK_F9, sdl2.SDLK_F10, sdl2.SDLK_F11, sdl2.SDLK_F12 => {
+            const fn_num = @as(u32, @intCast(keycode - sdl2.SDLK_F1 + 1));
+            try self.writeFunction(fn_num, shift, ctrl, alt);
+            return true;
+        },
+        sdl2.SDLK_KP_0, sdl2.SDLK_KP_1, sdl2.SDLK_KP_2, sdl2.SDLK_KP_3, sdl2.SDLK_KP_4, sdl2.SDLK_KP_5, sdl2.SDLK_KP_6, sdl2.SDLK_KP_7, sdl2.SDLK_KP_8, sdl2.SDLK_KP_9, sdl2.SDLK_KP_MULTIPLY, sdl2.SDLK_KP_PLUS, sdl2.SDLK_KP_MINUS, sdl2.SDLK_KP_PERIOD, sdl2.SDLK_KP_DIVIDE => {
+            return try self.writeKeypad(keycode, shift, ctrl, alt);
+        },
         else => {
-            if (keysym >= x11.XK_F1 and keysym <= x11.XK_F12) {
-                try self.writeFunction(@intCast(keysym - x11.XK_F1 + 1), shift, ctrl, alt);
-                return true;
-            }
-            if (keysym >= x11.XK_KP_0 and keysym <= x11.XK_KP_9) {
-                return try self.writeKeypad(keysym, shift, ctrl, alt);
-            }
-            if (keysym == x11.XK_KP_Add or keysym == x11.XK_KP_Subtract or keysym == x11.XK_KP_Multiply or
-                keysym == x11.XK_KP_Divide or keysym == x11.XK_KP_Decimal or keysym == x11.XK_KP_Separator)
-            {
-                return try self.writeKeypad(keysym, shift, ctrl, alt);
-            }
-
-            // 忽略普通 ASCII 字符和修饰键的日志，避免刷屏
-            if (keysym < 0x80 or (keysym >= x11.XK_Shift_L and keysym <= x11.XK_Hyper_R)) {
+            // 忽略普通 ASCII 字符
+            if (keycode >= 32 and keycode <= 126) {
                 return false;
             }
-
-            std.log.debug("未处理的特殊按键: 0x{x}", .{keysym});
             return false;
         },
     }
     return true;
 }
 
-fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: bool) !bool {
+fn writeKeypad(self: *Input, keycode: i32, shift: bool, ctrl: bool, alt: bool) !bool {
     if (self.term.mode.app_keypad) {
         var c: u8 = 0;
-        if (keysym >= x11.XK_KP_0 and keysym <= x11.XK_KP_9) {
-            c = 'p' + @as(u8, @intCast(keysym - x11.XK_KP_0));
-        } else if (keysym == x11.XK_KP_Multiply) {
+        if (keycode >= sdl2.SDLK_KP_0 and keycode <= sdl2.SDLK_KP_9) {
+            c = 'p' + @as(u8, @intCast(keycode - sdl2.SDLK_KP_0));
+        } else if (keycode == sdl2.SDLK_KP_MULTIPLY) {
             c = 'j';
-        } else if (keysym == x11.XK_KP_Add) {
+        } else if (keycode == sdl2.SDLK_KP_PLUS) {
             c = 'k';
-        } else if (keysym == x11.XK_KP_Separator) {
-            c = 'l';
-        } else if (keysym == x11.XK_KP_Subtract) {
+        } else if (keycode == sdl2.SDLK_KP_MINUS) {
             c = 'm';
-        } else if (keysym == x11.XK_KP_Decimal) {
+        } else if (keycode == sdl2.SDLK_KP_PERIOD) {
             c = 'n';
-        } else if (keysym == x11.XK_KP_Divide) {
+        } else if (keycode == sdl2.SDLK_KP_DIVIDE) {
             c = 'o';
         } else {
-            std.log.debug("未处理的 keypad 键 (AppKeypad): 0x{x}", .{keysym});
+            std.log.debug("未处理的 keypad 键 (AppKeypad): {}", .{keycode});
             return false;
         }
         var seq: [3]u8 = undefined;
@@ -200,22 +177,20 @@ fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: b
         return true;
     } else {
         var char: u8 = 0;
-        if (keysym >= x11.XK_KP_0 and keysym <= x11.XK_KP_9) {
-            char = '0' + @as(u8, @intCast(keysym - x11.XK_KP_0));
-        } else if (keysym == x11.XK_KP_Multiply) {
+        if (keycode >= sdl2.SDLK_KP_0 and keycode <= sdl2.SDLK_KP_9) {
+            char = '0' + @as(u8, @intCast(keycode - sdl2.SDLK_KP_0));
+        } else if (keycode == sdl2.SDLK_KP_MULTIPLY) {
             char = '*';
-        } else if (keysym == x11.XK_KP_Add) {
+        } else if (keycode == sdl2.SDLK_KP_PLUS) {
             char = '+';
-        } else if (keysym == x11.XK_KP_Separator) {
-            char = ',';
-        } else if (keysym == x11.XK_KP_Subtract) {
+        } else if (keycode == sdl2.SDLK_KP_MINUS) {
             char = '-';
-        } else if (keysym == x11.XK_KP_Decimal) {
+        } else if (keycode == sdl2.SDLK_KP_PERIOD) {
             char = '.';
-        } else if (keysym == x11.XK_KP_Divide) {
+        } else if (keycode == sdl2.SDLK_KP_DIVIDE) {
             char = '/';
         } else {
-            std.log.debug("未处理的 keypad 键 (Normal): 0x{x}", .{keysym});
+            std.log.debug("未处理的 keypad 键 (Normal): {}", .{keycode});
             return false;
         }
         try self.writePrintable(char, alt, ctrl, shift);
@@ -223,7 +198,7 @@ fn writeKeypad(self: *Input, keysym: x11.KeySym, shift: bool, ctrl: bool, alt: b
     }
 }
 
-pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32, event_type: u8) !void {
+pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, mod: u16, event_type: u8) !void {
     if (!self.term.mode.isMouseEnabled()) return;
 
     var code: u32 = 0;
@@ -262,9 +237,9 @@ pub fn sendMouseReport(self: *Input, x: usize, y: usize, button: u32, state: u32
 
     // Add modifiers if not in X10 mode
     if (!self.term.mode.mouse_x10) {
-        if ((state & x11.ShiftMask) != 0) code += 4;
-        if ((state & x11.Mod1Mask) != 0) code += 8;
-        if ((state & x11.ControlMask) != 0) code += 16;
+        if ((mod & sdl2.KMOD_SHIFT) != 0) code += 4;
+        if ((mod & sdl2.KMOD_ALT) != 0) code += 8;
+        if ((mod & sdl2.KMOD_CTRL) != 0) code += 16;
     }
 
     if (self.term.mode.mouse_sgr) {

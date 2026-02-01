@@ -25,15 +25,9 @@ font: ?[]const u8 = null,
 shell_cmd: ?[:0]const u8 = null,
 shell_args: std.ArrayList([]const u8),
 title: ?[:0]const u8 = null,
-name: ?[:0]const u8 = null,
-class: ?[:0]const u8 = null,
-io_file: ?[:0]const u8 = null,
-line: ?[:0]const u8 = null,
-embed: ?[:0]const u8 = null,
 // 数值参数
 cols: ?usize = null,
 rows: ?usize = null,
-is_fixed: bool = false,
 // 请求帮助/版本
 show_help: bool = false,
 show_version: bool = false,
@@ -68,12 +62,6 @@ pub fn parse(self: *Self, argv: [][:0]const u8) !void {
         } else if (std.mem.eql(u8, arg, "-a")) {
             self.allow_altscreen = false;
             i += 1;
-        } else if (std.mem.eql(u8, arg, "-c")) {
-            if (i + 1 >= argv.len) {
-                return error.MissingArgument;
-            }
-            self.class = argv[i + 1];
-            i += 2;
         } else if (std.mem.eql(u8, arg, "-e")) {
             if (i + 1 >= argv.len) {
                 return error.MissingArgument;
@@ -99,38 +87,11 @@ pub fn parse(self: *Self, argv: [][:0]const u8) !void {
             const geom = argv[i + 1];
             try self.parseGeometry(geom);
             i += 2;
-        } else if (std.mem.eql(u8, arg, "-i")) {
-            self.is_fixed = true;
-            i += 1;
-        } else if (std.mem.eql(u8, arg, "-l")) {
-            if (i + 1 >= argv.len) {
-                return error.MissingArgument;
-            }
-            self.line = argv[i + 1];
-            i += 2;
-        } else if (std.mem.eql(u8, arg, "-n")) {
-            if (i + 1 >= argv.len) {
-                return error.MissingArgument;
-            }
-            self.name = argv[i + 1];
-            i += 2;
-        } else if (std.mem.eql(u8, arg, "-o")) {
-            if (i + 1 >= argv.len) {
-                return error.MissingArgument;
-            }
-            self.io_file = argv[i + 1];
-            i += 2;
         } else if (std.mem.eql(u8, arg, "-T") or std.mem.eql(u8, arg, "-t")) {
             if (i + 1 >= argv.len) {
                 return error.MissingArgument;
             }
             self.title = argv[i + 1];
-            i += 2;
-        } else if (std.mem.eql(u8, arg, "-w")) {
-            if (i + 1 >= argv.len) {
-                return error.MissingArgument;
-            }
-            self.embed = argv[i + 1];
             i += 2;
         } else {
             // 未识别的参数
@@ -157,19 +118,13 @@ pub fn printHelp(_: *Self, file: std.fs.File) !void {
         \\
         \\选项:
         \\  -a              禁用备用屏幕
-        \\  -c class        设置窗口类 (X11 资源类)
         \\  -e command [args] 执行指定命令
         \\  -f font         设置字体 (FontConfig 格式)
         \\  -g geometry     设置窗口几何尺寸 (colsxrows, 如 120x35)
         \\  -h, --help      显示此帮助信息
-        \\  -i              固定窗口大小
-        \\  -l line         指定终端行号
-        \\  -n name         设置窗口名称 (X11 资源名)
-        \\  -o file         指定 I/O 文件
         \\  -T title        设置窗口标题
         \\  -t title        设置窗口标题 (同 -T)
         \\  -v              显示版本号
-        \\  -w windowid     嵌入到指定窗口 ID
         \\
     ;
     try file.writeAll(help_text);

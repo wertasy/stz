@@ -1,83 +1,40 @@
-//! X11 窗口系统抽象层
+//! SDL2 窗口系统抽象层
 //!
-//! Window 模块负责创建和管理 X11 窗口，处理窗口事件。
+//! Window 模块负责创建和管理 SDL2 窗口，处理窗口事件。
 //!
 //! 核心功能：
-//! - 窗口创建和配置：创建 X11 窗口，设置属性、事件掩码、鼠标光标
-//! - 双缓冲管理：创建和管理 Pixmap（离屏缓冲区）
-//! - 窗口大小调整：响应 ConfigureNotify 事件，调整窗口和缓冲区大小
-//! - 事件轮询：使用 XNextEvent 或 XPending 获取窗口事件
-//! - 输入法支持：创建 XIM/XIC 上下文，支持中文输入法
+//! - 窗口创建和配置：创建 SDL2 窗口，设置属性、事件掩码、鼠标光标
+//! - 双缓冲管理：创建和管理 Texture（离屏缓冲区）
+//! - 窗口大小调整：响应窗口大小变化事件
+//! - 事件轮询：使用 SDL_PollEvent 获取窗口事件
 //! - 窗口标题：设置和更新窗口标题
-//! - 显示和刷新：显示窗口、将 Pixmap 复制到窗口
+//! - 显示和刷新：显示窗口、渲染内容到窗口
 //!
 //! 双缓冲机制：
-//! - Pixmap: 离屏缓冲区，所有绘图操作都在 Pixmap 上完成
-//! - buf_w, buf_h: Pixmap 的尺寸
-//! - renderer 渲染到 Pixmap
-//! - present() 或 presentPartial() 将 Pixmap 复制到窗口
+//! - Texture: 离屏缓冲区，所有绘图操作都在 Texture 上完成
+//! - buf_w, buf_h: Texture 的尺寸
+//! - renderer 渲染到 Texture
+//! - present() 或 presentPartial() 将 Texture 复制到窗口
 //! - 优点：避免闪烁、提高性能
-//!
-//! 窗口大小调整流程：
-//! 1. 用户调整窗口大小 → WM 发送 ConfigureNotify 事件
-//! 2. 计算新的行列数：cols = (width - 2*border) / cell_width
-//! 3. 调整 PTY 大小：pty.resize(new_cols, new_rows)
-//! 4. 调整终端大小：terminal.resize(new_rows, new_cols)
-//! 5. 调整 Pixmap 大小：resizeBuffer(new_width, new_height)
-//! 6. 重新渲染：renderer.render()
-//!
-//! 输入法支持 (XIM/XIC)：
-//! - XIM (Input Method): 输入法上下文，与输入法服务器通信
-//! - XIC (Input Context): 输入法上下文，处理特定窗口的输入
-//! - 支持中文输入法（如 fcitx、ibus）
-//! - 使用 Xutf8LookupString 获取输入的 UTF-8 字符
-//!
-//! 窗口属性：
-//! - 背景色、边框色、光标
-//! - 事件掩码：注册感兴趣的事件类型
-//! - 重力方向：窗口调整时的对齐方式
-//! - Colormap：颜色映射表
-//!
-//! 事件处理：
-//! - KeyPress/KeyRelease: 键盘输入
-//! - ButtonPress/ButtonRelease: 鼠标点击
-//! - MotionNotify: 鼠标移动
-//! - ConfigureNotify: 窗口大小调整
-//! - Expose: 窗口重绘
-//! - FocusIn/FocusOut: 焦点变化
-//! - SelectionRequest/Notify: 剪贴板
-//! - ClientMessage: 窗口管理器消息（如关闭窗口）
 
 const std = @import("std");
 const stz = @import("stz");
 
-const x11 = stz.c.x11;
-const x11_utils = stz.x11_utils;
+const sdl2 = stz.c.sdl2;
 const config = stz.Config;
 
 pub const WindowError = error{
-    OpenDisplayFailed,
-    CreateColormapFailed,
+    InitFailed,
     CreateWindowFailed,
-    CreateGCFailed,
+    CreateRendererFailed,
+    CreateTextureFailed,
 };
 
 const Window = @This();
 
-dpy: *x11.Display,
-win: x11.Window,
-screen: i32,
-root: x11.Window,
-vis: *x11.Visual,
-cmap: x11.Colormap,
-gc: x11.GC,
-im: ?x11.XIM = null,
-ic: ?x11.XIC = null,
-cursor: x11.Cursor = 0,
-wm_delete_window: x11.Atom = 0,
-
-// Double buffering
-buf: x11.Pixmap = 0,
+window: *sdl2.SDL_Window,
+renderer: *sdl2.SDL_Renderer,
+texture: ?*sdl2.SDL_Texture = null,
 buf_w: u32 = 0,
 buf_h: u32 = 0,
 
@@ -96,21 +53,17 @@ vborder_px: u32,
 allocator: std.mem.Allocator,
 
 pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Allocator) !Window {
-    const dpy = x11.XOpenDisplay(null) orelse return error.OpenDisplayFailed;
-    const screen = x11.XDefaultScreen(dpy);
-    const root = x11.XRootWindow(dpy, screen);
-    const vis = x11.XDefaultVisual(dpy, screen);
+    // 初始化 SDL2
+    if (sdl2.SDL_Init(sdl2.SDL_INIT_VIDEO) != 0) {
+        std.log.err("SDL2 初始化失败: {s}", .{sdl2.SDL_GetError()});
+        return error.InitFailed;
+    }
 
-    // TODO: Try to find a visual with alpha channel support for transparency?
-    // For now use default
+    // FreeType 初始化已移至 Renderer
+    // 不再需要 SDL2_ttf
 
-    const cmap = x11.XCreateColormap(dpy, root, vis, x11.AllocNone);
-
-    // Calculate size using estimated cell dimensions
-    // Note: These will be updated by renderer.init() after font is loaded
+    // 计算窗口大小
     const font_size = config.font.size;
-    // Conservative estimates to ensure window is large enough
-    // Actual font metrics will be loaded and cell_* will be updated
     const cell_w = @max(@as(u32, font_size / 2), 1);
     const cell_h = @as(u32, font_size);
     const border = config.window.border_pixels;
@@ -118,69 +71,37 @@ pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Al
     const win_w = cols * cell_w + border * 2;
     const win_h = rows * cell_h + border * 2;
 
-    // Set default mouse cursor (I-beam)
-    const mouse_cursor = x11.XCreateFontCursor(dpy, x11.XC_xterm);
+    // 创建窗口（初始隐藏，避免启动时闪烁）
+    const window = sdl2.SDL_CreateWindow(
+        title,
+        sdl2.SDL_WINDOWPOS_UNDEFINED,
+        sdl2.SDL_WINDOWPOS_UNDEFINED,
+        @intCast(win_w),
+        @intCast(win_h),
+        sdl2.SDL_WINDOW_HIDDEN | sdl2.SDL_WINDOW_RESIZABLE,
+    ) orelse {
+        std.log.err("创建窗口失败: {s}", .{sdl2.SDL_GetError()});
+        return error.CreateWindowFailed;
+    };
 
-    var attrs: x11.XSetWindowAttributes = undefined;
-    attrs.background_pixel = 0; // Black
-    attrs.border_pixel = 0;
-    attrs.bit_gravity = x11.NorthWestGravity;
-    attrs.colormap = cmap;
-    attrs.cursor = mouse_cursor;
-    attrs.event_mask = x11.KeyPressMask | x11.KeyReleaseMask | x11.ButtonPressMask |
-        x11.ButtonReleaseMask | x11.PointerMotionMask | x11.StructureNotifyMask |
-        x11.ExposureMask | x11.FocusChangeMask | x11.EnterWindowMask | x11.LeaveWindowMask;
-
-    const win = x11.XCreateWindow(dpy, root, 0, 0, @intCast(win_w), @intCast(win_h), 0, x11.XDefaultDepth(dpy, screen), x11.InputOutput, vis, x11.CWBackPixel | x11.CWBorderPixel | x11.CWBitGravity | x11.CWEventMask | x11.CWColormap | x11.CWCursor, &attrs);
-
-    if (win == 0) return error.CreateWindowFailed;
-
-    // Apply cursor
-    if (mouse_cursor != 0) {
-        _ = x11.XDefineCursor(dpy, win, mouse_cursor);
-    }
-
-    // Set title
-    _ = x11.XStoreName(dpy, win, title);
-
-    // Create GC
-    const gc = x11.XCreateGC(dpy, win, 0, null);
-    if (gc == null) return error.CreateGCFailed;
-
-    // Initialize IME
-    _ = x11.XSetLocaleModifiers("");
-    const im = x11.XOpenIM(dpy, null, null, null);
-    var ic: ?x11.XIC = null;
-    if (im) |im_ptr| {
-        const spot = x11.XPoint{ .x = @intCast(border), .y = @intCast(border) };
-        const nested_list = x11.XVaCreateNestedList(0, x11.XNSpotLocation, &spot, @as(?*anyopaque, null)); // End of list for the spot location attributes
-
-        ic = x11.XCreateIC(im_ptr, x11.XNInputStyle, x11.XIMPreeditNothing | x11.XIMStatusNothing, x11.XNClientWindow, win, x11.XNFocusWindow, win, x11.XNPreeditAttributes, nested_list, @as(?*anyopaque, null)); // End of XCreateIC list
-
-        if (nested_list != null) {
-            _ = x11.XFree(nested_list);
-        }
-    } else {
-        std.log.warn("Failed to open X Input Method", .{});
-    }
-
-    // Setup WM_DELETE_WINDOW protocol
-    const wm_delete_window = x11_utils.getDeleteWindowAtom(dpy);
-    var protocols = [_]x11.Atom{wm_delete_window};
-    _ = x11.XSetWMProtocols(dpy, win, &protocols, protocols.len);
+    // 创建渲染器
+    // 注意：不使用 SDL_RENDERER_PRESENTVSYNC 以避免输入延迟
+    // VSync 会导致 present() 等待垂直同步（16.67ms），造成打字不跟手
+    // 我们通过 min_frame_time_ms 限制帧率，不需要 VSync
+    const renderer = sdl2.SDL_CreateRenderer(
+        window,
+        -1,
+        sdl2.SDL_RENDERER_ACCELERATED,
+    ) orelse {
+        std.log.err("创建渲染器失败: {s}", .{sdl2.SDL_GetError()});
+        sdl2.SDL_DestroyWindow(window);
+        return error.CreateRendererFailed;
+    };
 
     return Window{
-        .dpy = dpy,
-        .win = win,
-        .screen = screen,
-        .root = root,
-        .vis = vis,
-        .cmap = cmap,
-        .gc = gc,
-        .im = im,
-        .ic = ic,
-        .cursor = mouse_cursor,
-        .wm_delete_window = wm_delete_window,
+        .window = window,
+        .renderer = renderer,
+        .texture = null,
         .width = @intCast(win_w),
         .height = @intCast(win_h),
         .cell_width = @intCast(cell_w),
@@ -193,72 +114,59 @@ pub fn init(title: [:0]const u8, cols: usize, rows: usize, allocator: std.mem.Al
     };
 }
 
-pub fn updateImeSpot(self: *Window, cx: usize, cy: usize) void {
-    if (self.ic == null) return;
-
-    // 计算光标在窗口内的像素坐标 (相对于窗口)
-    const spot_x = @as(i16, @intCast(cx * self.cell_width + self.hborder_px));
-    const spot_y = @as(i16, @intCast(cy * self.cell_height + self.vborder_px));
-
-    const spot = x11.XPoint{ .x = spot_x, .y = spot_y };
-
-    const nested_list = x11.XVaCreateNestedList(0, x11.XNSpotLocation, &spot, @as(?*anyopaque, null));
-
-    if (nested_list != null) {
-        _ = x11.XSetICValues(self.ic.?, x11.XNPreeditAttributes, nested_list, @as(?*anyopaque, null));
-        _ = x11.XFree(nested_list);
-    }
-}
-
 pub fn deinit(self: *Window) void {
-    if (self.cursor != 0) {
-        _ = x11.XFreeCursor(self.dpy, self.cursor);
+    if (self.texture) |tex| {
+        sdl2.SDL_DestroyTexture(tex);
     }
-    if (self.ic) |ic| {
-        _ = x11.XDestroyIC(ic);
-    }
-    if (self.im) |im| {
-        _ = x11.XCloseIM(im);
-    }
-    if (self.buf != 0) {
-        _ = x11.XFreePixmap(self.dpy, self.buf);
-    }
-    _ = x11.XFreeGC(self.dpy, self.gc);
-    _ = x11.XDestroyWindow(self.dpy, self.win);
-    _ = x11.XCloseDisplay(self.dpy);
+    sdl2.SDL_DestroyRenderer(self.renderer);
+    sdl2.SDL_DestroyWindow(self.window);
+    // TTF_Quit() 已移至 Renderer
+    sdl2.SDL_Quit();
 }
 
 pub fn show(self: *Window) void {
-    _ = x11.XMapWindow(self.dpy, self.win);
-    if (self.cursor != 0) {
-        _ = x11.XDefineCursor(self.dpy, self.win, self.cursor);
-    }
-    _ = x11.XSync(self.dpy, x11.False);
+    // 显示窗口（避免启动时闪烁，在首次渲染完成后调用）
+    sdl2.SDL_ShowWindow(self.window);
 }
 
-pub fn pollEvent(self: *Window) ?x11.XEvent {
-    if (x11.XPending(self.dpy) > 0) {
-        var event: x11.XEvent = undefined;
-        _ = x11.XNextEvent(self.dpy, &event);
+pub fn pollEvent(self: *Window) ?sdl2.SDL_Event {
+    _ = self;
+    var event: sdl2.SDL_Event = undefined;
+    if (sdl2.SDL_PollEvent(&event) != 0) {
         return event;
     }
     return null;
 }
 
 pub fn resizeBuffer(self: *Window, w: u32, h: u32) void {
-    if (self.buf != 0 and self.buf_w == w and self.buf_h == h) return;
+    if (self.texture) |tex| {
+        var format: u32 = undefined;
+        var access: i32 = undefined;
+        var tex_w: i32 = undefined;
+        var tex_h: i32 = undefined;
+        if (sdl2.SDL_QueryTexture(tex, &format, &access, &tex_w, &tex_h) == 0) {
+            if (@as(u32, @intCast(tex_w)) == w and @as(u32, @intCast(tex_h)) == h) {
+                return;
+            }
+        }
+        sdl2.SDL_DestroyTexture(tex);
+    }
 
-    const new_buf = x11.XCreatePixmap(self.dpy, self.win, @intCast(w), @intCast(h), @intCast(x11.XDefaultDepth(self.dpy, self.screen)));
-    if (new_buf == 0) {
-        std.log.err("Failed to create new pixmap for resize", .{});
+    const new_texture = sdl2.SDL_CreateTexture(
+        self.renderer,
+        sdl2.SDL_PIXELFORMAT_ABGR8888,
+        sdl2.SDL_TEXTUREACCESS_TARGET,
+        @intCast(w),
+        @intCast(h),
+    ) orelse {
+        std.log.err("创建纹理失败: {s}", .{sdl2.SDL_GetError()});
         return;
-    }
+    };
 
-    if (self.buf != 0) {
-        _ = x11.XFreePixmap(self.dpy, self.buf);
-    }
+    // 设置线性过滤，获得更平滑的渲染效果
+    _ = sdl2.SDL_SetTextureScaleMode(new_texture, sdl2.SDL_ScaleModeLinear);
 
-    self.buf = new_buf;
+    self.texture = new_texture;
     self.buf_w = w;
     self.buf_h = h;
 }
@@ -266,48 +174,57 @@ pub fn resizeBuffer(self: *Window, w: u32, h: u32) void {
 // Clear buffer (fills with bg color)
 pub fn clear(self: *Window) void {
     _ = self;
-    // This should probably be done via XftDrawRect in renderer
+    // 在 renderer.zig 中实现
 }
 
 // Copy buffer to window
 pub fn present(self: *Window) void {
-    if (self.buf != 0) {
-        _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, 0, 0, @intCast(self.width), @intCast(self.height), 0, 0);
-        _ = x11.XFlush(self.dpy);
+    if (self.texture) |tex| {
+        _ = sdl2.SDL_RenderClear(self.renderer);
+        _ = sdl2.SDL_RenderCopy(self.renderer, tex, null, null);
+        sdl2.SDL_RenderPresent(self.renderer);
     }
 }
 
 // Copy partial buffer to window
-pub fn presentPartial(self: *Window, rect: x11.XRectangle) void {
-    if (self.buf != 0) {
-        // st-style: always sync to ensure consistency
-        _ = x11.XCopyArea(self.dpy, self.buf, self.win, self.gc, rect.x, rect.y, rect.width, rect.height, rect.x, rect.y);
-        _ = x11.XFlush(self.dpy);
-    }
+pub fn presentPartial(self: *Window, rect: sdl2.SDL_Rect) void {
+    _ = rect;
+    // 在硬件加速的 SDL2 中，局部更新不保证后台缓冲区内容的持久性
+    // 始终执行完整呈现以避免闪烁，现代 GPU 处理此操作开销极小
+    self.present();
 }
 
 /// 设置窗口标题
 pub fn setTitle(self: *Window, title: [:0]const u8) void {
-    _ = x11.XStoreName(self.dpy, self.win, title);
+    sdl2.SDL_SetWindowTitle(self.window, title);
 }
 
 /// 设置图标标题
 pub fn setIconTitle(self: *Window, title: [:0]const u8) void {
-    _ = x11.XSetIconName(self.dpy, self.win, title);
+    _ = self;
+    _ = title;
+    // SDL2 没有直接对应的功能，可以忽略
+}
+
+/// 设置输入法光标位置
+pub fn updateImeSpot(self: *Window, x: usize, y: usize) void {
+    const rect = sdl2.SDL_Rect{
+        .x = @intCast(@as(i32, @intCast(x * self.cell_width)) + @as(i32, @intCast(self.hborder_px))),
+        .y = @intCast(@as(i32, @intCast(y * self.cell_height)) + @as(i32, @intCast(self.vborder_px))),
+        .w = @intCast(self.cell_width),
+        .h = @intCast(self.cell_height),
+    };
+    sdl2.SDL_SetTextInputRect(&rect);
 }
 
 /// 调整窗口大小以匹配期望的行列数（在加载实际字体后调用）
 pub fn resizeToGrid(self: *Window, cols: usize, rows: usize) void {
-    // Note: st 在 xinit() 中计算窗口时不添加 border（因为 hborderpx/vborderpx = 0）
-    // 窗口管理器可能会稍后调整窗口，那时才在 cresize() 中计算实际的边框
-    // 因此这里也不添加 border * 2，与 st 的行为对齐
     const new_w = @as(u32, @intCast(cols * self.cell_width));
     const new_h = @as(u32, @intCast(rows * self.cell_height));
 
     if (new_w != self.width or new_h != self.height) {
-        _ = x11.XResizeWindow(self.dpy, self.win, @intCast(new_w), @intCast(new_h));
+        sdl2.SDL_SetWindowSize(self.window, @intCast(new_w), @intCast(new_h));
         self.width = new_w;
         self.height = new_h;
-        _ = x11.XSync(self.dpy, x11.False);
     }
 }

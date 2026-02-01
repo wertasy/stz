@@ -13,17 +13,26 @@ pub const GlyphInfo = struct {
     // 在图集中的位置（像素坐标）
     x: u16,
     y: u16,
-    // 字形实际大小
-    width: u8,
-    height: u8,
+    // 字形在图集中的实际大小
+    width: u16,
+    height: u16,
     // 字形偏移量（用于正确渲染）
-    bitmap_left: i8,
-    bitmap_top: i8,
+    bitmap_left: i16,
+    bitmap_top: i16,
     // 纹理坐标（归一化 0.0-1.0，用于 SDL_RenderCopy 的 src_rect）
     tex_x: f32,
     tex_y: f32,
     tex_w: f32,
     tex_h: f32,
+
+    // 是否是彩色字形 (emoji)
+    is_color: bool = false,
+
+    // 渲染尺寸和偏移（可能经过缩放）
+    render_w: u16,
+    render_h: u16,
+    render_left: i16,
+    render_top: i16,
 };
 
 pub const TextureAtlasError = error{
@@ -60,12 +69,6 @@ pub const TextureAtlas = struct {
     const Self = @This();
 
     /// 创建新的纹理图集
-    ///
-    /// 参数:
-    ///   - renderer: SDL 渲染器
-    ///   - width, height: 图集尺寸（推荐 1024x1024 或 2048x2048）
-    ///   - cell_size: 网格单元大小（必须能容纳最大字形，推荐 64）
-    ///   - allocator: 内存分配器
     pub fn init(
         renderer: *sdl2.SDL_Renderer,
         width: u32,
@@ -73,7 +76,7 @@ pub const TextureAtlas = struct {
         cell_size: u32,
         allocator: std.mem.Allocator,
     ) !Self {
-        // 创建目标纹理（可渲染到）
+        // 使用 ABGR8888 格式 (Little Endian: [R, G, B, A])
         const texture = sdl2.SDL_CreateTexture(
             renderer,
             sdl2.SDL_PIXELFORMAT_ABGR8888,
@@ -85,14 +88,9 @@ pub const TextureAtlas = struct {
             return error.TextureCreateFailed;
         };
 
-        // 设置纹理混合模式
         _ = sdl2.SDL_SetTextureBlendMode(texture, sdl2.SDL_BLENDMODE_BLEND);
-
-        // 设置纹理缩放模式为线性过滤（Linear）以获得更平滑的字体边缘
-        // 对于灰度字体渲染，线性过滤比最近邻更清晰
         _ = sdl2.SDL_SetTextureScaleMode(texture, sdl2.SDL_ScaleModeLinear);
 
-        // 清空纹理为透明
         _ = sdl2.SDL_SetRenderTarget(renderer, texture);
         _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
         _ = sdl2.SDL_RenderClear(renderer);
@@ -120,14 +118,13 @@ pub const TextureAtlas = struct {
         self.glyph_cache.deinit();
     }
 
-    /// 计算缓存键
-    fn makeCacheKey(codepoint: u21, attr: types.GlyphAttr) u64 {
-        const attr_bits: u8 = @as(u8, @intFromBool(attr.bold)) << 1 |
-            @as(u8, @intFromBool(attr.italic));
-        return (@as(u64, codepoint) << 32) | @as(u64, attr_bits);
+    fn makeCacheKey(codepoint: u64, attr: types.GlyphAttr, is_ligature: bool) u64 {
+        const attr_bits: u64 = @as(u64, @intFromBool(attr.bold)) << 1 | @as(u64, @intFromBool(attr.italic));
+        var key = (codepoint << 32) | attr_bits;
+        if (is_ligature) key |= (@as(u64, 1) << 63);
+        return key;
     }
 
-    /// 查找空闲网格位置
     fn findFreeCell(self: *Self) ?u32 {
         if (self.next_cell_idx >= self.cols * self.rows) return null;
         const idx = self.next_cell_idx;
@@ -135,7 +132,6 @@ pub const TextureAtlas = struct {
         return idx;
     }
 
-    /// 将网格索引转换为像素坐标
     fn cellToPixel(self: *Self, cell_idx: u32) struct { x: u32, y: u32 } {
         const col = cell_idx % self.cols;
         const row = cell_idx / self.cols;
@@ -145,33 +141,17 @@ pub const TextureAtlas = struct {
         };
     }
 
-    /// 添加字形到图集
-    ///
-    /// 参数:
-    ///   - renderer: SDL 渲染器
-    ///   - face: FreeType 字体面
-    ///   - codepoint: Unicode 码点
-    ///   - attr: 字形属性
-    ///
-    /// 返回: 字形信息（包含纹理坐标）
     pub fn addGlyph(
         self: *Self,
         _: *sdl2.SDL_Renderer,
         face: ft.FT_Face,
         codepoint: u21,
         attr: types.GlyphAttr,
+        target_size: u32,
     ) !GlyphInfo {
-        const cache_key = makeCacheKey(codepoint, attr);
+        const cache_key = makeCacheKey(codepoint, attr, false);
+        if (self.glyph_cache.get(cache_key)) |info| return info;
 
-        // 检查缓存
-        if (self.glyph_cache.get(cache_key)) |info| {
-            return info;
-        }
-
-        // 渲染字形 - 使用高质量渲染模式
-        // FT_LOAD_COLOR: 启用彩色 emoji 支持（需要 BGRA 格式位图）
-        // FT_LOAD_RENDER: 立即渲染位图
-        // 注意：FT_LOAD_FORCE_AUTOHINT 和 FT_LOAD_TARGET_NORMAL 可能与彩色 emoji 冲突
         const load_flags = ft.FT_LOAD_RENDER | ft.FT_LOAD_COLOR;
         if (ft.FT_Load_Char(face, codepoint, load_flags) != 0) {
             std.log.warn("加载字形失败: U+{X}", .{codepoint});
@@ -180,89 +160,57 @@ pub const TextureAtlas = struct {
 
         const glyph = face.*.glyph;
         const bitmap = &glyph.*.bitmap;
+        const is_color = bitmap.*.pixel_mode == ft.FT_PIXEL_MODE_BGRA;
 
-        // 调试：打印 emoji 字形信息
-        const is_emoji = (codepoint >= 0x1F000 and codepoint <= 0x1FAFF);
-        if (is_emoji) {
-            std.log.warn("Emoji U+{X} 字形信息: {}x{}, pixel_mode={}, pitch={}", .{
-                codepoint,
-                bitmap.width,
-                bitmap.rows,
-                bitmap.pixel_mode,
-                bitmap.pitch,
-            });
-        }
-
-        // 检查字形大小
-        if (bitmap.width > self.cell_size or bitmap.rows > self.cell_size) {
-            // 字形太大，无法放入当前网格
-            std.log.warn("字形过大: {}x{} > 单元格 {} (U+{X})", .{
-                bitmap.width,
-                bitmap.rows,
-                self.cell_size,
-                codepoint,
-            });
-            return error.InvalidGlyphSize;
-        }
-
-        // 查找空闲位置
-        const cell_idx = self.findFreeCell() orelse {
-            return error.AtlasFull;
-        };
-
+        const cell_idx = self.findFreeCell() orelse return error.AtlasFull;
         const pos = self.cellToPixel(cell_idx);
 
-        // 创建临时纹理上传字形数据
-        if (bitmap.width > 0 and bitmap.rows > 0) {
-            // 检测位图格式：彩色 emoji 使用 FT_PIXEL_MODE_BGRA，普通字形使用 FT_PIXEL_MODE_GRAY
-            const is_color = bitmap.*.pixel_mode == ft.FT_PIXEL_MODE_BGRA;
+        var scale: f32 = 1.0;
+        if (is_color) {
+            const face_height = @as(f32, @floatFromInt(face.*.size.*.metrics.height)) / 64.0;
+            if (face_height > 0) {
+                scale = @as(f32, @floatFromInt(target_size)) / face_height;
+            }
+        }
 
+        if (bitmap.width > 0 and bitmap.rows > 0) {
             const pixel_count = bitmap.width * bitmap.rows * 4;
             var pixels = try self.allocator.alloc(u8, pixel_count);
             defer self.allocator.free(pixels);
 
             if (is_color) {
-                // 彩色 emoji：直接复制 BGRA 数据（无需转换）
-                // FreeType 使用 BGRA 顺序，SDL2 期望 BGRA（SDL_PIXELFORMAT_ABGR8888）
-                std.mem.copyForwards(u8, pixels, bitmap.buffer[0..pixel_count]);
+                // 彩色 emoji：从 BGRA (FreeType) 转换为 RGBA (ABGR8888 on Little Endian)
+                // FreeType 为 [B, G, R, A]，ABGR8888 为 [R, G, B, A]
+                var i: usize = 0;
+                while (i < pixel_count) : (i += 4) {
+                    pixels[i + 0] = bitmap.buffer[i + 2]; // R
+                    pixels[i + 1] = bitmap.buffer[i + 1]; // G
+                    pixels[i + 2] = bitmap.buffer[i + 0]; // B
+                    pixels[i + 3] = bitmap.buffer[i + 3]; // A
+                }
             } else {
-                // 灰度字形：转换灰度 -> RGBA (255, 255, 255, gray)
                 var pixel_idx: usize = 0;
                 var row: usize = 0;
                 while (row < bitmap.rows) : (row += 1) {
                     var col: usize = 0;
                     while (col < bitmap.width) : (col += 1) {
                         const gray = bitmap.buffer[row * @as(usize, @intCast(bitmap.pitch)) + col];
-                        pixels[pixel_idx + 0] = 255; // R
-                        pixels[pixel_idx + 1] = 255; // G
-                        pixels[pixel_idx + 2] = 255; // B
-                        pixels[pixel_idx + 3] = gray; // A
+                        pixels[pixel_idx + 0] = 255;
+                        pixels[pixel_idx + 1] = 255;
+                        pixels[pixel_idx + 2] = 255;
+                        pixels[pixel_idx + 3] = gray;
                         pixel_idx += 4;
                     }
                 }
             }
 
-            // 直接更新图集纹理的一部分
-            const update_rect = sdl2.SDL_Rect{
-                .x = @intCast(pos.x),
-                .y = @intCast(pos.y),
-                .w = @intCast(bitmap.width),
-                .h = @intCast(bitmap.rows),
-            };
+            const update_rect = sdl2.SDL_Rect{ .x = @intCast(pos.x), .y = @intCast(pos.y), .w = @intCast(bitmap.width), .h = @intCast(bitmap.rows) };
             if (sdl2.SDL_UpdateTexture(self.texture, &update_rect, pixels.ptr, @intCast(bitmap.width * 4)) != 0) {
                 return error.TextureCreateFailed;
             }
         }
 
         self.glyphs_stored += 1;
-
-        // 计算纹理坐标（归一化）
-        const tex_x = @as(f32, @floatFromInt(pos.x)) / @as(f32, @floatFromInt(self.width));
-        const tex_y = @as(f32, @floatFromInt(pos.y)) / @as(f32, @floatFromInt(self.height));
-        const tex_w = @as(f32, @floatFromInt(bitmap.width)) / @as(f32, @floatFromInt(self.width));
-        const tex_h = @as(f32, @floatFromInt(bitmap.rows)) / @as(f32, @floatFromInt(self.height));
-
-        // 创建字形信息
         const info = GlyphInfo{
             .x = @intCast(pos.x),
             .y = @intCast(pos.y),
@@ -270,120 +218,87 @@ pub const TextureAtlas = struct {
             .height = @intCast(bitmap.rows),
             .bitmap_left = @intCast(glyph.*.bitmap_left),
             .bitmap_top = @intCast(glyph.*.bitmap_top),
-            .tex_x = tex_x,
-            .tex_y = tex_y,
-            .tex_w = tex_w,
-            .tex_h = tex_h,
+            .tex_x = @as(f32, @floatFromInt(pos.x)) / @as(f32, @floatFromInt(self.width)),
+            .tex_y = @as(f32, @floatFromInt(pos.y)) / @as(f32, @floatFromInt(self.height)),
+            .tex_w = @as(f32, @floatFromInt(bitmap.width)) / @as(f32, @floatFromInt(self.width)),
+            .tex_h = @as(f32, @floatFromInt(bitmap.rows)) / @as(f32, @floatFromInt(self.height)),
+            .is_color = is_color,
+            .render_w = @intFromFloat(@ceil(@as(f32, @floatFromInt(bitmap.width)) * scale)),
+            .render_h = @intFromFloat(@ceil(@as(f32, @floatFromInt(bitmap.rows)) * scale)),
+            .render_left = @intFromFloat(@ceil(@as(f32, @floatFromInt(glyph.*.bitmap_left)) * scale)),
+            .render_top = @intFromFloat(@ceil(@as(f32, @floatFromInt(glyph.*.bitmap_top)) * scale)),
         };
-
-        // 存入缓存
         try self.glyph_cache.put(cache_key, info);
-
         return info;
     }
 
-    /// 获取字形信息（如果不存在返回 null）
     pub fn getGlyphInfo(self: *Self, codepoint: u21, attr: types.GlyphAttr) ?GlyphInfo {
-        const cache_key = makeCacheKey(codepoint, attr);
+        const cache_key = makeCacheKey(codepoint, attr, false);
         return self.glyph_cache.get(cache_key);
     }
 
-    /// 使用 FreeType 字形索引添加字形到图集（用于连字支持）
-    ///
-    /// 参数:
-    ///   - face: FreeType 字体面（已加载字形）
-    ///   - glyph_index: FreeType 字形索引
-    ///   - attr: 字形属性
-    ///
-    /// 返回: 字形信息（包含纹理坐标）
     pub fn addGlyphWithLigatureIndex(
         self: *Self,
         face: ft.FT_Face,
         glyph_index: u32,
         attr: types.GlyphAttr,
+        target_size: u32,
     ) !GlyphInfo {
-        // 对于连字，我们使用特殊的缓存键：(glyph_index << 32) | attr_bits | (1 << 63)
-        // 设置最高位以区分 Unicode 码点和 FreeType 字形索引，避免冲突
-        const attr_bits: u64 = @as(u64, @intFromBool(attr.bold)) << 1 | @as(u64, @intFromBool(attr.italic));
-        const cache_key = (@as(u64, glyph_index) << 32) | attr_bits | (@as(u64, 1) << 63);
+        const cache_key = makeCacheKey(glyph_index, attr, true);
+        if (self.glyph_cache.get(cache_key)) |info| return info;
 
-        // 检查缓存
-        if (self.glyph_cache.get(cache_key)) |info| {
-            return info;
-        }
-
-        // 字形已在调用者处加载，直接获取
         const glyph = face.*.glyph;
         const bitmap = &glyph.*.bitmap;
+        const is_color = bitmap.*.pixel_mode == ft.FT_PIXEL_MODE_BGRA;
 
-        // 检查字形大小
-        if (bitmap.width > self.cell_size or bitmap.rows > self.cell_size) {
-            std.log.warn("连字字形过大: {}x{} > 单元格 {}", .{
-                bitmap.width,
-                bitmap.rows,
-                self.cell_size,
-            });
-            return error.InvalidGlyphSize;
-        }
-
-        // 查找空闲位置
-        const cell_idx = self.findFreeCell() orelse {
-            return error.AtlasFull;
-        };
-
+        const cell_idx = self.findFreeCell() orelse return error.AtlasFull;
         const pos = self.cellToPixel(cell_idx);
 
-        // 创建临时纹理上传字形数据
-        if (bitmap.width > 0 and bitmap.rows > 0) {
-            // 检测位图格式：彩色 emoji 使用 FT_PIXEL_MODE_BGRA，普通字形使用 FT_PIXEL_MODE_GRAY
-            const is_color = bitmap.*.pixel_mode == ft.FT_PIXEL_MODE_BGRA;
+        var scale: f32 = 1.0;
+        if (is_color) {
+            const face_height = @as(f32, @floatFromInt(face.*.size.*.metrics.height)) / 64.0;
+            if (face_height > 0) {
+                scale = @as(f32, @floatFromInt(target_size)) / face_height;
+            }
+        }
 
+        if (bitmap.width > 0 and bitmap.rows > 0) {
             const pixel_count = bitmap.width * bitmap.rows * 4;
             var pixels = try self.allocator.alloc(u8, pixel_count);
             defer self.allocator.free(pixels);
 
             if (is_color) {
-                // 彩色 emoji：直接复制 BGRA 数据（无需转换）
-                // FreeType 使用 BGRA 顺序，SDL2 期望 BGRA（SDL_PIXELFORMAT_ABGR8888）
-                std.mem.copyForwards(u8, pixels, bitmap.buffer[0..pixel_count]);
+                // 从 BGRA 转换为 RGBA
+                var i: usize = 0;
+                while (i < pixel_count) : (i += 4) {
+                    pixels[i + 0] = bitmap.buffer[i + 2]; // R
+                    pixels[i + 1] = bitmap.buffer[i + 1]; // G
+                    pixels[i + 2] = bitmap.buffer[i + 0]; // B
+                    pixels[i + 3] = bitmap.buffer[i + 3]; // A
+                }
             } else {
-                // 灰度字形：转换灰度 -> RGBA (255, 255, 255, gray)
                 var pixel_idx: usize = 0;
                 var row: usize = 0;
                 while (row < bitmap.rows) : (row += 1) {
                     var col: usize = 0;
                     while (col < bitmap.width) : (col += 1) {
                         const gray = bitmap.buffer[row * @as(usize, @intCast(bitmap.pitch)) + col];
-                        pixels[pixel_idx + 0] = 255; // R
-                        pixels[pixel_idx + 1] = 255; // G
-                        pixels[pixel_idx + 2] = 255; // B
-                        pixels[pixel_idx + 3] = gray; // A
+                        pixels[pixel_idx + 0] = 255;
+                        pixels[pixel_idx + 1] = 255;
+                        pixels[pixel_idx + 2] = 255;
+                        pixels[pixel_idx + 3] = gray;
                         pixel_idx += 4;
                     }
                 }
             }
 
-            // 直接更新图集纹理的一部分
-            const update_rect = sdl2.SDL_Rect{
-                .x = @intCast(pos.x),
-                .y = @intCast(pos.y),
-                .w = @intCast(bitmap.width),
-                .h = @intCast(bitmap.rows),
-            };
+            const update_rect = sdl2.SDL_Rect{ .x = @intCast(pos.x), .y = @intCast(pos.y), .w = @intCast(bitmap.width), .h = @intCast(bitmap.rows) };
             if (sdl2.SDL_UpdateTexture(self.texture, &update_rect, pixels.ptr, @intCast(bitmap.width * 4)) != 0) {
                 return error.TextureCreateFailed;
             }
         }
 
         self.glyphs_stored += 1;
-
-        // 计算纹理坐标（归一化）
-        const tex_x = @as(f32, @floatFromInt(pos.x)) / @as(f32, @floatFromInt(self.width));
-        const tex_y = @as(f32, @floatFromInt(pos.y)) / @as(f32, @floatFromInt(self.height));
-        const tex_w = @as(f32, @floatFromInt(bitmap.width)) / @as(f32, @floatFromInt(self.width));
-        const tex_h = @as(f32, @floatFromInt(bitmap.rows)) / @as(f32, @floatFromInt(self.height));
-
-        // 创建字形信息
         const info = GlyphInfo{
             .x = @intCast(pos.x),
             .y = @intCast(pos.y),
@@ -391,25 +306,24 @@ pub const TextureAtlas = struct {
             .height = @intCast(bitmap.rows),
             .bitmap_left = @intCast(glyph.*.bitmap_left),
             .bitmap_top = @intCast(glyph.*.bitmap_top),
-            .tex_x = tex_x,
-            .tex_y = tex_y,
-            .tex_w = tex_w,
-            .tex_h = tex_h,
+            .tex_x = @as(f32, @floatFromInt(pos.x)) / @as(f32, @floatFromInt(self.width)),
+            .tex_y = @as(f32, @floatFromInt(pos.y)) / @as(f32, @floatFromInt(self.height)),
+            .tex_w = @as(f32, @floatFromInt(bitmap.width)) / @as(f32, @floatFromInt(self.width)),
+            .tex_h = @as(f32, @floatFromInt(bitmap.rows)) / @as(f32, @floatFromInt(self.height)),
+            .is_color = is_color,
+            .render_w = @intFromFloat(@ceil(@as(f32, @floatFromInt(bitmap.width)) * scale)),
+            .render_h = @intFromFloat(@ceil(@as(f32, @floatFromInt(bitmap.rows)) * scale)),
+            .render_left = @intFromFloat(@ceil(@as(f32, @floatFromInt(glyph.*.bitmap_left)) * scale)),
+            .render_top = @intFromFloat(@ceil(@as(f32, @floatFromInt(glyph.*.bitmap_top)) * scale)),
         };
-
-        // 存入缓存
         try self.glyph_cache.put(cache_key, info);
-
         return info;
     }
 
-    /// 清空图集（当满时调用）
     pub fn clear(self: *Self, renderer: *sdl2.SDL_Renderer) void {
         self.next_cell_idx = 0;
         self.glyph_cache.clearRetainingCapacity();
         self.glyphs_stored = 0;
-
-        // 清空纹理
         _ = sdl2.SDL_SetRenderTarget(renderer, self.texture);
         _ = sdl2.SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
         _ = sdl2.SDL_RenderClear(renderer);

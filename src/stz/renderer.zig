@@ -188,15 +188,11 @@ pub fn init(window: *Window, allocator: std.mem.Allocator) !Renderer {
             continue;
         }
 
-        // 设置字体大小（对于彩色 emoji 字体可能失败，使用默认大小）
-        if (ft.FT_Set_Pixel_Sizes(fallback_face, 0, @intCast(font_size)) != 0) {
-            // 某些彩色 emoji 字体（如 Noto Color Emoji）使用 CBDT 格式
-            // FT_Set_Pixel_Sizes 会失败，但字体仍然可用（使用默认大小）
-            std.log.info("回退字体使用默认大小: {s}", .{fallback_path});
-            // 不返回错误，继续使用字体
-        }
+        // 设置字体大小
+        setFontSize(fallback_face, font_size);
 
         try fallbacks.append(allocator, fallback_face);
+
         std.log.info("加载回退字体: {s}", .{fallback_path});
         allocator.free(fallback_path);
     }
@@ -307,6 +303,24 @@ fn loadFontVariant(allocator: std.mem.Allocator, ft_lib: ft.FT_Library, font_nam
     }
 
     return face;
+}
+
+fn setFontSize(face: ft.FT_Face, size: u32) void {
+    if (ft.FT_Set_Pixel_Sizes(face, 0, @intCast(size)) != 0) {
+        if (face.*.num_fixed_sizes > 0) {
+            var best_match: i32 = 0;
+            var diff: i32 = 0x7FFFFFFF;
+            for (0..@intCast(face.*.num_fixed_sizes)) |i| {
+                const strike_size = face.*.available_sizes[i].height;
+                const d = @abs(@as(i32, @intCast(strike_size)) - @as(i32, @intCast(size)));
+                if (d < diff) {
+                    diff = @intCast(d);
+                    best_match = @intCast(i);
+                }
+            }
+            _ = ft.FT_Select_Size(face, best_match);
+        }
+    }
 }
 
 pub fn deinit(self: *Renderer) void {
@@ -423,7 +437,11 @@ fn getFontForGlyph(self: *Renderer, u: u21, attr: types.GlyphAttr) ft.FT_Face {
     }
 
     // 检查是否是 emoji，添加调试日志
-    const is_emoji = (u >= 0x1F000 and u <= 0x1FAFF);
+    const is_emoji = (u >= 0x1F000 and u <= 0x1FAFF) or
+        (u >= 0x2600 and u <= 0x27BF) or
+        (u >= 0x1F300 and u <= 0x1F5FF) or
+        (u >= 0x1F600 and u <= 0x1F64F) or
+        (u >= 0x1F900 and u <= 0x1F9FF);
     if (is_emoji) {
         std.log.warn("Emoji 字符 U+{X} 未在主字体中找到，搜索 fallback 字体", .{u});
     }
@@ -472,10 +490,10 @@ fn drawTextGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, codepoint: u21, 
     const face = self.getFontForGlyph(codepoint, attr);
 
     const glyph_info = atlas.getGlyphInfo(codepoint, attr) orelse blk: {
-        const info = atlas.addGlyph(renderer, face, codepoint, attr) catch |err| {
+        const info = atlas.addGlyph(renderer, face, codepoint, attr, self.current_font_size) catch |err| {
             if (err == error.AtlasFull) {
                 atlas.clear(renderer);
-                break :blk atlas.addGlyph(renderer, face, codepoint, attr) catch |err2| {
+                break :blk atlas.addGlyph(renderer, face, codepoint, attr, self.current_font_size) catch |err2| {
                     std.log.err("重新添加字形失败: {}", .{err2});
                     return;
                 };
@@ -488,10 +506,10 @@ fn drawTextGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, codepoint: u21, 
     if (glyph_info.width == 0 or glyph_info.height == 0) return;
 
     const src_rect = sdl2.SDL_Rect{
-        .x = glyph_info.x,
-        .y = glyph_info.y,
-        .w = glyph_info.width,
-        .h = glyph_info.height,
+        .x = @intCast(glyph_info.x),
+        .y = @intCast(glyph_info.y),
+        .w = @intCast(glyph_info.width),
+        .h = @intCast(glyph_info.height),
     };
 
     // 检测 Powerline 字符（U+E0B0-E0C0），使用垂直居中对齐
@@ -501,16 +519,16 @@ fn drawTextGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, codepoint: u21, 
     // 计算垂直位置：Powerline 字符使用居中对齐，其他字符使用基线对齐
     const y_offset = if (is_powerline)
         // 垂直居中：(单元格高度 - 字形高度) / 2
-        y + @divFloor(@as(i32, @intCast(self.char_height - @as(u32, glyph_info.height))), 2) - 1
+        y + @divFloor(@as(i32, @intCast(self.char_height - @as(u32, glyph_info.render_h))), 2) - 1
     else
         // 基线对齐
-        y - glyph_info.bitmap_top + self.ascent;
+        y - @as(i32, @intCast(glyph_info.render_top)) + self.ascent;
 
     const dst_rect = sdl2.SDL_Rect{
-        .x = x + glyph_info.bitmap_left,
+        .x = x + @as(i32, @intCast(glyph_info.render_left)),
         .y = y_offset,
-        .w = glyph_info.width,
-        .h = glyph_info.height,
+        .w = @intCast(glyph_info.render_w),
+        .h = @intCast(glyph_info.render_h),
     };
 
     if (sdl2.SDL_RenderCopy(renderer, atlas.texture, &src_rect, &dst_rect) != 0) {
@@ -531,7 +549,7 @@ fn drawLigatureGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, face: ft.FT_
         return;
     }
 
-    if (ft.FT_Load_Glyph(face, glyph_index, ft.FT_LOAD_RENDER | ft.FT_LOAD_TARGET_NORMAL | ft.FT_LOAD_FORCE_AUTOHINT) != 0) {
+    if (ft.FT_Load_Glyph(face, glyph_index, ft.FT_LOAD_RENDER | ft.FT_LOAD_COLOR | ft.FT_LOAD_TARGET_NORMAL | ft.FT_LOAD_FORCE_AUTOHINT) != 0) {
         return;
     }
 
@@ -547,10 +565,10 @@ fn drawLigatureGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, face: ft.FT_
         (codepoint >= 0xE0FA and codepoint <= 0xE0FF);
 
     // 添加到图集
-    const glyph_info = atlas.addGlyphWithLigatureIndex(face, glyph_index, attr) catch |err| {
+    const glyph_info = atlas.addGlyphWithLigatureIndex(face, glyph_index, attr, self.current_font_size) catch |err| {
         if (err == error.AtlasFull) {
             atlas.clear(renderer);
-            const info = atlas.addGlyphWithLigatureIndex(face, glyph_index, attr) catch |err2| {
+            const info = atlas.addGlyphWithLigatureIndex(face, glyph_index, attr, self.current_font_size) catch |err2| {
                 std.log.err("重新添加连字字形失败: {}", .{err2});
                 return;
             };
@@ -566,25 +584,25 @@ fn drawLigatureGlyph(self: *Renderer, renderer: *sdl2.SDL_Renderer, face: ft.FT_
 
 fn renderLigatureGlyphInternal(self: *Renderer, renderer: *sdl2.SDL_Renderer, atlas: *const TextureAtlas, glyph_info: GlyphInfo, x: i32, y: i32, x_offset: i32, is_powerline: bool) !void {
     const src_rect = sdl2.SDL_Rect{
-        .x = glyph_info.x,
-        .y = glyph_info.y,
-        .w = glyph_info.width,
-        .h = glyph_info.height,
+        .x = @intCast(glyph_info.x),
+        .y = @intCast(glyph_info.y),
+        .w = @intCast(glyph_info.width),
+        .h = @intCast(glyph_info.height),
     };
 
     // 计算垂直位置：Powerline 字符使用居中对齐，其他字符使用基线对齐
     const y_offset = if (is_powerline)
         // 垂直居中：(单元格高度 - 字形高度) / 2
-        y + @divFloor(@as(i32, @intCast(self.char_height - @as(u32, glyph_info.height))), 2)
+        y + @divFloor(@as(i32, @intCast(self.char_height - @as(u32, glyph_info.render_h))), 2)
     else
         // 基线对齐
-        y - glyph_info.bitmap_top + self.ascent;
+        y - @as(i32, @intCast(glyph_info.render_top)) + self.ascent;
 
     const dst_rect = sdl2.SDL_Rect{
-        .x = x + glyph_info.bitmap_left + x_offset,
+        .x = x + @as(i32, @intCast(glyph_info.render_left)) + x_offset,
         .y = y_offset,
-        .w = glyph_info.width,
-        .h = glyph_info.height,
+        .w = @intCast(glyph_info.render_w),
+        .h = @intCast(glyph_info.render_h),
     };
 
     if (sdl2.SDL_RenderCopy(renderer, atlas.texture, &src_rect, &dst_rect) != 0) {
@@ -756,9 +774,29 @@ pub fn render(self: *Renderer, term: *Terminal, selector: *Selector, include_cur
                         const l_fg_idx = if (l_rev) lg.bg else lg.fg;
                         const l_fg = try self.getColor(term, l_fg_idx);
 
-                        if (last_fg == null or last_fg.?.r != l_fg.r or last_fg.?.g != l_fg.g or last_fg.?.b != l_fg.b) {
-                            _ = sdl2.SDL_SetTextureColorMod(atlas_tex, l_fg.r, l_fg.g, l_fg.b);
-                            last_fg = l_fg;
+                        const g_info = self.atlas.?.getGlyphInfo(lg.codepoint, lg.attr) orelse blk: {
+                            const f = self.getFontForGlyph(lg.codepoint, lg.attr);
+                            break :blk self.atlas.?.addGlyph(renderer, f, lg.codepoint, lg.attr, self.current_font_size) catch |err| {
+                                if (err == error.AtlasFull) {
+                                    self.atlas.?.clear(renderer);
+                                    break :blk self.atlas.?.addGlyph(renderer, f, lg.codepoint, lg.attr, self.current_font_size) catch |err2| {
+                                        std.log.err("重新添加字形失败: {}", .{err2});
+                                        continue;
+                                    };
+                                }
+                                std.log.warn("无法添加字形 U+{X}: {}", .{ lg.codepoint, err });
+                                continue;
+                            };
+                        };
+                        if (last_fg == null or last_fg.?.r != l_fg.r or last_fg.?.g != l_fg.g or last_fg.?.b != l_fg.b or g_info.is_color) {
+                            if (g_info.is_color) {
+                                _ = sdl2.SDL_SetTextureColorMod(atlas_tex, 255, 255, 255);
+                                // 设置 last_fg 为 null 强制下个非彩色字符重新设置颜色
+                                last_fg = null;
+                            } else {
+                                _ = sdl2.SDL_SetTextureColorMod(atlas_tex, l_fg.r, l_fg.g, l_fg.b);
+                                last_fg = l_fg;
+                            }
                         }
 
                         // 绘制连字字形
@@ -786,9 +824,28 @@ pub fn render(self: *Renderer, term: *Terminal, selector: *Selector, include_cur
                             if (d_sel) d_rev = !d_rev;
                             const fg_idx = if (d_rev) dg.bg else dg.fg;
                             const fg = try self.getColor(term, fg_idx);
-                            if (last_fg == null or last_fg.?.r != fg.r or last_fg.?.g != fg.g or last_fg.?.b != fg.b) {
-                                _ = sdl2.SDL_SetTextureColorMod(atlas_tex, fg.r, fg.g, fg.b);
-                                last_fg = fg;
+                            const g_info = self.atlas.?.getGlyphInfo(dg.codepoint, dg.attr) orelse blk: {
+                                const f = self.getFontForGlyph(dg.codepoint, dg.attr);
+                                break :blk self.atlas.?.addGlyph(renderer, f, dg.codepoint, dg.attr, self.current_font_size) catch |err| {
+                                    if (err == error.AtlasFull) {
+                                        self.atlas.?.clear(renderer);
+                                        break :blk self.atlas.?.addGlyph(renderer, f, dg.codepoint, dg.attr, self.current_font_size) catch |err2| {
+                                            std.log.err("重新添加字形失败: {}", .{err2});
+                                            continue;
+                                        };
+                                    }
+                                    std.log.warn("无法添加字形 U+{X}: {}", .{ dg.codepoint, err });
+                                    continue;
+                                };
+                            };
+                            if (last_fg == null or last_fg.?.r != fg.r or last_fg.?.g != fg.g or last_fg.?.b != fg.b or g_info.is_color) {
+                                if (g_info.is_color) {
+                                    _ = sdl2.SDL_SetTextureColorMod(atlas_tex, 255, 255, 255);
+                                    last_fg = null;
+                                } else {
+                                    _ = sdl2.SDL_SetTextureColorMod(atlas_tex, fg.r, fg.g, fg.b);
+                                    last_fg = fg;
+                                }
                             }
                             if (dg.codepoint != ' ' and dg.codepoint != 0) {
                                 // 检查是否是框线字符
@@ -811,9 +868,18 @@ pub fn render(self: *Renderer, term: *Terminal, selector: *Selector, include_cur
                         if (d_sel) d_rev = !d_rev;
                         const fg_idx = if (d_rev) dg.bg else dg.fg;
                         const fg = try self.getColor(term, fg_idx);
-                        if (last_fg == null or last_fg.?.r != fg.r or last_fg.?.g != fg.g or last_fg.?.b != fg.b) {
-                            _ = sdl2.SDL_SetTextureColorMod(atlas_tex, fg.r, fg.g, fg.b);
-                            last_fg = fg;
+                        const g_info = self.atlas.?.getGlyphInfo(dg.codepoint, dg.attr) orelse blk: {
+                            const f = self.getFontForGlyph(dg.codepoint, dg.attr);
+                            break :blk try self.atlas.?.addGlyph(renderer, f, dg.codepoint, dg.attr, self.current_font_size);
+                        };
+                        if (last_fg == null or last_fg.?.r != fg.r or last_fg.?.g != fg.g or last_fg.?.b != fg.b or g_info.is_color) {
+                            if (g_info.is_color) {
+                                _ = sdl2.SDL_SetTextureColorMod(atlas_tex, 255, 255, 255);
+                                last_fg = null;
+                            } else {
+                                _ = sdl2.SDL_SetTextureColorMod(atlas_tex, fg.r, fg.g, fg.b);
+                                last_fg = fg;
+                            }
                         }
                         if (dg.codepoint != ' ' and dg.codepoint != 0) {
                             // 检查是否是框线字符
@@ -905,7 +971,18 @@ fn renderCursorInternal(self: *Renderer, sdl_renderer: *sdl2.SDL_Renderer, term:
             _ = sdl2.SDL_RenderFillRect(sdl_renderer, &sdl2.SDL_Rect{ .x = x_pos_adjusted, .y = y_pos, .w = @intCast(cursor_width), .h = @intCast(self.char_height) });
             if (glyph.codepoint != ' ' and glyph.codepoint != 0) {
                 const fg = try self.getColor(term, cursor_fg_idx);
-                _ = sdl2.SDL_SetTextureColorMod(self.atlas.?.texture, fg.r, fg.g, fg.b);
+                const g_info = self.atlas.?.getGlyphInfo(glyph.codepoint, glyph.attr) orelse blk: {
+                    const f = self.getFontForGlyph(glyph.codepoint, glyph.attr);
+                    break :blk self.atlas.?.addGlyph(sdl_renderer, f, glyph.codepoint, glyph.attr, self.current_font_size) catch |err| {
+                        std.log.warn("无法为光标添加字形 U+{X}: {}", .{ glyph.codepoint, err });
+                        return;
+                    };
+                };
+                if (g_info.is_color) {
+                    _ = sdl2.SDL_SetTextureColorMod(self.atlas.?.texture, 255, 255, 255);
+                } else {
+                    _ = sdl2.SDL_SetTextureColorMod(self.atlas.?.texture, fg.r, fg.g, fg.b);
+                }
                 try self.drawTextGlyph(sdl_renderer, glyph.codepoint, x_pos_adjusted, y_pos, glyph.attr);
             }
         },
@@ -925,7 +1002,18 @@ fn renderCursorInternal(self: *Renderer, sdl_renderer: *sdl2.SDL_Renderer, term:
             _ = sdl2.SDL_RenderFillRect(sdl_renderer, &sdl2.SDL_Rect{ .x = x_pos_adjusted + @as(i32, @intCast(cursor_width)) - @as(i32, @intCast(t)), .y = y_pos, .w = t, .h = @intCast(self.char_height) });
             if (glyph.codepoint != ' ' and glyph.codepoint != 0) {
                 const fg = try self.getColor(term, cursor_fg_idx);
-                _ = sdl2.SDL_SetTextureColorMod(self.atlas.?.texture, fg.r, fg.g, fg.b);
+                const g_info = self.atlas.?.getGlyphInfo(glyph.codepoint, glyph.attr) orelse blk: {
+                    const f = self.getFontForGlyph(glyph.codepoint, glyph.attr);
+                    break :blk self.atlas.?.addGlyph(sdl_renderer, f, glyph.codepoint, glyph.attr, self.current_font_size) catch |err| {
+                        std.log.warn("无法为光标添加字形 U+{X}: {}", .{ glyph.codepoint, err });
+                        return;
+                    };
+                };
+                if (g_info.is_color) {
+                    _ = sdl2.SDL_SetTextureColorMod(self.atlas.?.texture, 255, 255, 255);
+                } else {
+                    _ = sdl2.SDL_SetTextureColorMod(self.atlas.?.texture, fg.r, fg.g, fg.b);
+                }
                 try self.drawTextGlyph(sdl_renderer, glyph.codepoint, x_pos_adjusted, y_pos, glyph.attr);
             }
         },
@@ -1109,27 +1197,18 @@ pub fn resetZoom(self: *Renderer) !void {
 /// 重新加载所有字体并更新渲染器尺寸
 fn reloadFonts(self: *Renderer, new_size: u32) !void {
     // 更新所有字体的像素大小
-    if (ft.FT_Set_Pixel_Sizes(self.font, 0, @intCast(new_size)) != 0) {
-        return error.FontLoadFailed;
-    }
+    setFontSize(self.font, new_size);
     if (self.font_italic != self.font) {
-        if (ft.FT_Set_Pixel_Sizes(self.font_italic, 0, @intCast(new_size)) != 0) {
-            return error.FontLoadFailed;
-        }
+        setFontSize(self.font_italic, new_size);
     }
     if (self.font_bold != self.font) {
-        if (ft.FT_Set_Pixel_Sizes(self.font_bold, 0, @intCast(new_size)) != 0) {
-            return error.FontLoadFailed;
-        }
+        setFontSize(self.font_bold, new_size);
     }
     if (self.font_italic_bold != self.font) {
-        if (ft.FT_Set_Pixel_Sizes(self.font_italic_bold, 0, @intCast(new_size)) != 0) {
-            return error.FontLoadFailed;
-        }
+        setFontSize(self.font_italic_bold, new_size);
     }
     for (self.fallbacks.items) |fallback| {
-        // 彩色 emoji 字体可能不支持动态缩放，忽略失败
-        _ = ft.FT_Set_Pixel_Sizes(fallback, 0, @intCast(new_size));
+        setFontSize(fallback, new_size);
     }
 
     // 重新计算字符尺寸
